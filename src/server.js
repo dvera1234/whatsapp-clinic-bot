@@ -5,12 +5,16 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// health check
+// =======================
+// Health check
+// =======================
 app.get("/health", (req, res) => {
   res.status(200).send("ok");
 });
 
-// webhook verification (Meta -> GET)
+// =======================
+// Webhook verification (GET)
+// =======================
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -19,17 +23,23 @@ app.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
+
   return res.sendStatus(403);
 });
 
-// incoming messages (Meta -> POST)
-app.post("/webhook", async (req, res) => {
-  // sempre responde 200 rápido
-  res.sendStatus(200);
+// =======================
+// Webhook receiver (POST)
+// =======================
+app.post("/webhook", (req, res) => {
+  console.log("=== WEBHOOK POST RECEBIDO ===");
+  console.log(JSON.stringify(req.body, null, 2));
+  console.log("================================");
 
-  // por enquanto não faz nada aqui (vamos ligar o envio no próximo passo)
+  // responde rápido para a Meta
+  res.sendStatus(200);
 });
 
+// =======================
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
