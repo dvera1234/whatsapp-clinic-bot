@@ -6,15 +6,45 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 
 // =======================
+// ENV (robusto)
+// =======================
+function pickToken() {
+  return (
+    process.env.WHATSAPP_TOKEN ||
+    process.env.META_TOKEN ||
+    process.env.ACCESS_TOKEN ||
+    process.env.FB_TOKEN ||
+    process.env.GRAPH_TOKEN ||
+    process.env.PERMANENT_TOKEN ||
+    ""
+  );
+}
+
+function pickPhoneNumberId(fallbackFromWebhook) {
+  return (
+    process.env.WHATSAPP_PHONE_NUMBER_ID ||
+    process.env.PHONE_NUMBER_ID ||
+    process.env.WA_PHONE_NUMBER_ID ||
+    fallbackFromWebhook ||
+    ""
+  );
+}
+
+console.log("ENV CHECK:", {
+  hasToken: !!pickToken(),
+  hasPhoneNumberId: !!(process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID || process.env.WA_PHONE_NUMBER_ID),
+  hasVerifyToken: !!process.env.VERIFY_TOKEN,
+});
+
+// =======================
 // CONFIG (estado mínimo)
 // =======================
-const STATE_TTL_MS = 15 * 60 * 1000; // 15 minutos
-const lastMenuByPhone = new Map(); // phone -> { menu: string, ts: number }
+const STATE_TTL_MS = 15 * 60 * 1000; // 15 min
+const lastMenuByPhone = new Map(); // phone -> { menu, ts }
 
 function setState(phone, menu) {
   lastMenuByPhone.set(phone, { menu, ts: Date.now() });
 }
-
 function getState(phone) {
   const s = lastMenuByPhone.get(phone);
   if (!s) return null;
@@ -24,8 +54,7 @@ function getState(phone) {
   }
   return s.menu;
 }
-
-// limpeza simples para não crescer infinito
+// limpeza
 setInterval(() => {
   const now = Date.now();
   for (const [phone, s] of lastMenuByPhone.entries()) {
@@ -164,21 +193,21 @@ const CONVENIOS = {
 // =======================
 // HELPERS
 // =======================
-function norm(s) {
-  return (s || "").trim().replace(/\s+/g, " ");
-}
-
 function onlyDigits(s) {
   const t = (s || "").trim();
   return /^[0-9]+$/.test(t) ? t : null;
 }
 
-async function sendText(to, body) {
-  const token = process.env.WHATSAPP_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+async function sendText({ to, body, phoneNumberIdFallback }) {
+  const token = pickToken();
+  const phoneNumberId = pickPhoneNumberId(phoneNumberIdFallback);
 
-  if (!token || !phoneNumberId) {
-    console.log("ERRO: faltam WHATSAPP_TOKEN ou WHATSAPP_PHONE_NUMBER_ID no ambiente.");
+  if (!token) {
+    console.log("ERRO: nenhum token encontrado no ambiente (WHATSAPP_TOKEN/META_TOKEN/ACCESS_TOKEN/...).");
+    return;
+  }
+  if (!phoneNumberId) {
+    console.log("ERRO: phone_number_id ausente (env e webhook).");
     return;
   }
 
@@ -203,203 +232,110 @@ async function sendText(to, body) {
   }
 }
 
-async function sendAndSetState(phone, body, menuState) {
-  await sendText(phone, body);
+async function sendAndSetState(phone, body, menuState, phoneNumberIdFallback) {
+  await sendText({ to: phone, body, phoneNumberIdFallback });
   if (menuState) setState(phone, menuState);
 }
 
 // =======================
 // ROTEADOR COM ESTADO MÍNIMO
 // =======================
-async function handleInbound(phone, inboundText) {
-  const raw = norm(inboundText);
+async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
+  const raw = (inboundText || "").trim().replace(/\s+/g, " ");
   const upper = raw.toUpperCase();
   const digits = onlyDigits(raw);
-  const last = getState(phone); // "MAIN" | "PARTICULAR" | "CONVENIOS" | "MEDSENIOR" | "POS" | "POS_TARDIO" | null
+  const last = getState(phone);
 
-  // AJUDA sempre funciona
   if (upper === "AJUDA") {
-    await sendAndSetState(phone, MSG.AJUDA, null);
-    await sendAndSetState(phone, MSG.MENU, "MAIN");
+    await sendAndSetState(phone, MSG.AJUDA, null, phoneNumberIdFallback);
+    await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return;
   }
 
-  // Se NÃO for número, sempre volta pro MENU (seu comportamento desejado)
+  // qualquer mensagem não-numérica -> menu principal
   if (!digits) {
-    await sendAndSetState(phone, MSG.MENU, "MAIN");
+    await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return;
   }
 
-  // Se for número, interpreta de acordo com o ÚLTIMO MENU mostrado
-  // Se não tiver estado (expirou), cai no MENU principal
   const ctx = last || "MAIN";
 
-  // ===================
-  // CONTEXTO: MAIN MENU
-  // ===================
   if (ctx === "MAIN") {
-    if (digits === "1") {
-      await sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR");
-      return;
-    }
-    if (digits === "2") {
-      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
-      return;
-    }
-    if (digits === "3") {
-      await sendAndSetState(phone, MSG.POS_MENU, "POS");
-      return;
-    }
-    if (digits === "4") {
-      await sendAndSetState(phone, MSG.ATENDENTE, "MAIN");
-      // Mantém MAIN para que qualquer próxima mensagem “solta” volte ao menu
-      return;
-    }
-    if (digits === "0") {
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
-      return;
-    }
-
-    // número inválido -> menu
-    await sendAndSetState(phone, MSG.MENU, "MAIN");
-    return;
+    if (digits === "1") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
+    if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
+    if (digits === "3") return sendAndSetState(phone, MSG.POS_MENU, "POS", phoneNumberIdFallback);
+    if (digits === "4") return sendAndSetState(phone, MSG.ATENDENTE, "MAIN", phoneNumberIdFallback);
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
   }
 
-  // ===================
-  // CONTEXTO: PARTICULAR
-  // ===================
   if (ctx === "PARTICULAR") {
     if (digits === "1") {
-      await sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MAIN");
-      // após mandar link, volta a MAIN (fica previsível)
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      await sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MAIN", phoneNumberIdFallback);
+      await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
       return;
     }
-    if (digits === "0") {
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
-      return;
-    }
-    // inválido -> menu
-    await sendAndSetState(phone, MSG.MENU, "MAIN");
-    return;
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
   }
 
-  // ===================
-  // CONTEXTO: CONVÊNIOS
-  // ===================
   if (ctx === "CONVENIOS") {
-    if (digits === "0") {
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
-      return;
-    }
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
 
     if (["1", "2", "3", "4", "5"].includes(digits)) {
       const c = CONVENIOS[digits];
-      if (c?.porBot) {
-        await sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR");
-        return;
-      }
-      if (c) {
-        await sendAndSetState(phone, MSG.CONVENIO_NAO_AGENDA(c.linha), "CONVENIOS_NAO_AGENDA");
-        return;
-      }
+      if (c?.porBot) return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
+      if (c) return sendAndSetState(phone, MSG.CONVENIO_NAO_AGENDA(c.linha), "CONVENIOS_NAO_AGENDA", phoneNumberIdFallback);
     }
-
-    // inválido -> convênios de novo
-    await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
-    return;
+    return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
   }
 
-  // ===============================
-  // CONTEXTO: CONVÊNIO NÃO AGENDA
-  // ===============================
   if (ctx === "CONVENIOS_NAO_AGENDA") {
-    if (digits === "9") {
-      await sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR");
-      return;
-    }
-    if (digits === "0") {
-      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
-      return;
-    }
-    // inválido -> repete opções
-    // (mantém o mesmo estado)
-    await sendAndSetState(
+    if (digits === "9") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
+    if (digits === "0") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
+    return sendAndSetState(
       phone,
       "Escolha uma opção:\n9) Agendamento particular\n0) Voltar aos convênios",
-      "CONVENIOS_NAO_AGENDA"
+      "CONVENIOS_NAO_AGENDA",
+      phoneNumberIdFallback
     );
-    return;
   }
 
-  // ===================
-  // CONTEXTO: MEDSENIOR
-  // ===================
   if (ctx === "MEDSENIOR") {
     if (digits === "1") {
-      await sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MAIN");
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      await sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MAIN", phoneNumberIdFallback);
+      await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
       return;
     }
-    if (digits === "0") {
-      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
-      return;
-    }
-    await sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR");
-    return;
+    if (digits === "0") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
+    return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
   }
 
-  // ===================
-  // CONTEXTO: PÓS-OP
-  // ===================
   if (ctx === "POS") {
     if (digits === "1") {
-      await sendAndSetState(phone, MSG.POS_RECENTE, "MAIN");
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      await sendAndSetState(phone, MSG.POS_RECENTE, "MAIN", phoneNumberIdFallback);
+      await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
       return;
     }
-    if (digits === "2") {
-      await sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO");
-      return;
-    }
-    if (digits === "0") {
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
-      return;
-    }
-    await sendAndSetState(phone, MSG.POS_MENU, "POS");
-    return;
+    if (digits === "2") return sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO", phoneNumberIdFallback);
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    return sendAndSetState(phone, MSG.POS_MENU, "POS", phoneNumberIdFallback);
   }
 
-  // =========================
-  // CONTEXTO: PÓS-OP TARDIO
-  // =========================
   if (ctx === "POS_TARDIO") {
-    if (digits === "1") {
-      await sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR");
-      return;
-    }
-    if (digits === "2") {
-      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
-      return;
-    }
-    if (digits === "0") {
-      await sendAndSetState(phone, MSG.MENU, "MAIN");
-      return;
-    }
-    await sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO");
-    return;
+    if (digits === "1") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
+    if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    return sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO", phoneNumberIdFallback);
   }
 
-  // fallback
-  await sendAndSetState(phone, MSG.MENU, "MAIN");
+  return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
 }
 
 // =======================
 // Health check
 // =======================
-app.get("/health", (req, res) => {
-  res.status(200).send("ok");
-});
+app.get("/health", (req, res) => res.status(200).send("ok"));
 
 // =======================
 // Webhook verification (GET)
@@ -412,7 +348,6 @@ app.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
-
   return res.sendStatus(403);
 });
 
@@ -421,14 +356,13 @@ app.get("/webhook", (req, res) => {
 // =======================
 app.post("/webhook", async (req, res) => {
   try {
-    // responde rápido para a Meta
     res.sendStatus(200);
 
-    console.log("=== WEBHOOK POST RECEBIDO ===");
-    console.log(JSON.stringify(req.body, null, 2));
-    console.log("================================");
-
     const body = req.body;
+
+    console.log("=== WEBHOOK POST RECEBIDO ===");
+    console.log(JSON.stringify(body, null, 2));
+    console.log("================================");
 
     if (body.object !== "whatsapp_business_account") return;
 
@@ -442,11 +376,15 @@ app.post("/webhook", async (req, res) => {
     const from = msg.from;
     const text = msg.text?.body || "";
 
+    const phoneNumberIdFallback = value?.metadata?.phone_number_id || "";
+
     console.log("MSG FROM:", from);
     console.log("MSG TEXT:", text);
     console.log("STATE BEFORE:", getState(from));
+    console.log("FALLBACK PHONE_NUMBER_ID:", phoneNumberIdFallback || "(none)");
+    console.log("TOKEN FOUND:", !!pickToken());
 
-    await handleInbound(from, text);
+    await handleInbound(from, text, phoneNumberIdFallback);
 
     console.log("STATE AFTER:", getState(from));
   } catch (err) {
@@ -455,6 +393,4 @@ app.post("/webhook", async (req, res) => {
 });
 
 // =======================
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+app.listen(port, () => console.log(`Server running on port ${port}`));
