@@ -1,11 +1,37 @@
 import express from "express";
 
-// Se estiver usando Node 18+ no Render, fetch já existe.
-// Não precisa axios.
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// =======================
+// CONFIG (estado mínimo)
+// =======================
+const STATE_TTL_MS = 15 * 60 * 1000; // 15 minutos
+const lastMenuByPhone = new Map(); // phone -> { menu: string, ts: number }
+
+function setState(phone, menu) {
+  lastMenuByPhone.set(phone, { menu, ts: Date.now() });
+}
+
+function getState(phone) {
+  const s = lastMenuByPhone.get(phone);
+  if (!s) return null;
+  if (Date.now() - s.ts > STATE_TTL_MS) {
+    lastMenuByPhone.delete(phone);
+    return null;
+  }
+  return s.menu;
+}
+
+// limpeza simples para não crescer infinito
+setInterval(() => {
+  const now = Date.now();
+  for (const [phone, s] of lastMenuByPhone.entries()) {
+    if (now - s.ts > STATE_TTL_MS) lastMenuByPhone.delete(phone);
+  }
+}, 5 * 60 * 1000);
 
 // =======================
 // TEXTOS (MENU FIXO FINAL)
@@ -132,14 +158,19 @@ const CONVENIOS = {
   "2": { porBot: false, linha: "Samaritano → Hosp. Samaritano Unidade 2 (19) 3738-8100 ou Pró-Consulta Sumaré (19) 3883-1314" },
   "3": { porBot: false, linha: "Salusmed → Clínica Matuda (19) 3733-1111" },
   "4": { porBot: false, linha: "Proasa → Cevisa (19) 3858-5918" },
-  "5": { porBot: true, linha: null }, // MedSênior (exceção)
+  "5": { porBot: true, linha: null }, // MedSênior
 };
 
 // =======================
 // HELPERS
 // =======================
 function norm(s) {
-  return (s || "").trim().replace(/\s+/g, " ").toUpperCase();
+  return (s || "").trim().replace(/\s+/g, " ");
+}
+
+function onlyDigits(s) {
+  const t = (s || "").trim();
+  return /^[0-9]+$/.test(t) ? t : null;
 }
 
 async function sendText(to, body) {
@@ -172,43 +203,195 @@ async function sendText(to, body) {
   }
 }
 
-// Decide respostas (stateless)
-function decidirRespostas(textoBruto) {
-  const t = norm(textoBruto);
+async function sendAndSetState(phone, body, menuState) {
+  await sendText(phone, body);
+  if (menuState) setState(phone, menuState);
+}
 
-  // Palavra-chave
-  if (t === "AJUDA") return [MSG.AJUDA, MSG.MENU];
+// =======================
+// ROTEADOR COM ESTADO MÍNIMO
+// =======================
+async function handleInbound(phone, inboundText) {
+  const raw = norm(inboundText);
+  const upper = raw.toUpperCase();
+  const digits = onlyDigits(raw);
+  const last = getState(phone); // "MAIN" | "PARTICULAR" | "CONVENIOS" | "MEDSENIOR" | "POS" | "POS_TARDIO" | null
 
-  // MENU principal
-  if (t === "1") return [MSG.PARTICULAR, MSG.MENU];
-  if (t === "2") return [MSG.CONVENIOS, MSG.MENU];
-  if (t === "3") return [MSG.POS_MENU, MSG.MENU];
-  if (t === "4") return [MSG.ATENDENTE, MSG.MENU];
-
-  // Voltar menu
-  if (t === "0") return [MSG.MENU];
-
-  // Atalho particular (usado nos convênios)
-  if (t === "9") return [MSG.PARTICULAR, MSG.MENU];
-
-  // Link de agendamento (para evitar ambiguidade do "1" sem estado)
-  if (t.includes("LINK") || t.includes("AGEND") || t.includes("HORAR") || t === "AGENDA") {
-    return [MSG.LINK_AGENDAMENTO, MSG.MENU];
+  // AJUDA sempre funciona
+  if (upper === "AJUDA") {
+    await sendAndSetState(phone, MSG.AJUDA, null);
+    await sendAndSetState(phone, MSG.MENU, "MAIN");
+    return;
   }
 
-  // Convênios (1-5): stateless aceita sempre
-  if (["1", "2", "3", "4", "5"].includes(t)) {
-    const c = CONVENIOS[t];
-    if (c?.porBot) return [MSG.MEDSENIOR, MSG.MENU];
-    if (c) return [MSG.CONVENIO_NAO_AGENDA(c.linha), MSG.MENU];
+  // Se NÃO for número, sempre volta pro MENU (seu comportamento desejado)
+  if (!digits) {
+    await sendAndSetState(phone, MSG.MENU, "MAIN");
+    return;
   }
 
-  // Pós-op por palavras-chave (stateless)
-  if (t.includes("RECENTE") || t.includes("ATÉ 30") || t.includes("ATE 30")) return [MSG.POS_RECENTE, MSG.MENU];
-  if (t.includes("TARDIO") || t.includes("MAIS DE 30")) return [MSG.POS_TARDIO, MSG.MENU];
+  // Se for número, interpreta de acordo com o ÚLTIMO MENU mostrado
+  // Se não tiver estado (expirou), cai no MENU principal
+  const ctx = last || "MAIN";
 
-  // REGRA OPÇÃO 1: qualquer coisa -> menu
-  return [MSG.MENU];
+  // ===================
+  // CONTEXTO: MAIN MENU
+  // ===================
+  if (ctx === "MAIN") {
+    if (digits === "1") {
+      await sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR");
+      return;
+    }
+    if (digits === "2") {
+      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
+      return;
+    }
+    if (digits === "3") {
+      await sendAndSetState(phone, MSG.POS_MENU, "POS");
+      return;
+    }
+    if (digits === "4") {
+      await sendAndSetState(phone, MSG.ATENDENTE, "MAIN");
+      // Mantém MAIN para que qualquer próxima mensagem “solta” volte ao menu
+      return;
+    }
+    if (digits === "0") {
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+
+    // número inválido -> menu
+    await sendAndSetState(phone, MSG.MENU, "MAIN");
+    return;
+  }
+
+  // ===================
+  // CONTEXTO: PARTICULAR
+  // ===================
+  if (ctx === "PARTICULAR") {
+    if (digits === "1") {
+      await sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MAIN");
+      // após mandar link, volta a MAIN (fica previsível)
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+    if (digits === "0") {
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+    // inválido -> menu
+    await sendAndSetState(phone, MSG.MENU, "MAIN");
+    return;
+  }
+
+  // ===================
+  // CONTEXTO: CONVÊNIOS
+  // ===================
+  if (ctx === "CONVENIOS") {
+    if (digits === "0") {
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+
+    if (["1", "2", "3", "4", "5"].includes(digits)) {
+      const c = CONVENIOS[digits];
+      if (c?.porBot) {
+        await sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR");
+        return;
+      }
+      if (c) {
+        await sendAndSetState(phone, MSG.CONVENIO_NAO_AGENDA(c.linha), "CONVENIOS_NAO_AGENDA");
+        return;
+      }
+    }
+
+    // inválido -> convênios de novo
+    await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
+    return;
+  }
+
+  // ===============================
+  // CONTEXTO: CONVÊNIO NÃO AGENDA
+  // ===============================
+  if (ctx === "CONVENIOS_NAO_AGENDA") {
+    if (digits === "9") {
+      await sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR");
+      return;
+    }
+    if (digits === "0") {
+      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
+      return;
+    }
+    // inválido -> repete opções
+    // (mantém o mesmo estado)
+    await sendAndSetState(
+      phone,
+      "Escolha uma opção:\n9) Agendamento particular\n0) Voltar aos convênios",
+      "CONVENIOS_NAO_AGENDA"
+    );
+    return;
+  }
+
+  // ===================
+  // CONTEXTO: MEDSENIOR
+  // ===================
+  if (ctx === "MEDSENIOR") {
+    if (digits === "1") {
+      await sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MAIN");
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+    if (digits === "0") {
+      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
+      return;
+    }
+    await sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR");
+    return;
+  }
+
+  // ===================
+  // CONTEXTO: PÓS-OP
+  // ===================
+  if (ctx === "POS") {
+    if (digits === "1") {
+      await sendAndSetState(phone, MSG.POS_RECENTE, "MAIN");
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+    if (digits === "2") {
+      await sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO");
+      return;
+    }
+    if (digits === "0") {
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+    await sendAndSetState(phone, MSG.POS_MENU, "POS");
+    return;
+  }
+
+  // =========================
+  // CONTEXTO: PÓS-OP TARDIO
+  // =========================
+  if (ctx === "POS_TARDIO") {
+    if (digits === "1") {
+      await sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR");
+      return;
+    }
+    if (digits === "2") {
+      await sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS");
+      return;
+    }
+    if (digits === "0") {
+      await sendAndSetState(phone, MSG.MENU, "MAIN");
+      return;
+    }
+    await sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO");
+    return;
+  }
+
+  // fallback
+  await sendAndSetState(phone, MSG.MENU, "MAIN");
 }
 
 // =======================
@@ -247,9 +430,7 @@ app.post("/webhook", async (req, res) => {
 
     const body = req.body;
 
-    if (body.object !== "whatsapp_business_account") {
-      return;
-    }
+    if (body.object !== "whatsapp_business_account") return;
 
     const entry = body.entry?.[0];
     const change = entry?.changes?.[0];
@@ -263,12 +444,11 @@ app.post("/webhook", async (req, res) => {
 
     console.log("MSG FROM:", from);
     console.log("MSG TEXT:", text);
+    console.log("STATE BEFORE:", getState(from));
 
-    const respostas = decidirRespostas(text);
+    await handleInbound(from, text);
 
-    for (const r of respostas) {
-      await sendText(from, r);
-    }
+    console.log("STATE AFTER:", getState(from));
   } catch (err) {
     console.log("ERRO no POST /webhook:", err);
   }
