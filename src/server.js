@@ -64,7 +64,7 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // =======================
-// NÚMERO DE SUPORTE (recebe os encaminhamentos)
+// CONTATO SUPORTE (para o link clicável)
 // =======================
 const SUPPORT_WA = "5519933005596";
 
@@ -144,6 +144,7 @@ Escolha uma opção:
 9) Agendamento particular
 0) Voltar aos convênios`,
 
+  // ✅ TEXTO SAMARITANO AJUSTADO (como você pediu)
   CONVENIO_SAMARITANO: `Samaritano
 
 O agendamento é feito pelo paciente diretamente nas unidades disponíveis:
@@ -152,7 +153,7 @@ Hospital Samaritano de Campinas – Unidade 2
 
 📞 (19) 3738-8100
 
-Agendamento pela Clínica Pró-Consulta de Sumaré
+Clínica Pró-Consulta de Sumaré
 
 📞 (19) 3883-1314
 
@@ -199,7 +200,7 @@ Avenida Orosimbo Maia, 360
 
 Escolha uma opção:
 1) Acesse o link de agendamento e escolha o melhor horário disponível
-0) Voltar aos convênios`,
+0) Voltar ao menu inicial`,
 
   POS_MENU: `Acompanhamento pós-operatório
 
@@ -243,10 +244,7 @@ relatórios ou orientações clínicas,
 
 Descreva abaixo como podemos te ajudar.`,
 
-  AJUDA_PERGUNTA: `Certo — me diga qual foi a dificuldade no agendamento (o que aconteceu).
-
-Assim que você enviar, encaminharemos para nossa equipe pelo WhatsApp:
-📞 (19) 93300-5596`,
+  AJUDA_PERGUNTA: `Certo — me diga qual foi a dificuldade no agendamento (o que aconteceu).`,
 };
 
 // =======================
@@ -259,6 +257,11 @@ function onlyDigits(s) {
 
 function normalizeSpaces(s) {
   return (s || "").trim().replace(/\s+/g, " ");
+}
+
+function makeWaLink(prefillText) {
+  const encoded = encodeURIComponent(prefillText);
+  return `https://wa.me/${SUPPORT_WA}?text=${encoded}`;
 }
 
 async function sendText({ to, body, phoneNumberIdFallback }) {
@@ -300,19 +303,6 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
   if (state) setState(phone, state);
 }
 
-// Encaminha para o suporte (como mensagem do BOT para o número de suporte)
-async function forwardToSupport({ patientPhone, patientText, context, phoneNumberIdFallback }) {
-  const payload = `📩 NOVA MENSAGEM (BOT)
-
-Contexto: ${context}
-Paciente: ${patientPhone}
-
-Mensagem:
-${patientText}`;
-
-  await sendText({ to: SUPPORT_WA, body: payload, phoneNumberIdFallback });
-}
-
 // =======================
 // ROTEADOR COM ESTADO MÍNIMO
 // =======================
@@ -324,61 +314,59 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const st = getState(phone);
   const ctx = st.state || "MAIN";
 
-  // Se a sessão expirou (15min), ao retornar o usuário recebe encerramento + menu
-  // (não dá para enviar sozinho sem o usuário mandar algo)
+  // Sessão expirou: quando o usuário voltar e falar algo, avisamos e mostramos menu.
   if (st.expired) {
     await sendText({ to: phone, body: MSG.ENCERRAMENTO, phoneNumberIdFallback });
     await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return;
   }
 
-  // 1) Fluxo AJUDA: pede motivo e encaminha a próxima mensagem
+  // AJUDA -> pergunta motivo
   if (upper === "AJUDA") {
     await sendAndSetState(phone, MSG.AJUDA_PERGUNTA, "WAIT_AJUDA_MOTIVO", phoneNumberIdFallback);
     return;
   }
 
+  // Captura motivo da AJUDA e devolve link clicável com texto preenchido
   if (ctx === "WAIT_AJUDA_MOTIVO") {
-    // qualquer texto vira motivo (inclusive número)
-    await forwardToSupport({
-      patientPhone: phone,
-      patientText: raw,
-      context: "AJUDA (agendamento)",
-      phoneNumberIdFallback,
-    });
+    const prefill = `Olá! Preciso de ajuda no agendamento.
+
+Paciente: ${phone}
+Motivo: ${raw}`;
+    const link = makeWaLink(prefill);
 
     await sendAndSetState(
       phone,
-      `Obrigado! Encaminhamos sua mensagem para nossa equipe pelo WhatsApp:
-📞 (19) 93300-5596`,
+      `Perfeito — para falar com nossa equipe, clique no link abaixo e envie a mensagem:
+
+${link}`,
       "MAIN",
       phoneNumberIdFallback
     );
     return;
   }
 
-  // 2) Fluxo atendente: se o usuário enviar texto, encaminha.
-  // Observação: se entrar no menu 4 e mandar texto livre, encaminha.
+  // Texto livre: se estiver em ATENDENTE, gera link com a mensagem
   if (!digits) {
     if (ctx === "ATENDENTE") {
-      await forwardToSupport({
-        patientPhone: phone,
-        patientText: raw,
-        context: "FALAR COM ATENDENTE",
-        phoneNumberIdFallback,
-      });
+      const prefill = `Olá! Preciso falar com um atendente.
+
+Paciente: ${phone}
+Mensagem: ${raw}`;
+      const link = makeWaLink(prefill);
 
       await sendAndSetState(
         phone,
-        `Obrigado! Encaminhamos sua mensagem para nossa equipe pelo WhatsApp:
-📞 (19) 93300-5596`,
+        `Certo — clique no link abaixo para falar com nossa equipe e envie a mensagem:
+
+${link}`,
         "MAIN",
         phoneNumberIdFallback
       );
       return;
     }
 
-    // padrão geral: volta menu
+    // padrão geral: volta ao menu
     await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return;
   }
@@ -395,17 +383,11 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   }
 
   // -------------------
-  // CONTEXTO: PARTICULAR (ATUALIZADO)
+  // CONTEXTO: PARTICULAR (permanece 15 min)
   // -------------------
   if (ctx === "PARTICULAR") {
-    if (digits === "1") {
-      // envia o link e permanece em PARTICULAR
-      return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "PARTICULAR", phoneNumberIdFallback);
-    }
-    if (digits === "0") {
-      return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-    }
-    // qualquer outra coisa: repete tela do particular
+    if (digits === "1") return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "PARTICULAR", phoneNumberIdFallback);
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
   }
 
@@ -434,16 +416,11 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   }
 
   // -------------------
-  // CONTEXTO: MEDSENIOR (ATUALIZADO)
+  // CONTEXTO: MEDSENIOR (ajustado: 0 volta ao MENU INICIAL, como você pediu)
   // -------------------
   if (ctx === "MEDSENIOR") {
-    if (digits === "1") {
-      // envia o link e permanece em MEDSENIOR
-      return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MEDSENIOR", phoneNumberIdFallback);
-    }
-    if (digits === "0") {
-      return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
-    }
+    if (digits === "1") return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MEDSENIOR", phoneNumberIdFallback);
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback); // ✅ aqui é a correção
     return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
   }
 
@@ -458,7 +435,7 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   }
 
   // -------------------
-  // CONTEXTO: POS_RECENTE (não volta menu sozinho)
+  // CONTEXTO: POS_RECENTE (permanece)
   // -------------------
   if (ctx === "POS_RECENTE") {
     if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
@@ -480,7 +457,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   // -------------------
   if (ctx === "ATENDENTE") {
     if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-    // se digitou número qualquer, pede para descrever em texto
     return sendAndSetState(phone, "Por favor, descreva abaixo como podemos te ajudar.", "ATENDENTE", phoneNumberIdFallback);
   }
 
@@ -512,11 +488,9 @@ app.get("/webhook", (req, res) => {
 // =======================
 app.post("/webhook", async (req, res) => {
   try {
-    // responde rápido para a Meta
     res.sendStatus(200);
 
     const body = req.body;
-
     if (body.object !== "whatsapp_business_account") return;
 
     const entry = body.entry?.[0];
