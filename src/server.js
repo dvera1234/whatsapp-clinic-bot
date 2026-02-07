@@ -242,7 +242,7 @@ Este canal está disponível para apoio, dúvidas gerais
 e auxílio no uso dos serviços da clínica.
 
 Para solicitações médicas, como atestados, laudos,
-relatórios ou orientações clínicas,
+orçamentos, relatórios ou orientações clínicas,
 é necessária avaliação em consulta.
 
 Descreva abaixo como podemos te ajudar.`,
