@@ -38,7 +38,7 @@ console.log("ENV CHECK:", {
 // =======================
 // CONFIG (estado mínimo + expiração)
 // =======================
-const STATE_TTL_MS = 15 * 60 * 1000; // 15 min
+const STATE_TTL_MS = 10 * 60 * 1000; // 10 min
 const lastStateByPhone = new Map(); // phone -> { state, ts }
 
 function setState(phone, state) {
@@ -72,11 +72,11 @@ const SUPPORT_WA = "5519933005596";
 // TEXTOS
 // =======================
 const MSG = {
-  ENCERRAMENTO: `Estamos encerrando este atendimento, mas caso precise de algo mais, ficamos à disposição!
+  ENCERRAMENTO: `✅ Estamos encerrando este atendimento, mas caso precise de algo mais, ficamos à disposição!
 
-Agradecemos sua atenção!
+🙏 Agradecemos sua atenção!
 
-Siga-nos também no Instagram:
+📲 Siga-nos também no Instagram:
 https://www.instagram.com/dr.david_vera/`,
 
   MENU: `👋 Olá! Sou a Cláudia, assistente virtual do Dr. David E. Vera.
@@ -131,6 +131,8 @@ envie uma mensagem com a palavra AJUDA.
 5) MedSênior
 0) Voltar ao menu inicial`,
 
+  // 🔸 textos mantêm "0) Voltar..." como você quiser (pode deixar "aos convênios"),
+  // mas a LÓGICA abaixo fará 0 voltar ao MENU INICIAL para esses convênios.
   CONVENIO_GOCARE: `GoCare
 
 O agendamento é feito pelo paciente diretamente na Clínica Santé.
@@ -142,9 +144,8 @@ com agendamento rápido e direto por aqui.
 
 Escolha uma opção:
 9) Agendamento particular
-0) Voltar aos convênios`,
+0) Voltar ao menu inicial`,
 
-  // ✅ TEXTO SAMARITANO AJUSTADO (como você pediu)
   CONVENIO_SAMARITANO: `Samaritano
 
 O agendamento é feito pelo paciente diretamente nas unidades disponíveis:
@@ -162,7 +163,7 @@ com agendamento rápido e direto por aqui.
 
 Escolha uma opção:
 9) Agendamento particular
-0) Voltar aos convênios`,
+0) Voltar ao menu inicial`,
 
   CONVENIO_SALUSMED: `Salusmed
 
@@ -175,7 +176,7 @@ com agendamento rápido e direto por aqui.
 
 Escolha uma opção:
 9) Agendamento particular
-0) Voltar aos convênios`,
+0) Voltar ao menu inicial`,
 
   CONVENIO_PROASA: `Proasa
 
@@ -188,7 +189,7 @@ com agendamento rápido e direto por aqui.
 
 Escolha uma opção:
 9) Agendamento particular
-0) Voltar aos convênios`,
+0) Voltar ao menu inicial`,
 
   MEDSENIOR: `MedSênior
 
@@ -314,7 +315,7 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const st = getState(phone);
   const ctx = st.state || "MAIN";
 
-  // Sessão expirou: quando o usuário voltar e falar algo, avisamos e mostramos menu.
+  // Sessão expirou (10min): quando o usuário voltar e falar algo, avisamos e mostramos menu.
   if (st.expired) {
     await sendText({ to: phone, body: MSG.ENCERRAMENTO, phoneNumberIdFallback });
     await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
@@ -337,7 +338,7 @@ Motivo: ${raw}`;
 
     await sendAndSetState(
       phone,
-      `Perfeito — para falar com nossa equipe, clique no link abaixo e envie a mensagem:
+      `Perfeito ✅ Para falar com nossa equipe, clique no link abaixo e envie a mensagem:
 
 ${link}`,
       "MAIN",
@@ -357,7 +358,7 @@ Mensagem: ${raw}`;
 
       await sendAndSetState(
         phone,
-        `Certo — clique no link abaixo para falar com nossa equipe e envie a mensagem:
+        `Certo ✅ Clique no link abaixo para falar com nossa equipe e envie a mensagem:
 
 ${link}`,
         "MAIN",
@@ -383,7 +384,7 @@ ${link}`,
   }
 
   // -------------------
-  // CONTEXTO: PARTICULAR (permanece 15 min)
+  // CONTEXTO: PARTICULAR
   // -------------------
   if (ctx === "PARTICULAR") {
     if (digits === "1") return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "PARTICULAR", phoneNumberIdFallback);
@@ -408,19 +409,20 @@ ${link}`,
 
   // -------------------
   // CONTEXTO: CONV DETALHE (GoCare/Samaritano/Salusmed/Proasa)
+  // ✅ AQUI É A MUDANÇA: "0" VOLTA AO MENU INICIAL
   // -------------------
   if (ctx === "CONV_DETALHE") {
     if (digits === "9") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
-    if (digits === "0") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback); // ✅ mudou aqui
     return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
   }
 
   // -------------------
-  // CONTEXTO: MEDSENIOR (ajustado: 0 volta ao MENU INICIAL, como você pediu)
+  // CONTEXTO: MEDSENIOR (já correto)
   // -------------------
   if (ctx === "MEDSENIOR") {
     if (digits === "1") return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MEDSENIOR", phoneNumberIdFallback);
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback); // ✅ aqui é a correção
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
   }
 
@@ -435,7 +437,7 @@ ${link}`,
   }
 
   // -------------------
-  // CONTEXTO: POS_RECENTE (permanece)
+  // CONTEXTO: POS_RECENTE
   // -------------------
   if (ctx === "POS_RECENTE") {
     if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
