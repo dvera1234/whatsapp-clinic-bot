@@ -245,7 +245,9 @@ Para solicitações médicas, como atestados, laudos,
 orçamentos, relatórios ou orientações clínicas,
 é necessária avaliação em consulta.
 
-Descreva abaixo como podemos te ajudar.`,
+Descreva abaixo como podemos te ajudar.
+
+0) Voltar ao menu inicial`,
 
   AJUDA_PERGUNTA: `Certo — me diga qual foi a dificuldade no agendamento (o que aconteceu).`,
 };
