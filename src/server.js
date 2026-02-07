@@ -36,35 +36,38 @@ console.log("ENV CHECK:", {
 });
 
 // =======================
-// CONFIG (estado mínimo + expiração)
+// CONFIG
 // =======================
-const STATE_TTL_MS = 10 * 60 * 1000; // 10 min
-const lastStateByPhone = new Map(); // phone -> { state, ts }
+const INACTIVITY_MS = 10 * 60 * 1000; // 10 min sem o usuário falar
+const SWEEP_EVERY_MS = 30 * 1000; // varre a cada 30s
+
+// phone -> { state, lastUserTs, lastPhoneNumberIdFallback }
+const sessions = new Map();
+
+function touchUser(phone, phoneNumberIdFallback) {
+  const s = sessions.get(phone) || { state: null, lastUserTs: 0, lastPhoneNumberIdFallback: "" };
+  s.lastUserTs = Date.now();
+  if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+  sessions.set(phone, s);
+}
 
 function setState(phone, state) {
-  lastStateByPhone.set(phone, { state, ts: Date.now() });
+  const s = sessions.get(phone) || { state: null, lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  s.state = state;
+  sessions.set(phone, s);
 }
 
 function getState(phone) {
-  const s = lastStateByPhone.get(phone);
-  if (!s) return { state: null, expired: false };
-  if (Date.now() - s.ts > STATE_TTL_MS) {
-    lastStateByPhone.delete(phone);
-    return { state: null, expired: true };
-  }
-  return { state: s.state, expired: false };
+  const s = sessions.get(phone);
+  return s?.state || null;
 }
 
-// limpeza (evita crescer infinito)
-setInterval(() => {
-  const now = Date.now();
-  for (const [phone, s] of lastStateByPhone.entries()) {
-    if (now - s.ts > STATE_TTL_MS) lastStateByPhone.delete(phone);
-  }
-}, 5 * 60 * 1000);
+function clearSession(phone) {
+  sessions.delete(phone);
+}
 
 // =======================
-// CONTATO SUPORTE (para o link clicável)
+// CONTATO SUPORTE (link clicável)
 // =======================
 const SUPPORT_WA = "5519933005596";
 
@@ -72,8 +75,9 @@ const SUPPORT_WA = "5519933005596";
 // TEXTOS
 // =======================
 const MSG = {
-  ENCERRAMENTO: `✅ Estamos encerrando este atendimento, mas caso precise de algo mais, ficamos à disposição!
+  ENCERRAMENTO: `✅ Atendimento encerrado por inatividade.
 
+🤝 Caso precise de algo mais, ficamos à disposição!
 🙏 Agradecemos sua atenção!
 
 📲 Siga-nos também no Instagram:
@@ -114,7 +118,7 @@ Escolha uma opção:
 0) Voltar ao menu inicial`,
 
   LINK_AGENDAMENTO: `👉 Link de agendamento:
-bit.ly/3ZmVXSB
+bit.ly/drdavidvera
 
 Após a confirmação, você receberá as orientações para o dia da consulta.
 
@@ -131,8 +135,6 @@ envie uma mensagem com a palavra AJUDA.
 5) MedSênior
 0) Voltar ao menu inicial`,
 
-  // 🔸 textos mantêm "0) Voltar..." como você quiser (pode deixar "aos convênios"),
-  // mas a LÓGICA abaixo fará 0 voltar ao MENU INICIAL para esses convênios.
   CONVENIO_GOCARE: `GoCare
 
 O agendamento é feito pelo paciente diretamente na Clínica Santé.
@@ -271,11 +273,11 @@ async function sendText({ to, body, phoneNumberIdFallback }) {
 
   if (!token) {
     console.log("ERRO: token ausente (WHATSAPP_TOKEN/ACCESS_TOKEN/...).");
-    return;
+    return false;
   }
   if (!phoneNumberId) {
     console.log("ERRO: phone_number_id ausente (env e webhook).");
-    return;
+    return false;
   }
 
   const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
@@ -296,7 +298,9 @@ async function sendText({ to, body, phoneNumberIdFallback }) {
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
     console.log("ERRO ao enviar mensagem:", resp.status, txt);
+    return false;
   }
+  return true;
 }
 
 async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
@@ -305,22 +309,42 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
 }
 
 // =======================
+// AUTO-ENCERRAMENTO (10 min silêncio)
+// - envia mensagem
+// - limpa estado
+// =======================
+setInterval(async () => {
+  const now = Date.now();
+
+  for (const [phone, s] of sessions.entries()) {
+    const idle = now - (s.lastUserTs || 0);
+    if (idle < INACTIVITY_MS) continue;
+
+    // Envia encerramento e limpa
+    console.log(`AUTO-CLOSE: ${phone} idle=${Math.round(idle / 1000)}s state=${s.state || "(none)"}`);
+
+    await sendText({
+      to: phone,
+      body: MSG.ENCERRAMENTO,
+      phoneNumberIdFallback: s.lastPhoneNumberIdFallback || "",
+    });
+
+    clearSession(phone);
+  }
+}, SWEEP_EVERY_MS);
+
+// =======================
 // ROTEADOR COM ESTADO MÍNIMO
 // =======================
 async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
+  // marca atividade do usuário (isso é o que conta como "silêncio")
+  touchUser(phone, phoneNumberIdFallback);
+
   const raw = normalizeSpaces(inboundText);
   const upper = raw.toUpperCase();
   const digits = onlyDigits(raw);
 
-  const st = getState(phone);
-  const ctx = st.state || "MAIN";
-
-  // Sessão expirou (10min): quando o usuário voltar e falar algo, avisamos e mostramos menu.
-  if (st.expired) {
-    await sendText({ to: phone, body: MSG.ENCERRAMENTO, phoneNumberIdFallback });
-    await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-    return;
-  }
+  const ctx = getState(phone) || "MAIN";
 
   // AJUDA -> pergunta motivo
   if (upper === "AJUDA") {
@@ -367,7 +391,7 @@ ${link}`,
       return;
     }
 
-    // padrão geral: volta ao menu
+    // padrão: volta ao menu
     await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return;
   }
@@ -408,17 +432,16 @@ ${link}`,
   }
 
   // -------------------
-  // CONTEXTO: CONV DETALHE (GoCare/Samaritano/Salusmed/Proasa)
-  // ✅ AQUI É A MUDANÇA: "0" VOLTA AO MENU INICIAL
+  // CONTEXTO: CONV DETALHE (0 volta ao menu inicial)
   // -------------------
   if (ctx === "CONV_DETALHE") {
     if (digits === "9") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback); // ✅ mudou aqui
+    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
     return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
   }
 
   // -------------------
-  // CONTEXTO: MEDSENIOR (já correto)
+  // CONTEXTO: MEDSENIOR
   // -------------------
   if (ctx === "MEDSENIOR") {
     if (digits === "1") return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "MEDSENIOR", phoneNumberIdFallback);
