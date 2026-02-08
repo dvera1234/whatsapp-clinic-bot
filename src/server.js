@@ -532,7 +532,7 @@ app.post("/webhook", async (req, res) => {
     const phoneNumberIdFallback = value?.metadata?.phone_number_id || "";
 
     console.log("MSG FROM:", from);
-    console.log("MSG TEXT:", text);
+console.log("MSG RECEIVED: [hidden for privacy]");
     console.log("STATE:", getState(from));
 
     await handleInbound(from, text, phoneNumberIdFallback);
