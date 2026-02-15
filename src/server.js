@@ -680,5 +680,52 @@ app.get("/debug/versatilis/agenda-consulta", async (req, res) => {
   }
 });
 
+app.post("/debug/versatilis/confirmar-agendamento", async (req, res) => {
+  try {
+    // Proteção simples (não deixa endpoint de escrita aberto na internet)
+    const DEBUG_KEY = process.env.DEBUG_KEY;
+    const provided = req.query.k || req.headers["x-debug-key"];
+    if (!DEBUG_KEY || provided !== DEBUG_KEY) {
+      return res.status(403).json({ ok: false, error: "forbidden (missing/invalid debug key)" });
+    }
+
+    // Payload (use defaults do seu teste real; pode sobrescrever via body)
+    const p = req.body || {};
+
+    const payload = {
+      CodUnidade: Number(p.CodUnidade ?? 2),
+      CodEspecialidade: Number(p.CodEspecialidade ?? 1003),
+      CodPlano: Number(p.CodPlano ?? 2),
+      CodHorario: Number(p.CodHorario),      // OBRIGATÓRIO (ex: 2012)
+      CodUsuario: Number(p.CodUsuario ?? 17),
+      CodColaborador: Number(p.CodColaborador ?? 3),
+      BitTelemedicina: Boolean(p.BitTelemedicina ?? false),
+      Confirmada: Boolean(p.Confirmada ?? true),
+    };
+
+    // Opcionais (só envia se vierem)
+    if (p.NumCarteirinha) payload.NumCarteirinha = String(p.NumCarteirinha);
+    if (p.CodProcedimento != null && p.CodProcedimento !== "") payload.CodProcedimento = Number(p.CodProcedimento);
+    if (p.TUSS) payload.TUSS = String(p.TUSS);
+    if (p.CodigoVenda != null && p.CodigoVenda !== "") payload.CodigoVenda = Number(p.CodigoVenda);
+    if (p.Data) payload.Data = String(p.Data); // use apenas se for testar CodHorario=0 (não recomendo agora)
+
+    // Validação mínima
+    if (!payload.CodHorario || Number.isNaN(payload.CodHorario)) {
+      return res.status(400).json({ ok: false, error: "CodHorario é obrigatório (number)" });
+    }
+
+    // Chamada real
+    const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
+      method: "POST",
+      jsonBody: payload,
+    });
+
+    return res.status(200).json(out);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // =======================
 app.listen(port, () => console.log(`Server running on port ${port}`));
