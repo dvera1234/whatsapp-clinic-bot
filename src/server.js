@@ -341,25 +341,40 @@ function makeWaLink(prefillText) {
   return `https://wa.me/${SUPPORT_WA}?text=${encoded}`;
 }
 
-async function sendText({ to, body, phoneNumberIdFallback }) {
+// =======================
+// ENV SEND BASE
+// =======================
+function getSendConfig(phoneNumberIdFallback) {
   const token = pickToken();
   const phoneNumberId = pickPhoneNumberId(phoneNumberIdFallback);
 
   if (!token) {
     console.log("ERRO: token ausente (WHATSAPP_TOKEN/ACCESS_TOKEN/...).");
-    return false;
+    return null;
   }
+
   if (!phoneNumberId) {
-    console.log("ERRO: phone_number_id ausente (env e webhook).");
-    return false;
+    console.log("ERRO: phone_number_id ausente (env ou webhook).");
+    return null;
   }
 
-  const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+  return {
+    token,
+    url: `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+  };
+}
 
-  const resp = await fetch(url, {
+// =======================
+// TEXTO SIMPLES
+// =======================
+async function sendText({ to, body, phoneNumberIdFallback }) {
+  const config = getSendConfig(phoneNumberIdFallback);
+  if (!config) return false;
+
+  const resp = await fetch(config.url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${config.token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -371,14 +386,65 @@ async function sendText({ to, body, phoneNumberIdFallback }) {
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
-    console.log("ERRO ao enviar mensagem:", resp.status, txt);
+    console.log("ERRO ao enviar texto:", resp.status, txt);
     return false;
   }
+
   return true;
 }
 
+// =======================
+// BOTÕES (INTERACTIVE)
+// =======================
+async function sendButtons({ to, body, buttons, phoneNumberIdFallback }) {
+  const config = getSendConfig(phoneNumberIdFallback);
+  if (!config) return false;
+
+  const resp = await fetch(config.url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: body },
+        action: {
+          buttons: buttons.map((b) => ({
+            type: "reply",
+            reply: {
+              id: b.id,
+              title: b.title,
+            },
+          })),
+        },
+      },
+    }),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "");
+    console.log("ERRO ao enviar botões:", resp.status, txt);
+    return false;
+  }
+
+  return true;
+}
+
+// =======================
+// ENVIO + ESTADO
+// =======================
 async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
-  await sendText({ to: phone, body, phoneNumberIdFallback });
+  await sendText({
+    to: phone,
+    body,
+    phoneNumberIdFallback,
+  });
+
   if (state) setState(phone, state);
 }
 
