@@ -487,10 +487,12 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const ctx = getState(phone) || "MAIN";
 
 // TESTE: capturar clique de botão de horário
-if (raw.startsWith("H_")) {
+const rawUp = raw.toUpperCase();
+
+if (rawUp.startsWith("H_")) {
   await sendAndSetState(
     phone,
-    `✅ Recebi sua escolha: ${raw}`,
+    `✅ Recebi sua escolha: ${rawUp}`,
     "MAIN",
     phoneNumberIdFallback
   );
