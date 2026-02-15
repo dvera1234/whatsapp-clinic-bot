@@ -360,7 +360,28 @@ function toHHMM(hora) {
 }
 
 // =======================
-// BUSCAR HORÁRIOS DO DIA (Versatilis)
+// REGRAS DE TEMPO (segurança)
+// =======================
+const MIN_LEAD_HOURS = 6;              // mínimo de 6h
+const TZ_OFFSET = "-03:00";            // São Paulo (sem DST hoje)
+
+// Constrói epoch ms do horário (data ISO + HH:MM) em fuso -03:00
+function slotEpochMs(isoDate, hhmm) {
+  // ex: 2026-02-24T07:30:00-03:00
+  const d = new Date(`${isoDate}T${hhmm}:00${TZ_OFFSET}`);
+  const ms = d.getTime();
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+function isSlotAllowed(isoDate, hhmm) {
+  const ms = slotEpochMs(isoDate, hhmm);
+  if (!Number.isFinite(ms)) return false;
+  const minMs = Date.now() + MIN_LEAD_HOURS * 60 * 60 * 1000;
+  return ms >= minMs;
+}
+
+// =======================
+// BUSCAR HORÁRIOS DO DIA (Versatilis) + filtro 6h
 // =======================
 async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
   const path =
@@ -382,85 +403,120 @@ async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
       hhmm: toHHMM(h.Hora),
     }))
     .filter((x) => x.codHorario && x.hhmm)
-    .sort((a, b) => a.hhmm.localeCompare(b.hhmm));
+    .sort((a, b) => a.hhmm.localeCompare(b.hhmm))
+    // ✅ filtro 6h aqui
+    .filter((x) => isSlotAllowed(isoDate, x.hhmm));
 
   return { ok: true, slots };
 }
 
 // =======================
-// MOSTRAR 3 HORÁRIOS POR VEZ
+// BUSCAR PRÓXIMAS 3 DATAS DISPONÍVEIS (com slots após filtro 6h)
 // =======================
-async function showSlotsPage({ phone, phoneNumberIdFallback, page = 0 }) {
-  const s = sessions.get(phone) || {};
-  const isoDate = s?.booking?.isoDate;
+async function fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead = 30, limit = 3 }) {
+  const dates = [];
+  const start = new Date(); // hoje
 
-  if (!isoDate) {
-    await sendAndSetState(
-      phone,
-      "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
-      "ASK_DATE",
-      phoneNumberIdFallback
-    );
-    return;
+  for (let i = 0; i < daysLookahead && dates.length < limit; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+    const out = await fetchSlotsDoDia({ codColaborador, codUsuario, isoDate });
+    if (out.ok && out.slots.length > 0) {
+      dates.push(isoDate);
+    }
   }
 
-  // Carrega slots do Versatilis (1x por data), se ainda não carregou
-  if (!Array.isArray(s.booking?.slots) || !s.booking.slots.length) {
-    const { ok, slots } = await fetchSlotsDoDia({
-      codColaborador: 3,
-      codUsuario: 17,
-      isoDate,
-    });
+  return dates; // ex: ["2026-02-24","2026-02-26","2026-02-27"]
+}
 
-    s.booking = { ...(s.booking || {}), slots: ok ? slots : [], pageIndex: 0 };
-    sessions.set(phone, s);
-  }
+function formatBRFromISO(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
+  if (!m) return isoDate;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
 
-  const slots = s.booking.slots || [];
-  if (!slots.length) {
+// =======================
+// MOSTRAR 3 DATAS DISPONÍVEIS
+// =======================
+async function showNextDates({ phone, phoneNumberIdFallback, codColaborador, codUsuario }) {
+  const dates = await fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead: 30, limit: 3 });
+
+  if (!dates.length) {
     await sendText({
       to: phone,
-      body: "⚠️ Não há horários disponíveis.",
+      body: "⚠️ Não encontrei datas disponíveis nos próximos dias.",
       phoneNumberIdFallback,
     });
-    setState(phone, "ASK_DATE");
     return;
   }
 
+  const buttons = dates.map((iso) => ({
+    id: `D_${iso}`,
+    title: formatBRFromISO(iso),
+  }));
+
+  await sendButtons({
+    to: phone,
+    body: "Escolha uma data:",
+    buttons,
+    phoneNumberIdFallback,
+  });
+
+  setState(phone, "ASK_DATE_PICK");
+}
+
+// =======================
+// MOSTRAR 3 HORÁRIOS POR VEZ + navegação + trocar data
+// =======================
+async function showSlotsPage({ phone, phoneNumberIdFallback, slots, page = 0 }) {
   const pageSize = 3;
   const start = page * pageSize;
   const end = start + pageSize;
+
   const pageItems = slots.slice(start, end);
 
   if (!pageItems.length) {
     await sendText({
       to: phone,
-      body: "⚠️ Não há mais horários disponíveis.",
+      body: "⚠️ Não há horários disponíveis (considerando o mínimo de 6h).",
+      phoneNumberIdFallback,
+    });
+
+    await sendButtons({
+      to: phone,
+      body: "Deseja escolher outra data?",
+      buttons: [{ id: "TROCAR_DATA", title: "Trocar data" }],
       phoneNumberIdFallback,
     });
     return;
   }
 
-  // Atualiza página e estado
-  s.booking.pageIndex = page;
-  sessions.set(phone, s);
-  setState(phone, "SLOTS");
+  const buttons = pageItems.map((x) => ({
+    id: `H_${x.codHorario}`,
+    title: x.hhmm,
+  }));
 
   await sendButtons({
     to: phone,
     body: "Horários disponíveis:",
-    buttons: pageItems.map((x) => ({ id: `H_${x.codHorario}`, title: x.hhmm })),
+    buttons,
     phoneNumberIdFallback,
   });
 
+  const extraButtons = [];
+
   if (end < slots.length) {
-    await sendButtons({
-      to: phone,
-      body: "Deseja ver mais horários?",
-      buttons: [{ id: `PAGE_${page + 1}`, title: "Ver mais" }],
-      phoneNumberIdFallback,
-    });
+    extraButtons.push({ id: `PAGE_${page + 1}`, title: "Ver mais" });
   }
+  extraButtons.push({ id: "TROCAR_DATA", title: "Trocar data" });
+
+  await sendButtons({
+    to: phone,
+    body: "Opções:",
+    buttons: extraButtons,
+    phoneNumberIdFallback,
+  });
 }
 
 // =======================
@@ -609,96 +665,94 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const ctx = getState(phone) || "MAIN";
 
 // =======================
-// AGENDAMENTO (dinâmico)
+// AGENDAMENTO (datas + slots + confirmação)
 // =======================
 
-// 0) Atalho: se usuário digitar data em qualquer contexto, aceita e mostra horários
-const isoMaybe = parseDateBR(raw);
-if (isoMaybe) {
+// 1) Usuário escolhe uma DATA (botão D_YYYY-MM-DD)
+if (upper.startsWith("D_")) {
+  const isoDate = raw.slice(2).trim(); // YYYY-MM-DD
   const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.booking = { isoDate: isoMaybe, slots: null, pageIndex: 0 };
+
+  const codColaborador = s.booking?.codColaborador ?? 3;
+  const codUsuario = s.booking?.codUsuario ?? 17;
+
+  s.booking = { ...(s.booking || {}), codColaborador, codUsuario, isoDate, pageIndex: 0 };
+
+  const out = await fetchSlotsDoDia({ codColaborador, codUsuario, isoDate });
+  s.booking.slots = out.ok ? out.slots : [];
   sessions.set(phone, s);
 
-  await showSlotsPage({ phone, phoneNumberIdFallback, page: 0 });
+  setState(phone, "SLOTS");
+  await showSlotsPage({
+    phone,
+    phoneNumberIdFallback,
+    slots: s.booking.slots,
+    page: 0,
+  });
   return;
 }
 
-// 1) Usuário escolhe “Agendamento particular -> opção 1” (você já chama isso no fluxo)
-if (ctx === "PARTICULAR" && digits === "1") {
-  await sendAndSetState(phone, "Certo ✅ me diga a data desejada (ex: 24/02/2026).", "ASK_DATE", phoneNumberIdFallback);
+// 2) Estado ASK_DATE_PICK: aguardando escolher data (apenas botões)
+if (ctx === "ASK_DATE_PICK") {
+  // Se o usuário digitou algo aleatório, reapresenta datas
+  const s = sessions.get(phone);
+  const codColaborador = s?.booking?.codColaborador ?? 3;
+  const codUsuario = s?.booking?.codUsuario ?? 17;
+
+  await showNextDates({ phone, phoneNumberIdFallback, codColaborador, codUsuario });
   return;
 }
 
-// 2) Estado ASK_DATE: aguarda data (dd/mm/aaaa)
-if (ctx === "ASK_DATE") {
-  const iso = parseDateBR(raw);
-  if (!iso) {
-    await sendAndSetState(
-      phone,
-      "Por favor, envie a data no formato dd/mm/aaaa (ex: 24/02/2026).",
-      "ASK_DATE",
-      phoneNumberIdFallback
-    );
-    return;
-  }
-
-  const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.booking = { isoDate: iso, slots: null, pageIndex: 0 };
-  sessions.set(phone, s);
-
-  await showSlotsPage({ phone, phoneNumberIdFallback, page: 0 });
-  return;
-}
-
-  const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.booking = { isoDate: iso, slots: null, pageIndex: 0 };
-  sessions.set(phone, s);
-
-  await showSlotsPage({ phone, phoneNumberIdFallback, page: 0 });
-  return;
-}
-
-// 3) Estado SLOTS: navegação de páginas e seleção de horário
+// 3) Estado SLOTS: paginação / trocar data / escolher horário
 if (ctx === "SLOTS") {
-
-  // clique no botão "Ver mais" -> vem como PAGE_1, PAGE_2...
+  // Ver mais (PAGE_n)
   if (upper.startsWith("PAGE_")) {
-    const next = Number(raw.split("_")[1]);
+    const n = Number(raw.split("_")[1]);
+    const s = sessions.get(phone);
+    const slots = s?.booking?.slots || [];
+
+    const page = Number.isFinite(n) && n >= 0 ? n : 0;
+    if (s?.booking) s.booking.pageIndex = page;
+    sessions.set(phone, s);
+
     await showSlotsPage({
       phone,
       phoneNumberIdFallback,
-      page: Number.isNaN(next) ? 0 : next,
+      slots,
+      page,
     });
     return;
   }
 
-  if (upper === "OUTRA_DATA") {
+  // Trocar data
+  if (upper === "TROCAR_DATA") {
     const s = sessions.get(phone);
-    if (s) {
-      delete s.booking;
-      delete s.pending;
+    if (s?.booking) {
+      s.booking.isoDate = null;
+      s.booking.slots = [];
+      s.booking.pageIndex = 0;
       sessions.set(phone, s);
     }
-    await sendAndSetState(
-      phone,
-      "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
-      "ASK_DATE",
-      phoneNumberIdFallback
-    );
+
+    const codColaborador = s?.booking?.codColaborador ?? 3;
+    const codUsuario = s?.booking?.codUsuario ?? 17;
+    await showNextDates({ phone, phoneNumberIdFallback, codColaborador, codUsuario });
     return;
   }
 
-  // clique em horário
+  // Clique em horário (H_XXXX) -> vai para confirmação
   if (upper.startsWith("H_")) {
     const codHorario = Number(raw.split("_")[1]);
     if (!codHorario || Number.isNaN(codHorario)) {
-      await sendAndSetState(phone, "⚠️ Horário inválido. Tente novamente.", "SLOTS", phoneNumberIdFallback);
+      await sendText({ to: phone, body: "⚠️ Horário inválido.", phoneNumberIdFallback });
       return;
     }
 
     const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
     s.pending = { codHorario };
     sessions.set(phone, s);
+
+    setState(phone, "WAIT_CONFIRM");
 
     await sendButtons({
       to: phone,
@@ -709,31 +763,32 @@ if (ctx === "SLOTS") {
       ],
       phoneNumberIdFallback,
     });
-
-    setState(phone, "WAIT_CONFIRM");
     return;
   }
 
-  // qualquer outra coisa: re-mostra a página atual
-  const cur = Number(sessions.get(phone)?.booking?.pageIndex ?? 0);
-  await showSlotsPage({
-    phone,
-    phoneNumberIdFallback,
-    page: cur,
-  });
-  return;
+  // fallback dentro de SLOTS: reapresenta a página atual
+  {
+    const s = sessions.get(phone);
+    const slots = s?.booking?.slots || [];
+    const page = Number(s?.booking?.pageIndex ?? 0) || 0;
+
+    await showSlotsPage({ phone, phoneNumberIdFallback, slots, page });
+    return;
+  }
 }
 
-// 4) Confirmação (2 etapas): CONFIRMAR / ESCOLHER_OUTRO
+// 4) Estado WAIT_CONFIRM: confirmar / escolher outro
 if (ctx === "WAIT_CONFIRM") {
   if (upper === "ESCOLHER_OUTRO") {
-    // volta para a lista de horários (página 0) do mesmo dia
     const s = sessions.get(phone);
     if (s) delete s.pending;
     sessions.set(phone, s);
 
     setState(phone, "SLOTS");
-    await showSlotsPage(phone, phoneNumberIdFallback, 0);
+
+    // ✅ AQUI estava o seu problema clássico: chamada errada de showSlotsPage (dava erro e "não fazia nada")
+    const slots = s?.booking?.slots || [];
+    await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
     return;
   }
 
@@ -745,8 +800,32 @@ if (ctx === "WAIT_CONFIRM") {
       if (s) delete s.pending;
       sessions.set(phone, s);
       setState(phone, "SLOTS");
-      await sendAndSetState(phone, "⚠️ Não encontrei o horário selecionado. Por favor, escolha novamente.", "SLOTS", phoneNumberIdFallback);
-      await showSlotsPage(phone, phoneNumberIdFallback, 0);
+
+      await sendText({ to: phone, body: "⚠️ Não encontrei o horário selecionado. Escolha novamente.", phoneNumberIdFallback });
+
+      const slots = s?.booking?.slots || [];
+      await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
+      return;
+    }
+
+    // ✅ Segurança extra: mesmo que tenha passado antes, revalida “6h” na hora de confirmar
+    const isoDate = s?.booking?.isoDate;
+    const chosen = (s?.booking?.slots || []).find((x) => Number(x.codHorario) === codHorario);
+    if (!isoDate || !chosen?.hhmm || !isSlotAllowed(isoDate, chosen.hhmm)) {
+      if (s) delete s.pending;
+      sessions.set(phone, s);
+      setState(phone, "SLOTS");
+
+      await sendText({ to: phone, body: "⚠️ Este horário não pode mais ser agendado (mínimo de 6h). Escolha outro.", phoneNumberIdFallback });
+
+      // refaz slots do dia (pra evitar lista desatualizada)
+      const codColaborador = s?.booking?.codColaborador ?? 3;
+      const codUsuario = s?.booking?.codUsuario ?? 17;
+      const out = await fetchSlotsDoDia({ codColaborador, codUsuario, isoDate });
+      if (s?.booking) s.booking.slots = out.ok ? out.slots : [];
+      sessions.set(phone, s);
+
+      await showSlotsPage({ phone, phoneNumberIdFallback, slots: s?.booking?.slots || [], page: 0 });
       return;
     }
 
@@ -772,37 +851,29 @@ if (ctx === "WAIT_CONFIRM") {
 
     if (!out.ok) {
       setState(phone, "SLOTS");
-      await sendAndSetState(
-        phone,
-        `⚠️ Não consegui confirmar esse horário agora.\nTente outro horário ou digite AJUDA.`,
-        "SLOTS",
-        phoneNumberIdFallback
-      );
-      await showSlotsPage(phone, phoneNumberIdFallback, 0);
+      await sendText({ to: phone, body: "⚠️ Não consegui confirmar agora. Tente outro horário ou digite AJUDA.", phoneNumberIdFallback });
+
+      const slots = s?.booking?.slots || [];
+      await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
       return;
     }
 
-    const msgOk =
-      out?.data?.Message ||
-      out?.data?.message ||
-      "Agendamento confirmado com sucesso!";
-
+    const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
     const codAg = out?.data?.CodAgendamento ?? out?.data?.codAgendamento;
 
     setState(phone, "MAIN");
-    await sendAndSetState(
-      phone,
-      `✅ ${msgOk}${codAg ? `\n📌 Código: ${codAg}` : ""}`,
-      "MAIN",
-      phoneNumberIdFallback
-    );
+    await sendText({
+      to: phone,
+      body: `✅ ${msgOk}${codAg ? `\n📌 Código: ${codAg}` : ""}`,
+      phoneNumberIdFallback,
+    });
     return;
   }
 
-  // se mandou qualquer coisa diferente, reapresenta botões
+  // Se mandou qualquer coisa diferente
   await sendButtons({
     to: phone,
-    body: `Use os botões abaixo para confirmar ou escolher outro horário.`,
+    body: "Use os botões abaixo:",
     buttons: [
       { id: "CONFIRMAR", title: "Confirmar" },
       { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
@@ -873,14 +944,29 @@ ${link}`,
     return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
   }
 
-  // -------------------
-  // CONTEXTO: PARTICULAR
-  // -------------------
-  if (ctx === "PARTICULAR") {
-    if (digits === "1") return sendAndSetState(phone, MSG.LINK_AGENDAMENTO, "PARTICULAR", phoneNumberIdFallback);
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-    return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
+// -------------------
+// CONTEXTO: PARTICULAR
+// -------------------
+if (ctx === "PARTICULAR") {
+  if (digits === "1") {
+    // ✅ em vez de link / data digitada, mostra 3 datas disponíveis
+    // (fixos do seu cenário: mesmo colaborador/usuário sempre)
+    const codColaborador = 3;
+    const codUsuario = 17;
+
+    // guarda no booking (pra reusar depois)
+    const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+    s.booking = { codColaborador, codUsuario, isoDate: null, slots: [], pageIndex: 0 };
+    sessions.set(phone, s);
+
+    await showNextDates({ phone, phoneNumberIdFallback, codColaborador, codUsuario });
+    return;
   }
+
+  if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+  return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
+}
+
 
   // -------------------
   // CONTEXTO: CONVENIOS
