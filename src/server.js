@@ -486,13 +486,20 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
 
   const ctx = getState(phone) || "MAIN";
 
- // CLIQUE EM HORÁRIO (botão): NÃO CONFIRMA. Só pede confirmação.
-if (upper.startsWith("H_")) {
-  const codHorario = raw.split("_")[1]; // ex: "2013"
+// =======================
+// AGENDAMENTO (2 ETAPAS)
+// =======================
 
-  // guarda escolha na sessão (sem confirmar nada)
+// 1) Clique em horário (H_XXXX) -> salva pendente e pede confirmação
+if (upper.startsWith("H_")) {
+  const codHorario = Number(raw.split("_")[1]); // ex: 2013
+  if (!codHorario || Number.isNaN(codHorario)) {
+    await sendAndSetState(phone, "⚠️ Horário inválido. Tente novamente.", "MAIN", phoneNumberIdFallback);
+    return;
+  }
+
   const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.pending = { codHorario }; // <- pendente
+  s.pending = { codHorario };
   sessions.set(phone, s);
 
   await sendButtons({
@@ -509,35 +516,37 @@ if (upper.startsWith("H_")) {
   return;
 }
 
-  // CONFIRMAÇÃO do horário escolhido
-if (upper.startsWith("CONF_")) {
-  const codHorario = raw.split("_")[1]; // ex: "2013"
+// 2) Em WAIT_CONFIRM, usuário clica CONFIRMAR ou ESCOLHER_OUTRO
+if (ctx === "WAIT_CONFIRM") {
+  if (upper === "ESCOLHER_OUTRO") {
+    const s = sessions.get(phone);
+    if (s) delete s.pending;
+    setState(phone, "MAIN");
 
-  await sendAndSetState(
-    phone,
-    `Perfeito ✅ Vou confirmar o horário (CodHorario ${codHorario}) na próxima etapa.`,
-    "MAIN",
-    phoneNumberIdFallback
-  );
-  return;
-}
+    await sendAndSetState(
+      phone,
+      "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
+      "MAIN",
+      phoneNumberIdFallback
+    );
+    return;
+  }
 
-if (upper === "ESCOLHER_OUTRO") {
-  await sendAndSetState(
-    phone,
-    "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
-    "MAIN",
-    phoneNumberIdFallback
-  );
-  return;
-}
+  if (upper === "CONFIRMAR") {
+    const s = sessions.get(phone);
+    const codHorario = Number(s?.pending?.codHorario);
 
-    // (Por enquanto) FIXOS do seu teste
+    if (!codHorario || Number.isNaN(codHorario)) {
+      setState(phone, "MAIN");
+      await sendAndSetState(phone, "⚠️ Não encontrei o horário selecionado. Por favor, escolha novamente.", "MAIN", phoneNumberIdFallback);
+      return;
+    }
+
     const payload = {
       CodUnidade: 2,
       CodEspecialidade: 1003,
-      CodPlano: 2,          // PARTICULAR
-      CodHorario: cod,      // <-- vem do botão
+      CodPlano: 2,
+      CodHorario: codHorario,
       CodUsuario: 17,
       CodColaborador: 3,
       BitTelemedicina: false,
@@ -548,6 +557,9 @@ if (upper === "ESCOLHER_OUTRO") {
       method: "POST",
       jsonBody: payload,
     });
+
+    if (s) delete s.pending;
+    setState(phone, "MAIN");
 
     if (!out.ok) {
       await sendAndSetState(
@@ -574,6 +586,19 @@ if (upper === "ESCOLHER_OUTRO") {
     );
     return;
   }
+
+  // Qualquer coisa diferente em WAIT_CONFIRM -> repete botões
+  await sendButtons({
+    to: phone,
+    body: `Use os botões abaixo para confirmar ou escolher outro horário.`,
+    buttons: [
+      { id: "CONFIRMAR", title: "Confirmar" },
+      { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
+    ],
+    phoneNumberIdFallback,
+  });
+  return;
+}
 
   // AJUDA -> pergunta motivo
   if (upper === "AJUDA") {
