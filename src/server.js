@@ -486,22 +486,26 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
 
   const ctx = getState(phone) || "MAIN";
 
-  // TESTE: capturar clique de botão de horário (ex: H_2012)
-  // BOTÃO DE HORÁRIO: H_2013 -> confirma agendamento no Versatilis
-  if (upper.startsWith("H_")) {
+ // CLIQUE EM HORÁRIO (botão): NÃO CONFIRMA. Só pede confirmação.
+if (upper.startsWith("H_")) {
   const codHorario = raw.split("_")[1]; // ex: "2013"
+
+  // guarda escolha na sessão (sem confirmar nada)
+  const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  s.pending = { codHorario }; // <- pendente
+  sessions.set(phone, s);
 
   await sendButtons({
     to: phone,
-    body: `✅ Recebi sua escolha: ${raw}\n\nDeseja confirmar este horário?`,
+    body: `✅ Horário selecionado.\n\nDeseja confirmar este horário?`,
     buttons: [
-      { id: `CONF_${codHorario}`, title: "Confirmar" },
+      { id: "CONFIRMAR", title: "Confirmar" },
       { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
     ],
     phoneNumberIdFallback,
   });
 
-  setState(phone, `WAIT_CONFIRM_${codHorario}`);
+  setState(phone, "WAIT_CONFIRM");
   return;
 }
 
