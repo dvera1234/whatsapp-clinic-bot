@@ -859,15 +859,16 @@ if (ctx === "WAIT_CONFIRM") {
     }
 
     const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
-    const codAg = out?.data?.CodAgendamento ?? out?.data?.codAgendamento;
 
-    setState(phone, "MAIN");
-    await sendText({
-      to: phone,
-      body: `✅ ${msgOk}${codAg ? `\n📌 Código: ${codAg}` : ""}`,
-      phoneNumberIdFallback,
-    });
-    return;
+const ORIENTACOES = `Orientações : Para que sua experiência seja ainda mais tranquila, sugiro que chegue com 15 minutos de antecedência e venha preparado para o seu atendimento. A sala de espera é pensada com carinho: você encontrará um ambiente acolhedor com água, Wi-Fi gratuito e um honest market com opções variadas. Há estacionamento com vallet no prédio. Leve seu documento com foto para fazer seu cadastro na recepção do prédio e suba ao sexto andar. Ao chegar, identifique-se no totem da recepção. Até breve!`;
+
+setState(phone, "MAIN");
+await sendText({
+  to: phone,
+  body: `✅ ${msgOk}\n\n${ORIENTACOES}`,
+  phoneNumberIdFallback,
+});
+return;
   }
 
   // Se mandou qualquer coisa diferente
