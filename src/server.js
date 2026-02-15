@@ -413,7 +413,7 @@ async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
 // =======================
 // BUSCAR PRÓXIMAS 3 DATAS DISPONÍVEIS (com slots após filtro 6h)
 // =======================
-async function fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead = 30, limit = 3 }) {
+async function fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead = 60, limit = 3 }) {
   const dates = [];
   const start = new Date(); // hoje
 
@@ -440,7 +440,7 @@ function formatBRFromISO(isoDate) {
 // MOSTRAR 3 DATAS DISPONÍVEIS
 // =======================
 async function showNextDates({ phone, phoneNumberIdFallback, codColaborador, codUsuario }) {
-  const dates = await fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead: 30, limit: 3 });
+  const dates = await fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead: 60, limit: 3 });
 
   if (!dates.length) {
     await sendText({
