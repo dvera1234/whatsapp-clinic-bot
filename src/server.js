@@ -404,7 +404,7 @@ async function showSlotsPage({ phone, phoneNumberIdFallback, page = 0 }) {
     return;
   }
 
-  // Se ainda não carregou slots, busca do Versatilis
+  // Carrega slots do Versatilis (1x por data), se ainda não carregou
   if (!Array.isArray(s.booking?.slots) || !s.booking.slots.length) {
     const { ok, slots } = await fetchSlotsDoDia({
       codColaborador: 3,
@@ -441,7 +441,7 @@ async function showSlotsPage({ phone, phoneNumberIdFallback, page = 0 }) {
     return;
   }
 
-  // Atualiza página atual e garante estado SLOTS
+  // Atualiza página e estado
   s.booking.pageIndex = page;
   sessions.set(phone, s);
   setState(phone, "SLOTS");
@@ -650,11 +650,41 @@ if (ctx === "ASK_DATE") {
   return;
 }
 
+  const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  s.booking = { isoDate: iso, slots: null, pageIndex: 0 };
+  sessions.set(phone, s);
+
+  await showSlotsPage({ phone, phoneNumberIdFallback, page: 0 });
+  return;
+}
+
 // 3) Estado SLOTS: navegação de páginas e seleção de horário
 if (ctx === "SLOTS") {
+
+  // clique no botão "Ver mais" -> vem como PAGE_1, PAGE_2...
   if (upper.startsWith("PAGE_")) {
     const next = Number(raw.split("_")[1]);
-    await showSlotsPage({ phone, phoneNumberIdFallback, page: Number.isNaN(next) ? 0 : next });
+    await showSlotsPage({
+      phone,
+      phoneNumberIdFallback,
+      page: Number.isNaN(next) ? 0 : next,
+    });
+    return;
+  }
+
+  if (upper === "OUTRA_DATA") {
+    const s = sessions.get(phone);
+    if (s) {
+      delete s.booking;
+      delete s.pending;
+      sessions.set(phone, s);
+    }
+    await sendAndSetState(
+      phone,
+      "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
+      "ASK_DATE",
+      phoneNumberIdFallback
+    );
     return;
   }
 
@@ -684,9 +714,13 @@ if (ctx === "SLOTS") {
     return;
   }
 
-  // fallback: repete a página atual
+  // qualquer outra coisa: re-mostra a página atual
   const cur = Number(sessions.get(phone)?.booking?.pageIndex ?? 0);
-  await showSlotsPage({ phone, phoneNumberIdFallback, page: cur });
+  await showSlotsPage({
+    phone,
+    phoneNumberIdFallback,
+    page: cur,
+  });
   return;
 }
 
