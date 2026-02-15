@@ -6,6 +6,78 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 
 // =======================
+// VERSATILIS (fetch) — helper mínimo e seguro
+// =======================
+const VERSA_BASE = process.env.VERSATILIS_BASE; // ex: https://sistema.versatilis.com.br/DraNellieRubio
+const VERSA_USER = process.env.VERSATILIS_USER;
+const VERSA_PASS = process.env.VERSATILIS_PASS;
+
+let versaToken = null;
+let versaTokenExpMs = 0;
+
+function maskToken(t) {
+  if (!t || typeof t !== "string") return "***";
+  return t.length > 16 ? `${t.slice(0, 6)}...${t.slice(-4)}` : "***";
+}
+
+async function versatilisGetToken() {
+  const now = Date.now();
+  if (versaToken && now < versaTokenExpMs - 30_000) return versaToken; // margem 30s
+
+  if (!VERSA_BASE || !VERSA_USER || !VERSA_PASS) {
+    throw new Error("Versatilis ENV ausente (VERSATILIS_BASE/USER/PASS).");
+  }
+
+  const body = new URLSearchParams({
+    username: VERSA_USER,
+    password: VERSA_PASS,
+    grant_type: "password",
+  });
+
+  const r = await fetch(`${VERSA_BASE}/Token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(`Versatilis Token falhou status=${r.status} body=${JSON.stringify(json)}`);
+  }
+
+  versaToken = json.access_token;
+  const exp = Number(json.expires_in || 0);
+  versaTokenExpMs = Date.now() + Math.max(60, exp) * 1000;
+
+  console.log("[VERSATILIS] token ok", { token: maskToken(versaToken) });
+  return versaToken;
+}
+
+async function versatilisFetch(path, { method = "GET", jsonBody } = {}) {
+  const token = await versatilisGetToken();
+
+  const r = await fetch(`${VERSA_BASE}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(jsonBody ? { "Content-Type": "application/json" } : {}),
+    },
+    body: jsonBody ? JSON.stringify(jsonBody) : undefined,
+  });
+
+  const text = await r.text().catch(() => "");
+  let data;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+  // log mínimo (sem dados sensíveis)
+  console.log("[VERSATILIS]", { method, path, status: r.status });
+
+  return { ok: r.ok, status: r.status, data };
+}
+
+
+// =======================
 // ENV (robusto)
 // =======================
 function pickToken() {
@@ -538,6 +610,15 @@ console.log("MSG RECEIVED: [hidden for privacy]");
     await handleInbound(from, text, phoneNumberIdFallback);
   } catch (err) {
     console.log("ERRO no POST /webhook:", err);
+  }
+});
+
+app.get("/debug/versatilis/especialidades", async (req, res) => {
+  try {
+    const out = await versatilisFetch("/api/Especialidade/Especialidades");
+    return res.status(200).json(out);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
