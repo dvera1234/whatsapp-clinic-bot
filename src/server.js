@@ -173,30 +173,18 @@ Avenida Orosimbo Maia, 360
 6º andar – Vila Itapura
 Campinas – SP | CEP 13010-211
 
-Ao chegar, realize o check-in no totem localizado
-na recepção da unidade.
+Ao chegar, realize o check-in no totem localizado na recepção da unidade.
 
 Formas de pagamento
 • Pix
 • Débito
 • Cartão de crédito
 
-Todos os pagamentos devem ser realizados no totem de atendimento,
-no momento da chegada ao consultório, antes da consulta.
+Os pagamentos são realizados no totem de atendimento no momento da chegada, antes da consulta.
 
 Agendamento
 Escolha uma opção:
-1) Acesse o link de agendamento e escolha o melhor horário disponível
-0) Voltar ao menu inicial`,
-
-  LINK_AGENDAMENTO: `👉 Link de agendamento:
-bit.ly/drdavidvera
-
-Após a confirmação, você receberá as orientações para o dia da consulta.
-
-Se tiver qualquer dificuldade durante o agendamento,
-envie uma mensagem com a palavra AJUDA.
-
+1) Agendar minha consulta
 0) Voltar ao menu inicial`,
 
   CONVENIOS: `Selecione o seu convênio:
@@ -860,7 +848,15 @@ if (ctx === "WAIT_CONFIRM") {
 
     const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
 
-const ORIENTACOES = `Orientações : Para que sua experiência seja ainda mais tranquila, sugiro que chegue com 15 minutos de antecedência e venha preparado para o seu atendimento. A sala de espera é pensada com carinho: você encontrará um ambiente acolhedor com água, Wi-Fi gratuito e um honest market com opções variadas. Há estacionamento com vallet no prédio. Leve seu documento com foto para fazer seu cadastro na recepção do prédio e suba ao sexto andar. Ao chegar, identifique-se no totem da recepção. Até breve!`;
+const ORIENTACOES = `Para que sua experiência seja ainda mais tranquila, recomendamos que chegue com 15 minutos de antecedência.
+
+Nossa sala de espera foi pensada com carinho para seu conforto: ambiente acolhedor, água disponível, Wi-Fi gratuito e honest market com opções variadas.
+
+Há estacionamento com valet no prédio.
+
+Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.
+
+Será um prazer recebê-lo(a). Até breve!`;
 
 setState(phone, "MAIN");
 await sendText({
