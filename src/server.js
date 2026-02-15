@@ -341,6 +341,96 @@ function makeWaLink(prefillText) {
   return `https://wa.me/${SUPPORT_WA}?text=${encoded}`;
 }
 
+function parseDateBR(ddmmyyyy) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((ddmmyyyy || "").trim());
+  if (!m) return null;
+  const dd = Number(m[1]);
+  const mm = Number(m[2]);
+  const yyyy = Number(m[3]);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+}
+
+function toHHMM(hora) {
+  const s = String(hora || "").trim();
+  const m = /^(\d{1,2}):(\d{2})/.exec(s);
+  if (!m) return null;
+  const hh = String(Number(m[1])).padStart(2, "0");
+  return `${hh}:${m[2]}`;
+}
+
+// =======================
+// BUSCAR HORÁRIOS DO DIA (Versatilis)
+// =======================
+async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
+  const path =
+    `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(codColaborador)}` +
+    `&CodUsuario=${encodeURIComponent(codUsuario)}` +
+    `&DataInicial=${encodeURIComponent(isoDate)}` +
+    `&DataFinal=${encodeURIComponent(isoDate)}`;
+
+  const out = await versatilisFetch(path);
+
+  if (!out.ok || !Array.isArray(out.data)) {
+    return { ok: false, slots: [] };
+  }
+
+  const slots = out.data
+    .filter((h) => h && h.PermiteConsulta === true && h.CodHorario != null)
+    .map((h) => ({
+      codHorario: Number(h.CodHorario),
+      hhmm: toHHMM(h.Hora),
+    }))
+    .filter((x) => x.codHorario && x.hhmm)
+    .sort((a, b) => a.hhmm.localeCompare(b.hhmm));
+
+  return { ok: true, slots };
+}
+
+// =======================
+// MOSTRAR 3 HORÁRIOS POR VEZ
+// =======================
+async function showSlotsPage({ phone, phoneNumberIdFallback, slots, page = 0 }) {
+  const pageSize = 3; // agora sempre 3 horários
+  const start = page * pageSize;
+  const end = start + pageSize;
+
+  const pageItems = slots.slice(start, end);
+
+  if (!pageItems.length) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Não há horários disponíveis.",
+      phoneNumberIdFallback,
+    });
+    return;
+  }
+
+  const buttons = pageItems.map((x) => ({
+    id: `H_${x.codHorario}`,
+    title: x.hhmm,
+  }));
+
+  await sendButtons({
+    to: phone,
+    body: "Horários disponíveis:",
+    buttons,
+    phoneNumberIdFallback,
+  });
+
+  // Se ainda houver mais horários além desses 3
+  if (end < slots.length) {
+    await sendButtons({
+      to: phone,
+      body: "Deseja ver mais horários?",
+      buttons: [
+        { id: `PAGE_${page + 1}`, title: "Ver mais" },
+      ],
+      phoneNumberIdFallback,
+    });
+  }
+}
+
 // =======================
 // ENV SEND BASE
 // =======================
@@ -487,74 +577,92 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const ctx = getState(phone) || "MAIN";
 
 // =======================
-// AGENDAMENTO (2 ETAPAS)
+// AGENDAMENTO (dinâmico)
 // =======================
 
-// 1) Clique em horário (H_XXXX) -> salva pendente e pede confirmação
-if (upper.startsWith("H_")) {
-  const codHorario = Number(raw.split("_")[1]); // ex: 2013
-  if (!codHorario || Number.isNaN(codHorario)) {
-    await sendAndSetState(
-      phone,
-      "⚠️ Horário inválido. Tente novamente.",
-      "MAIN",
-      phoneNumberIdFallback
-    );
-    return;
-  }
-
-  // pega sessão atual ou cria
-  const s =
-    sessions.get(phone) || {
-      state: "MAIN",
-      lastUserTs: Date.now(),
-      lastPhoneNumberIdFallback: "",
-    };
-
-  // mantém metadados consistentes
-  s.lastUserTs = Date.now();
-  if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
-
-  // guarda escolha pendente
-  s.pending = { codHorario };
-
-  // estado consistente na sessão
-  s.state = "WAIT_CONFIRM";
+// 0) Atalho: se usuário digitar data em qualquer contexto, aceita e mostra horários
+const isoMaybe = parseDateBR(raw);
+if (isoMaybe) {
+  const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  s.booking = { isoDate: isoMaybe, slots: null, pageIndex: 0 };
   sessions.set(phone, s);
-
-  await sendButtons({
-    to: phone,
-    body: `✅ Horário selecionado.\n\nDeseja confirmar este horário?`,
-    buttons: [
-      { id: "CONFIRMAR", title: "Confirmar" },
-      { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
-    ],
-    phoneNumberIdFallback,
-  });
-
-  setState(phone, "WAIT_CONFIRM");
+  await showSlotsPage(phone, phoneNumberIdFallback, 0);
   return;
 }
 
-// 2) Em WAIT_CONFIRM, usuário clica CONFIRMAR ou ESCOLHER_OUTRO
-if (ctx === "WAIT_CONFIRM") {
-  if (upper === "ESCOLHER_OUTRO") {
+// 1) Usuário escolhe “Agendamento particular -> opção 1” (você já chama isso no fluxo)
+if (ctx === "PARTICULAR" && digits === "1") {
+  await sendAndSetState(phone, "Certo ✅ me diga a data desejada (ex: 24/02/2026).", "ASK_DATE", phoneNumberIdFallback);
+  return;
+}
+
+// 2) Estado ASK_DATE: aguarda data (dd/mm/aaaa)
+if (ctx === "ASK_DATE") {
+  await sendAndSetState(phone, "Por favor, envie a data no formato dd/mm/aaaa (ex: 24/02/2026).", "ASK_DATE", phoneNumberIdFallback);
+  return;
+}
+
+// 3) Estado SLOTS: navegação de páginas e seleção de horário
+if (ctx === "SLOTS") {
+  if (upper === "MAIS_HORARIOS") {
+    const s = sessions.get(phone);
+    const next = Number(s?.booking?.pageIndex ?? 0) + 1;
+    await showSlotsPage(phone, phoneNumberIdFallback, next);
+    return;
+  }
+
+  if (upper === "OUTRA_DATA") {
     const s = sessions.get(phone);
     if (s) {
+      delete s.booking;
       delete s.pending;
-      s.state = "MAIN";
-      s.lastUserTs = Date.now();
-      if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
       sessions.set(phone, s);
     }
+    await sendAndSetState(phone, "Certo ✅ me diga a data desejada (ex: 24/02/2026).", "ASK_DATE", phoneNumberIdFallback);
+    return;
+  }
 
-    // por enquanto, volta para o fluxo principal (sem parser de data)
-    await sendAndSetState(
-      phone,
-      "Certo ✅ escolha outro horário.",
-      "MAIN",
-      phoneNumberIdFallback
-    );
+  // clique em horário
+  if (upper.startsWith("H_")) {
+    const codHorario = Number(raw.split("_")[1]);
+    if (!codHorario || Number.isNaN(codHorario)) {
+      await sendAndSetState(phone, "⚠️ Horário inválido. Tente novamente.", "SLOTS", phoneNumberIdFallback);
+      return;
+    }
+
+    const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+    s.pending = { codHorario };
+    sessions.set(phone, s);
+
+    await sendButtons({
+      to: phone,
+      body: `✅ Horário selecionado.\n\nDeseja confirmar este horário?`,
+      buttons: [
+        { id: "CONFIRMAR", title: "Confirmar" },
+        { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
+      ],
+      phoneNumberIdFallback,
+    });
+
+    setState(phone, "WAIT_CONFIRM");
+    return;
+  }
+
+  // qualquer outra coisa
+  await showSlotsPage(phone, phoneNumberIdFallback, Number(sessions.get(phone)?.booking?.pageIndex ?? 0));
+  return;
+}
+
+// 4) Confirmação (2 etapas): CONFIRMAR / ESCOLHER_OUTRO
+if (ctx === "WAIT_CONFIRM") {
+  if (upper === "ESCOLHER_OUTRO") {
+    // volta para a lista de horários (página 0) do mesmo dia
+    const s = sessions.get(phone);
+    if (s) delete s.pending;
+    sessions.set(phone, s);
+
+    setState(phone, "SLOTS");
+    await showSlotsPage(phone, phoneNumberIdFallback, 0);
     return;
   }
 
@@ -563,21 +671,11 @@ if (ctx === "WAIT_CONFIRM") {
     const codHorario = Number(s?.pending?.codHorario);
 
     if (!codHorario || Number.isNaN(codHorario)) {
-      setState(phone, "MAIN");
-      if (s) {
-        delete s.pending;
-        s.state = "MAIN";
-        s.lastUserTs = Date.now();
-        if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
-        sessions.set(phone, s);
-      }
-
-      await sendAndSetState(
-        phone,
-        "⚠️ Não encontrei o horário selecionado. Por favor, escolha novamente.",
-        "MAIN",
-        phoneNumberIdFallback
-      );
+      if (s) delete s.pending;
+      sessions.set(phone, s);
+      setState(phone, "SLOTS");
+      await sendAndSetState(phone, "⚠️ Não encontrei o horário selecionado. Por favor, escolha novamente.", "SLOTS", phoneNumberIdFallback);
+      await showSlotsPage(phone, phoneNumberIdFallback, 0);
       return;
     }
 
@@ -598,23 +696,18 @@ if (ctx === "WAIT_CONFIRM") {
       jsonBody: payload,
     });
 
-    // limpa pendente e volta pro MAIN
-    if (s) {
-      delete s.pending;
-      s.state = "MAIN";
-      s.lastUserTs = Date.now();
-      if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
-      sessions.set(phone, s);
-    }
-    setState(phone, "MAIN");
+    if (s) delete s.pending;
+    sessions.set(phone, s);
 
     if (!out.ok) {
+      setState(phone, "SLOTS");
       await sendAndSetState(
         phone,
         `⚠️ Não consegui confirmar esse horário agora.\nTente outro horário ou digite AJUDA.`,
-        "MAIN",
+        "SLOTS",
         phoneNumberIdFallback
       );
+      await showSlotsPage(phone, phoneNumberIdFallback, 0);
       return;
     }
 
@@ -625,6 +718,7 @@ if (ctx === "WAIT_CONFIRM") {
 
     const codAg = out?.data?.CodAgendamento ?? out?.data?.codAgendamento;
 
+    setState(phone, "MAIN");
     await sendAndSetState(
       phone,
       `✅ ${msgOk}${codAg ? `\n📌 Código: ${codAg}` : ""}`,
@@ -634,7 +728,7 @@ if (ctx === "WAIT_CONFIRM") {
     return;
   }
 
-  // Qualquer coisa diferente em WAIT_CONFIRM -> repete botões
+  // se mandou qualquer coisa diferente, reapresenta botões
   await sendButtons({
     to: phone,
     body: `Use os botões abaixo para confirmar ou escolher outro horário.`,
