@@ -666,10 +666,12 @@ app.post("/webhook", async (req, res) => {
     if (!msg) return;
 
     const from = msg.from;
-    const text =
+    
+    const text = (
   msg.text?.body ||
   msg.interactive?.button_reply?.id ||
-  "";
+  ""
+).trim();
 
     const phoneNumberIdFallback = value?.metadata?.phone_number_id || "";
 
