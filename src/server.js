@@ -486,6 +486,17 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
 
   const ctx = getState(phone) || "MAIN";
 
+// TESTE: capturar clique de botão de horário
+if (raw.startsWith("H_")) {
+  await sendAndSetState(
+    phone,
+    `✅ Recebi sua escolha: ${raw}`,
+    "MAIN",
+    phoneNumberIdFallback
+  );
+  return;
+}
+  
   // AJUDA -> pergunta motivo
   if (upper === "AJUDA") {
     await sendAndSetState(phone, MSG.AJUDA_PERGUNTA, "WAIT_AJUDA_MOTIVO", phoneNumberIdFallback);
