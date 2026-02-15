@@ -487,17 +487,58 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const ctx = getState(phone) || "MAIN";
 
   // TESTE: capturar clique de botão de horário (ex: H_2012)
+  // BOTÃO DE HORÁRIO: H_2013 -> confirma agendamento no Versatilis
   if (upper.startsWith("H_")) {
+    const cod = Number(raw.split("_")[1]); // usa raw (sem upper) pra manter número limpo
+
+    if (!cod || Number.isNaN(cod)) {
+      await sendAndSetState(phone, "Não entendi o horário escolhido. Tente novamente.", "MAIN", phoneNumberIdFallback);
+      return;
+    }
+
+    // (Por enquanto) FIXOS do seu teste
+    const payload = {
+      CodUnidade: 2,
+      CodEspecialidade: 1003,
+      CodPlano: 2,          // PARTICULAR
+      CodHorario: cod,      // <-- vem do botão
+      CodUsuario: 17,
+      CodColaborador: 3,
+      BitTelemedicina: false,
+      Confirmada: true,
+    };
+
+    const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
+      method: "POST",
+      jsonBody: payload,
+    });
+
+    if (!out.ok) {
+      await sendAndSetState(
+        phone,
+        `⚠️ Não consegui confirmar esse horário agora.\nTente outro horário ou digite AJUDA.`,
+        "MAIN",
+        phoneNumberIdFallback
+      );
+      return;
+    }
+
+    const msgOk =
+      out?.data?.Message ||
+      out?.data?.message ||
+      "Agendamento confirmado com sucesso!";
+
+    const codAg = out?.data?.CodAgendamento ?? out?.data?.codAgendamento;
+
     await sendAndSetState(
       phone,
-      `✅ Recebi sua escolha: ${upper}`,
+      `✅ ${msgOk}${codAg ? `\n📌 Código: ${codAg}` : ""}`,
       "MAIN",
       phoneNumberIdFallback
     );
     return;
   }
 
-  
   // AJUDA -> pergunta motivo
   if (upper === "AJUDA") {
     await sendAndSetState(phone, MSG.AJUDA_PERGUNTA, "WAIT_AJUDA_MOTIVO", phoneNumberIdFallback);
