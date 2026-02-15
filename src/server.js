@@ -642,5 +642,43 @@ app.get("/debug/versatilis/agenda-datas", async (req, res) => {
   }
 });
 
+app.get("/debug/versatilis/agenda-consulta", async (req, res) => {
+  try {
+    const CodColaborador = req.query.CodColaborador || "3";
+    const CodUsuario = req.query.CodUsuario || "17";
+    const DataInicial = req.query.DataInicial || "2026-02-24";
+    const DataFinal = req.query.DataFinal || "2026-02-24";
+
+    const path =
+      `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(CodColaborador)}` +
+      `&CodUsuario=${encodeURIComponent(CodUsuario)}` +
+      `&DataInicial=${encodeURIComponent(DataInicial)}` +
+      `&DataFinal=${encodeURIComponent(DataFinal)}`;
+
+    const out = await versatilisFetch(path);
+
+    if (!out.ok || !Array.isArray(out.data)) {
+      return res.status(200).json(out);
+    }
+
+    const filtered = out.data
+      .filter((h) => h && h.PermiteConsulta === true)
+      .map((h) => ({
+        CodHorario: h.CodHorario,
+        Data: h.Data,
+        Hora: h.Hora,
+        CodUnidade: h.CodUnidade,
+        Unidade: h.Unidade,
+        CodEspecialidade: h.CodEspecialidade,
+        NomeEspecialidade: h.NomeEspecialidade,
+        PermiteConsulta: h.PermiteConsulta,
+      }));
+
+    return res.status(200).json({ ok: true, status: 200, data: filtered });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // =======================
 app.listen(port, () => console.log(`Server running on port ${port}`));
