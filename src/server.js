@@ -489,12 +489,44 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   // TESTE: capturar clique de botão de horário (ex: H_2012)
   // BOTÃO DE HORÁRIO: H_2013 -> confirma agendamento no Versatilis
   if (upper.startsWith("H_")) {
-    const cod = Number(raw.split("_")[1]); // usa raw (sem upper) pra manter número limpo
+  const codHorario = raw.split("_")[1]; // ex: "2013"
 
-    if (!cod || Number.isNaN(cod)) {
-      await sendAndSetState(phone, "Não entendi o horário escolhido. Tente novamente.", "MAIN", phoneNumberIdFallback);
-      return;
-    }
+  await sendButtons({
+    to: phone,
+    body: `✅ Recebi sua escolha: ${raw}\n\nDeseja confirmar este horário?`,
+    buttons: [
+      { id: `CONF_${codHorario}`, title: "Confirmar" },
+      { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
+    ],
+    phoneNumberIdFallback,
+  });
+
+  setState(phone, `WAIT_CONFIRM_${codHorario}`);
+  return;
+}
+
+  // CONFIRMAÇÃO do horário escolhido
+if (upper.startsWith("CONF_")) {
+  const codHorario = raw.split("_")[1]; // ex: "2013"
+
+  await sendAndSetState(
+    phone,
+    `Perfeito ✅ Vou confirmar o horário (CodHorario ${codHorario}) na próxima etapa.`,
+    "MAIN",
+    phoneNumberIdFallback
+  );
+  return;
+}
+
+if (upper === "ESCOLHER_OUTRO") {
+  await sendAndSetState(
+    phone,
+    "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
+    "MAIN",
+    phoneNumberIdFallback
+  );
+  return;
+}
 
     // (Por enquanto) FIXOS do seu teste
     const payload = {
