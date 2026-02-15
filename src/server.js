@@ -622,5 +622,25 @@ app.get("/debug/versatilis/especialidades", async (req, res) => {
   }
 });
 
+app.get("/debug/versatilis/agenda-datas", async (req, res) => {
+  try {
+    const CodColaborador = req.query.CodColaborador || "3";
+    const CodUsuario = req.query.CodUsuario || "17";
+    const DataInicial = req.query.DataInicial || "2026-02-24";
+    const DataFinal = req.query.DataFinal || "2026-02-24";
+
+    const path =
+      `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(CodColaborador)}` +
+      `&CodUsuario=${encodeURIComponent(CodUsuario)}` +
+      `&DataInicial=${encodeURIComponent(DataInicial)}` +
+      `&DataFinal=${encodeURIComponent(DataFinal)}`;
+
+    const out = await versatilisFetch(path);
+    return res.status(200).json(out);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // =======================
 app.listen(port, () => console.log(`Server running on port ${port}`));
