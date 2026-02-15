@@ -494,12 +494,32 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
 if (upper.startsWith("H_")) {
   const codHorario = Number(raw.split("_")[1]); // ex: 2013
   if (!codHorario || Number.isNaN(codHorario)) {
-    await sendAndSetState(phone, "⚠️ Horário inválido. Tente novamente.", "MAIN", phoneNumberIdFallback);
+    await sendAndSetState(
+      phone,
+      "⚠️ Horário inválido. Tente novamente.",
+      "MAIN",
+      phoneNumberIdFallback
+    );
     return;
   }
 
-  const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  // pega sessão atual ou cria
+  const s =
+    sessions.get(phone) || {
+      state: "MAIN",
+      lastUserTs: Date.now(),
+      lastPhoneNumberIdFallback: "",
+    };
+
+  // mantém metadados consistentes
+  s.lastUserTs = Date.now();
+  if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+
+  // guarda escolha pendente
   s.pending = { codHorario };
+
+  // estado consistente na sessão
+  s.state = "WAIT_CONFIRM";
   sessions.set(phone, s);
 
   await sendButtons({
@@ -520,12 +540,18 @@ if (upper.startsWith("H_")) {
 if (ctx === "WAIT_CONFIRM") {
   if (upper === "ESCOLHER_OUTRO") {
     const s = sessions.get(phone);
-    if (s) delete s.pending;
-    setState(phone, "MAIN");
+    if (s) {
+      delete s.pending;
+      s.state = "MAIN";
+      s.lastUserTs = Date.now();
+      if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+      sessions.set(phone, s);
+    }
 
+    // por enquanto, volta para o fluxo principal (sem parser de data)
     await sendAndSetState(
       phone,
-      "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
+      "Certo ✅ escolha outro horário.",
       "MAIN",
       phoneNumberIdFallback
     );
@@ -538,10 +564,24 @@ if (ctx === "WAIT_CONFIRM") {
 
     if (!codHorario || Number.isNaN(codHorario)) {
       setState(phone, "MAIN");
-      await sendAndSetState(phone, "⚠️ Não encontrei o horário selecionado. Por favor, escolha novamente.", "MAIN", phoneNumberIdFallback);
+      if (s) {
+        delete s.pending;
+        s.state = "MAIN";
+        s.lastUserTs = Date.now();
+        if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+        sessions.set(phone, s);
+      }
+
+      await sendAndSetState(
+        phone,
+        "⚠️ Não encontrei o horário selecionado. Por favor, escolha novamente.",
+        "MAIN",
+        phoneNumberIdFallback
+      );
       return;
     }
 
+    // FIXOS do seu teste (mantém como está hoje)
     const payload = {
       CodUnidade: 2,
       CodEspecialidade: 1003,
@@ -558,7 +598,14 @@ if (ctx === "WAIT_CONFIRM") {
       jsonBody: payload,
     });
 
-    if (s) delete s.pending;
+    // limpa pendente e volta pro MAIN
+    if (s) {
+      delete s.pending;
+      s.state = "MAIN";
+      s.lastUserTs = Date.now();
+      if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+      sessions.set(phone, s);
+    }
     setState(phone, "MAIN");
 
     if (!out.ok) {
