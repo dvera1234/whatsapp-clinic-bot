@@ -799,5 +799,29 @@ app.post("/debug/versatilis/confirmar-agendamento", async (req, res) => {
   }
 });
 
+app.get("/debug/test-botoes", async (req, res) => {
+  try {
+    const to = req.query.to; // numero com DDI, ex: 5519XXXXXXXXX
+    if (!to) {
+      return res.status(400).json({ ok: false, error: "Informe ?to=5519..." });
+    }
+
+    await sendButtons({
+      to,
+      body: "Escolha um horário:",
+      buttons: [
+        { id: "H_2012", title: "07:30" },
+        { id: "H_2013", title: "08:00" },
+        { id: "H_2014", title: "08:30" },
+      ],
+      phoneNumberIdFallback: "",
+    });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // =======================
 app.listen(port, () => console.log(`Server running on port ${port}`));
