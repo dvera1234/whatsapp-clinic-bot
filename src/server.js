@@ -390,42 +390,74 @@ async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
 // =======================
 // MOSTRAR 3 HORÁRIOS POR VEZ
 // =======================
-async function showSlotsPage({ phone, phoneNumberIdFallback, slots, page = 0 }) {
-  const pageSize = 3; // agora sempre 3 horários
-  const start = page * pageSize;
-  const end = start + pageSize;
+async function showSlotsPage({ phone, phoneNumberIdFallback, page = 0 }) {
+  const s = sessions.get(phone) || {};
+  const isoDate = s?.booking?.isoDate;
 
-  const pageItems = slots.slice(start, end);
+  if (!isoDate) {
+    await sendAndSetState(
+      phone,
+      "Certo ✅ me diga a data desejada (ex: 24/02/2026).",
+      "ASK_DATE",
+      phoneNumberIdFallback
+    );
+    return;
+  }
 
-  if (!pageItems.length) {
+  // Se ainda não carregou slots, busca do Versatilis
+  if (!Array.isArray(s.booking?.slots) || !s.booking.slots.length) {
+    const { ok, slots } = await fetchSlotsDoDia({
+      codColaborador: 3,
+      codUsuario: 17,
+      isoDate,
+    });
+
+    s.booking = { ...(s.booking || {}), slots: ok ? slots : [], pageIndex: 0 };
+    sessions.set(phone, s);
+  }
+
+  const slots = s.booking.slots || [];
+  if (!slots.length) {
     await sendText({
       to: phone,
       body: "⚠️ Não há horários disponíveis.",
       phoneNumberIdFallback,
     });
+    setState(phone, "ASK_DATE");
     return;
   }
 
-  const buttons = pageItems.map((x) => ({
-    id: `H_${x.codHorario}`,
-    title: x.hhmm,
-  }));
+  const pageSize = 3;
+  const start = page * pageSize;
+  const end = start + pageSize;
+  const pageItems = slots.slice(start, end);
+
+  if (!pageItems.length) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Não há mais horários disponíveis.",
+      phoneNumberIdFallback,
+    });
+    return;
+  }
+
+  // Atualiza página atual e garante estado SLOTS
+  s.booking.pageIndex = page;
+  sessions.set(phone, s);
+  setState(phone, "SLOTS");
 
   await sendButtons({
     to: phone,
     body: "Horários disponíveis:",
-    buttons,
+    buttons: pageItems.map((x) => ({ id: `H_${x.codHorario}`, title: x.hhmm })),
     phoneNumberIdFallback,
   });
 
-  // Se ainda houver mais horários além desses 3
   if (end < slots.length) {
     await sendButtons({
       to: phone,
       body: "Deseja ver mais horários?",
-      buttons: [
-        { id: `PAGE_${page + 1}`, title: "Ver mais" },
-      ],
+      buttons: [{ id: `PAGE_${page + 1}`, title: "Ver mais" }],
       phoneNumberIdFallback,
     });
   }
@@ -586,7 +618,8 @@ if (isoMaybe) {
   const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { isoDate: isoMaybe, slots: null, pageIndex: 0 };
   sessions.set(phone, s);
-  await showSlotsPage(phone, phoneNumberIdFallback, 0);
+
+  await showSlotsPage({ phone, phoneNumberIdFallback, page: 0 });
   return;
 }
 
@@ -598,27 +631,30 @@ if (ctx === "PARTICULAR" && digits === "1") {
 
 // 2) Estado ASK_DATE: aguarda data (dd/mm/aaaa)
 if (ctx === "ASK_DATE") {
-  await sendAndSetState(phone, "Por favor, envie a data no formato dd/mm/aaaa (ex: 24/02/2026).", "ASK_DATE", phoneNumberIdFallback);
+  const iso = parseDateBR(raw);
+  if (!iso) {
+    await sendAndSetState(
+      phone,
+      "Por favor, envie a data no formato dd/mm/aaaa (ex: 24/02/2026).",
+      "ASK_DATE",
+      phoneNumberIdFallback
+    );
+    return;
+  }
+
+  const s = sessions.get(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  s.booking = { isoDate: iso, slots: null, pageIndex: 0 };
+  sessions.set(phone, s);
+
+  await showSlotsPage({ phone, phoneNumberIdFallback, page: 0 });
   return;
 }
 
 // 3) Estado SLOTS: navegação de páginas e seleção de horário
 if (ctx === "SLOTS") {
-  if (upper === "MAIS_HORARIOS") {
-    const s = sessions.get(phone);
-    const next = Number(s?.booking?.pageIndex ?? 0) + 1;
-    await showSlotsPage(phone, phoneNumberIdFallback, next);
-    return;
-  }
-
-  if (upper === "OUTRA_DATA") {
-    const s = sessions.get(phone);
-    if (s) {
-      delete s.booking;
-      delete s.pending;
-      sessions.set(phone, s);
-    }
-    await sendAndSetState(phone, "Certo ✅ me diga a data desejada (ex: 24/02/2026).", "ASK_DATE", phoneNumberIdFallback);
+  if (upper.startsWith("PAGE_")) {
+    const next = Number(raw.split("_")[1]);
+    await showSlotsPage({ phone, phoneNumberIdFallback, page: Number.isNaN(next) ? 0 : next });
     return;
   }
 
@@ -648,8 +684,9 @@ if (ctx === "SLOTS") {
     return;
   }
 
-  // qualquer outra coisa
-  await showSlotsPage(phone, phoneNumberIdFallback, Number(sessions.get(phone)?.booking?.pageIndex ?? 0));
+  // fallback: repete a página atual
+  const cur = Number(sessions.get(phone)?.booking?.pageIndex ?? 0);
+  await showSlotsPage({ phone, phoneNumberIdFallback, page: cur });
   return;
 }
 
