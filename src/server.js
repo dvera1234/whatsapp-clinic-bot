@@ -19,6 +19,8 @@ function generateTempPassword(len = 10) {
   return out;
 }
 
+import { getRedisClient } from "./redis.js";
+
 // =====================================
 // PLANOS FIXOS 
 // =====================================
@@ -1881,6 +1883,22 @@ app.get("/debug/test-botoes", async (req, res) => {
     });
 
     return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/debug/redis-ping", async (req, res) => {
+  try {
+    const redis = getRedisClient();
+
+    const key = "health:redis";
+    const value = `ok:${Date.now()}`;
+
+    await redis.set(key, value, { ex: 30 }); // expira em 30s
+    const read = await redis.get(key);
+
+    return res.status(200).json({ ok: true, wrote: value, read });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
