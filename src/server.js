@@ -1066,7 +1066,7 @@ if (ctx === "WAIT_CONFIRM") {
     const s = sessions.get(phone);
     const codHorario = Number(s?.pending?.codHorario);
 
-feito. const planoSelecionado = resolveCodPlano(s?.booking?.planoKey);
+const planoSelecionado = resolveCodPlano(s?.booking?.planoKey);
 
 const sConfirm = sessions.get(phone);
 
