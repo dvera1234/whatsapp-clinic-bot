@@ -335,18 +335,14 @@ function sessionKey(phone) {
 
 async function loadSession(phone) {
   const key = sessionKey(phone);
+  console.log("[REDIS GET] key=", key);
   const raw = await redis.get(key);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    // se corromper, falha segura: “sem sessão”
-    return null;
-  }
+  return raw ? JSON.parse(raw) : null;
 }
 
 async function saveSession(phone, sessionObj) {
   const key = sessionKey(phone);
+  console.log("[REDIS SET] key=", key);
   await redis.set(key, JSON.stringify(sessionObj), { ex: SESSION_TTL_SECONDS });
   return true;
 }
@@ -1936,6 +1932,20 @@ app.get("/debug/redis-ping", async (req, res) => {
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
+});
+
+app.get("/debug/session/get", async (req, res) => {
+  const phone = String(req.query.phone || "");
+  const key = sessionKey(phone);
+  const raw = await redis.get(key);
+  return res.json({ ok: true, phone, key, raw });
+});
+
+app.get("/debug/session/del", async (req, res) => {
+  const phone = String(req.query.phone || "");
+  const key = sessionKey(phone);
+  await redis.del(key);
+  return res.json({ ok: true, phone, key, deleted: true });
 });
 
 // =======================
