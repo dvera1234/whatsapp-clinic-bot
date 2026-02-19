@@ -21,6 +21,9 @@ function generateTempPassword(len = 10) {
 
 import { getRedisClient } from "./redis.js";
 
+// ✅ Redis singleton (uma conexão por processo)
+const redis = getRedisClient();
+
 // =====================================
 // PLANOS FIXOS 
 // =====================================
@@ -331,7 +334,6 @@ function sessionKey(phone) {
 }
 
 async function loadSession(phone) {
-  const redis = getRedisClient();
   const key = sessionKey(phone);
   const raw = await redis.get(key);
   if (!raw) return null;
@@ -344,17 +346,12 @@ async function loadSession(phone) {
 }
 
 async function saveSession(phone, sessionObj) {
-  const redis = getRedisClient();
-  const key = sessionKey(phone);
-
-  // compatível com ioredis e Redis “puro”
-  await redis.set(key, JSON.stringify(sessionObj), "EX", SESSION_TTL_SECONDS);
-
-  return true;
+   const key = sessionKey(phone); 
+   await redis.set(key, JSON.stringify(sessionObj), "EX", SESSION_TTL_SECONDS);
+   return true;
 }
 
 async function deleteSession(phone) {
-  const redis = getRedisClient();
   const key = sessionKey(phone);
   await redis.del(key);
 }
