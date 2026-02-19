@@ -346,7 +346,10 @@ async function loadSession(phone) {
 async function saveSession(phone, sessionObj) {
   const redis = getRedisClient();
   const key = sessionKey(phone);
-  await redis.set(key, JSON.stringify(sessionObj), { ex: SESSION_TTL_SECONDS });
+
+  // compatível com ioredis e Redis “puro”
+  await redis.set(key, JSON.stringify(sessionObj), "EX", SESSION_TTL_SECONDS);
+
   return true;
 }
 
