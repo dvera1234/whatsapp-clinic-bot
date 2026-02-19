@@ -913,7 +913,13 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
     phoneNumberIdFallback,
   });
 
-  if (state) await setState(phone, state);
+  if (state) {
+    await setState(phone, state);
+
+    // ✅ diagnóstico: confirma que gravou e que está lendo do Redis
+    const back = await getState(phone);
+    console.log("[STATE] set=", state, "readback=", back || "(none)");
+  }
 }
 
 // =======================
