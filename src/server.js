@@ -346,9 +346,9 @@ async function loadSession(phone) {
 }
 
 async function saveSession(phone, sessionObj) {
-   const key = sessionKey(phone); 
-   await redis.set(key, JSON.stringify(sessionObj), "EX", SESSION_TTL_SECONDS);
-   return true;
+  const key = sessionKey(phone);
+  await redis.set(key, JSON.stringify(sessionObj), { ex: SESSION_TTL_SECONDS });
+  return true;
 }
 
 async function deleteSession(phone) {
