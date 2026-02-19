@@ -1926,8 +1926,6 @@ app.get("/debug/test-botoes", async (req, res) => {
 
 app.get("/debug/redis-ping", async (req, res) => {
   try {
-    const redis = getRedisClient();
-
     const key = "health:redis";
     const value = `ok:${Date.now()}`;
 
