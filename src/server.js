@@ -252,7 +252,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   // form: { nome, cpf, dtNascISO, sexoOpt, celular, email, cep, endereco, numero, complemento, bairro, cidade, uf, planoKey }
   // planoKey: "PARTICULAR" ou "MEDSENIOR_SP"
   const planoKey = form.planoKey;
-  const codPlano = (planoKey === "MEDSENIOR_SP") ? 3011 : 2; // ajuste depois com seus ENV se necessário
+  const codPlano = resolveCodPlano(planoKey); // ajuste depois com seus ENV se necessário
 
   const tempPass = generateTempPassword(10);
   const senhaMD5 = md5Hex(tempPass);
@@ -1080,7 +1080,7 @@ if (!codUsuario) {
       return;
     }
 
-    const s = await ensureSession(phone); { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+    const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
     s.pending = { codHorario };
     await saveSession(phone, s);
 
@@ -1308,7 +1308,7 @@ if (ctx === "WZ_CPF") {
     return;
   }
 
-  const s = await ensureSession(phone); {};
+  const s = await ensureSession(phone);
   s.portal = s.portal || { form: {} };
   s.portal.form.cpf = cpf;
   await saveSession(phone, s);
@@ -1631,7 +1631,7 @@ await saveSession(phone, s2);
 // -------------------
 if (ctx === "PARTICULAR") {
   if (digits === "1") {
-  const s = await ensureSession(phone); { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
@@ -1677,7 +1677,7 @@ if (ctx === "PARTICULAR") {
   // -------------------
   if (ctx === "MEDSENIOR") {
     if (digits === "1") {
-  const s = await ensureSession(phone); { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
