@@ -252,7 +252,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   // form: { nome, cpf, dtNascISO, sexoOpt, celular, email, cep, endereco, numero, complemento, bairro, cidade, uf, planoKey }
   // planoKey: "PARTICULAR" ou "MEDSENIOR_SP"
   const planoKey = form.planoKey;
-  const codPlano = (planoKey === "MEDSENIOR_SP") ? 3011 : 2; // ajuste depois com seus ENV se necessário
+  const codPlano = (planoKey === "MEDSENIOR_SP") ? const codPlano = resolveCodPlano(planoKey); : 2; // ajuste depois com seus ENV se necessário
 
   const tempPass = generateTempPassword(10);
   const senhaMD5 = md5Hex(tempPass);
@@ -391,7 +391,7 @@ async function ensureSession(phone) {
 }
 
 async function touchUser(phone, phoneNumberIdFallback) {
-  const s = await ensureSession(phone);
+  const s = await ensureSession(phone);;
   s.lastUserTs = Date.now();
   if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
   await saveSession(phone, s);
@@ -399,7 +399,7 @@ async function touchUser(phone, phoneNumberIdFallback) {
 }
 
 async function setState(phone, state) {
-  const s = await ensureSession(phone);
+  const s = await ensureSession(phone);;
   s.state = state;
   await saveSession(phone, s);
   return s;
@@ -612,7 +612,7 @@ Descreva abaixo como podemos te ajudar.
 
 // ✅ NÃO usar Map. Tudo no Redis.
 async function setBookingPlan(phone, planoKey) {
-  const s = await ensureSession(phone);
+  const s = await ensureSession(phone);;
   s.booking = { ...(s.booking || {}), planoKey };
   await saveSession(phone, s);
   return s;
@@ -1009,7 +1009,7 @@ if (upper.startsWith("D_")) {
 // 2) Estado ASK_DATE_PICK: aguardando escolher data (apenas botões)
 if (ctx === "ASK_DATE_PICK") {
   // Se o usuário digitou algo aleatório, reapresenta datas
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const codColaborador = s?.booking?.codColaborador ?? 3;
   const codUsuario = s?.booking?.codUsuario;
 if (!codUsuario) {
@@ -1031,7 +1031,7 @@ if (ctx === "SLOTS") {
   // Ver mais (PAGE_n)
   if (upper.startsWith("PAGE_")) {
     const n = Number(raw.split("_")[1]);
-    const s = await ensureSession(phone)
+    const s = await ensureSession(phone);
     const slots = s?.booking?.slots || [];
 
     const page = Number.isFinite(n) && n >= 0 ? n : 0;
@@ -1049,7 +1049,7 @@ if (ctx === "SLOTS") {
 
   // Trocar data
   if (upper === "TROCAR_DATA") {
-    const s = await ensureSession(phone)
+    const s = await ensureSession(phone);
     if (s?.booking) {
       s.booking.isoDate = null;
       s.booking.slots = [];
@@ -1080,7 +1080,7 @@ if (!codUsuario) {
       return;
     }
 
-    const s = await ensureSession(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+    const s = await ensureSession(phone); || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
     s.pending = { codHorario };
     await saveSession(phone, s);
 
@@ -1100,7 +1100,7 @@ if (!codUsuario) {
 
   // fallback dentro de SLOTS: reapresenta a página atual
   {
-    const s = await ensureSession(phone)
+    const s = await ensureSession(phone);
     const slots = s?.booking?.slots || [];
     const page = Number(s?.booking?.pageIndex ?? 0) || 0;
 
@@ -1112,7 +1112,7 @@ if (!codUsuario) {
 // 4) Estado WAIT_CONFIRM: confirmar / escolher outro
 if (ctx === "WAIT_CONFIRM") {
   if (upper === "ESCOLHER_OUTRO") {
-    const s = await ensureSession(phone)
+    const s = await ensureSession(phone);
     if (s) delete s.pending;
     await saveSession(phone, s);
 
@@ -1125,10 +1125,10 @@ if (ctx === "WAIT_CONFIRM") {
   }
 
   if (upper === "CONFIRMAR") {
-    const s = await ensureSession(phone)
+    const s = await ensureSession(phone);
     const codHorario = Number(s?.pending?.codHorario);
 
-const planoSelecionado = resolveCodPlano(s?.booking?.planoKey);
+const planoSelecionado = resolveCodPlano(s?.booking?.planoKey || PLAN_KEYS.PARTICULAR);
 
 const sConfirm = await ensureSession(phone)
 
@@ -1308,7 +1308,7 @@ if (ctx === "WZ_CPF") {
     return;
   }
 
-  const s = await ensureSession(phone) || {};
+  const s = await ensureSession(phone); || {};
   s.portal = s.portal || { form: {} };
   s.portal.form.cpf = cpf;
   await saveSession(phone, s);
@@ -1378,7 +1378,7 @@ if (ctx === "WZ_CPF") {
 }
 
 if (ctx === "WZ_NOME") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const nome = cleanStr(raw);
   if (nome.length < 5) {
     await sendText({ to: phone, body: "⚠️ Envie seu nome completo.", phoneNumberIdFallback });
@@ -1391,7 +1391,7 @@ if (ctx === "WZ_NOME") {
 }
 
 if (ctx === "WZ_DTNASC") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const iso = parseBRDateToISO(raw);
   if (!iso) {
     await sendText({ to: phone, body: "⚠️ Data inválida. Use DD/MM/AAAA.", phoneNumberIdFallback });
@@ -1415,7 +1415,7 @@ if (ctx === "WZ_DTNASC") {
 }
 
 if (ctx === "WZ_SEXO") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   if (upper === "SX_M") s.portal.form.sexoOpt = "M";
   else if (upper === "SX_F") s.portal.form.sexoOpt = "F";
   else s.portal.form.sexoOpt = "NI"; // não envia
@@ -1436,7 +1436,7 @@ if (ctx === "WZ_SEXO") {
 }
 
 if (ctx === "WZ_PLANO") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   if (upper !== "PL_PART" && upper !== "PL_MED") {
     await sendText({ to: phone, body: "Use os botões para selecionar o convênio.", phoneNumberIdFallback });
     return;
@@ -1452,7 +1452,7 @@ if (ctx === "WZ_PLANO") {
 }
 
 if (ctx === "WZ_EMAIL") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const email = cleanStr(raw);
   if (!isValidEmail(email)) {
     await sendText({ to: phone, body: "⚠️ E-mail inválido.", phoneNumberIdFallback });
@@ -1465,7 +1465,7 @@ if (ctx === "WZ_EMAIL") {
 }
 
 if (ctx === "WZ_CEP") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const cep = normalizeCEP(raw);
   if (cep.length !== 8) {
     await sendText({ to: phone, body: "⚠️ CEP inválido. Envie 8 dígitos.", phoneNumberIdFallback });
@@ -1478,7 +1478,7 @@ if (ctx === "WZ_CEP") {
 }
 
 if (ctx === "WZ_ENDERECO") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const v = cleanStr(raw);
   if (v.length < 3) {
     await sendText({ to: phone, body: "⚠️ Endereço inválido.", phoneNumberIdFallback });
@@ -1491,7 +1491,7 @@ if (ctx === "WZ_ENDERECO") {
 }
 
 if (ctx === "WZ_NUMERO") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const v = cleanStr(raw);
   if (!v) {
     await sendText({ to: phone, body: "⚠️ Informe o número.", phoneNumberIdFallback });
@@ -1504,7 +1504,7 @@ if (ctx === "WZ_NUMERO") {
 }
 
 if (ctx === "WZ_COMPLEMENTO") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const v = cleanStr(raw);
   s.portal.form.complemento = v; // "0" permitido
   await saveSession(phone, s);
@@ -1513,7 +1513,7 @@ if (ctx === "WZ_COMPLEMENTO") {
 }
 
 if (ctx === "WZ_BAIRRO") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const v = cleanStr(raw);
   if (!v) {
     await sendText({ to: phone, body: "⚠️ Informe o bairro.", phoneNumberIdFallback });
@@ -1526,7 +1526,7 @@ if (ctx === "WZ_BAIRRO") {
 }
 
 if (ctx === "WZ_CIDADE") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const v = cleanStr(raw);
   if (!v) {
     await sendText({ to: phone, body: "⚠️ Informe a cidade.", phoneNumberIdFallback });
@@ -1539,7 +1539,7 @@ if (ctx === "WZ_CIDADE") {
 }
 
 if (ctx === "WZ_UF") {
-  const s = await ensureSession(phone)
+  const s = await ensureSession(phone);
   const uf = cleanStr(raw).toUpperCase();
   if (!/^[A-Z]{2}$/.test(uf)) {
     await sendText({ to: phone, body: "⚠️ UF inválida. Ex.: SP", phoneNumberIdFallback });
@@ -1631,7 +1631,7 @@ await saveSession(phone, s2);
 // -------------------
 if (ctx === "PARTICULAR") {
   if (digits === "1") {
-  const s = await ensureSession(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  const s = await ensureSession(phone); || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
@@ -1677,7 +1677,7 @@ if (ctx === "PARTICULAR") {
   // -------------------
   if (ctx === "MEDSENIOR") {
     if (digits === "1") {
-  const s = await ensureSession(phone) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  const s = await ensureSession(phone); || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
