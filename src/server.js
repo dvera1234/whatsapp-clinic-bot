@@ -589,6 +589,9 @@ Descreva abaixo como podemos te ajudar.
 // =======================
 // HELPERS
 // =======================
+// phone -> { state, lastUserTs, lastPhoneNumberIdFallback, ... }
+const sessions = new Map();
+
 function setBookingPlan(phone, planoKey) {
   const s = sessions.get(phone) || { state: null, lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { ...(s.booking || {}), planoKey };
