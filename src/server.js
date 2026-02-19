@@ -322,32 +322,76 @@ console.log("ENV CHECK:", {
 // =======================
 // CONFIG
 // =======================
-const INACTIVITY_MS = 10 * 60 * 1000; // 10 min sem o usuário falar
-const SWEEP_EVERY_MS = 30 * 1000; // varre a cada 30s
+const INACTIVITY_MS = 10 * 60 * 1000; // mantemos por enquanto (será revisado)
+const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900); // 15 min (900s)
 
-// phone -> { state, lastUserTs, lastPhoneNumberIdFallback }
-const sessions = new Map();
+// Sessão 100% Redis (uma chave por telefone)
+function sessionKey(phone) {
+  return `sess:${String(phone || "").replace(/\D+/g, "")}`;
+}
 
-function touchUser(phone, phoneNumberIdFallback) {
-  const s = sessions.get(phone) || { state: null, lastUserTs: 0, lastPhoneNumberIdFallback: "" };
+async function loadSession(phone) {
+  const redis = getRedisClient();
+  const key = sessionKey(phone);
+  const raw = await redis.get(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // se corromper, falha segura: “sem sessão”
+    return null;
+  }
+}
+
+async function saveSession(phone, sessionObj) {
+  const redis = getRedisClient();
+  const key = sessionKey(phone);
+  await redis.set(key, JSON.stringify(sessionObj), { ex: SESSION_TTL_SECONDS });
+  return true;
+}
+
+async function deleteSession(phone) {
+  const redis = getRedisClient();
+  const key = sessionKey(phone);
+  await redis.del(key);
+}
+
+async function ensureSession(phone) {
+  // estado mínimo permitido em memória transitória
+  return (
+    (await loadSession(phone)) || {
+      state: null,
+      lastUserTs: 0,
+      lastPhoneNumberIdFallback: "",
+      booking: null,
+      portal: null,
+      pending: null,
+    }
+  );
+}
+
+async function touchUser(phone, phoneNumberIdFallback) {
+  const s = await ensureSession(phone);
   s.lastUserTs = Date.now();
   if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
-  sessions.set(phone, s);
+  await saveSession(phone, s);
+  return s;
 }
 
-function setState(phone, state) {
-  const s = sessions.get(phone) || { state: null, lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+async function setState(phone, state) {
+  const s = await ensureSession(phone);
   s.state = state;
-  sessions.set(phone, s);
+  await saveSession(phone, s);
+  return s;
 }
 
-function getState(phone) {
-  const s = sessions.get(phone);
+async function getState(phone) {
+  const s = await loadSession(phone);
   return s?.state || null;
 }
 
-function clearSession(phone) {
-  sessions.delete(phone);
+async function clearSession(phone) {
+  await deleteSession(phone);
 }
 
 // =======================
@@ -874,38 +918,21 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
 // - envia mensagem
 // - limpa estado
 // =======================
-setInterval(async () => {
-  const now = Date.now();
-
-  for (const [phone, s] of sessions.entries()) {
-    const idle = now - (s.lastUserTs || 0);
-    if (idle < INACTIVITY_MS) continue;
-
-    // Envia encerramento e limpa
-    console.log(`AUTO-CLOSE: ${phone} idle=${Math.round(idle / 1000)}s state=${s.state || "(none)"}`);
-
-    await sendText({
-      to: phone,
-      body: MSG.ENCERRAMENTO,
-      phoneNumberIdFallback: s.lastPhoneNumberIdFallback || "",
-    });
-
-    clearSession(phone);
-  }
-}, SWEEP_EVERY_MS);
+// setInterval de auto-encerramento desativado temporariamente
+// (com Redis não listamos sessões por segurança; vamos tratar isso no próximo passo)
 
 // =======================
 // ROTEADOR COM ESTADO MÍNIMO
 // =======================
 async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   // marca atividade do usuário (isso é o que conta como "silêncio")
-  touchUser(phone, phoneNumberIdFallback);
+  await touchUser(phone, phoneNumberIdFallback);
 
   const raw = normalizeSpaces(inboundText);
   const upper = raw.toUpperCase();
   const digits = onlyDigits(raw);
 
-  const ctx = getState(phone) || "MAIN";
+  const ctx = (await getState(phone)) || "MAIN";
 
 // =======================
 // AGENDAMENTO (datas + slots + confirmação)
@@ -1722,7 +1749,7 @@ app.post("/webhook", async (req, res) => {
 
 console.log("MSG FROM:", maskPhone(from));
 console.log("MSG RECEIVED: [hidden]");
-console.log("STATE:", getState(from));
+console.log("STATE:", (await getState(from)) || "(none)");
 
     await handleInbound(from, text, phoneNumberIdFallback);
   } catch (err) {
