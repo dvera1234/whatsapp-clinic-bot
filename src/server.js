@@ -252,7 +252,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   // form: { nome, cpf, dtNascISO, sexoOpt, celular, email, cep, endereco, numero, complemento, bairro, cidade, uf, planoKey }
   // planoKey: "PARTICULAR" ou "MEDSENIOR_SP"
   const planoKey = form.planoKey;
-  const codPlano = (planoKey === "MEDSENIOR_SP") ? const codPlano = resolveCodPlano(planoKey); : 2; // ajuste depois com seus ENV se necessário
+  const codPlano = (planoKey === "MEDSENIOR_SP") ? 3011 : 2; // ajuste depois com seus ENV se necessário
 
   const tempPass = generateTempPassword(10);
   const senhaMD5 = md5Hex(tempPass);
@@ -391,7 +391,7 @@ async function ensureSession(phone) {
 }
 
 async function touchUser(phone, phoneNumberIdFallback) {
-  const s = await ensureSession(phone);;
+  const s = await ensureSession(phone);
   s.lastUserTs = Date.now();
   if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
   await saveSession(phone, s);
@@ -399,7 +399,7 @@ async function touchUser(phone, phoneNumberIdFallback) {
 }
 
 async function setState(phone, state) {
-  const s = await ensureSession(phone);;
+  const s = await ensureSession(phone);
   s.state = state;
   await saveSession(phone, s);
   return s;
@@ -612,7 +612,7 @@ Descreva abaixo como podemos te ajudar.
 
 // ✅ NÃO usar Map. Tudo no Redis.
 async function setBookingPlan(phone, planoKey) {
-  const s = await ensureSession(phone);;
+  const s = await ensureSession(phone);
   s.booking = { ...(s.booking || {}), planoKey };
   await saveSession(phone, s);
   return s;
@@ -1080,7 +1080,7 @@ if (!codUsuario) {
       return;
     }
 
-    const s = await ensureSession(phone); || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+    const s = await ensureSession(phone); { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
     s.pending = { codHorario };
     await saveSession(phone, s);
 
@@ -1130,7 +1130,7 @@ if (ctx === "WAIT_CONFIRM") {
 
 const planoSelecionado = resolveCodPlano(s?.booking?.planoKey || PLAN_KEYS.PARTICULAR);
 
-const sConfirm = await ensureSession(phone)
+const sConfirm = await ensureSession(phone);
 
 const payload = {
   CodUnidade: 2,
@@ -1308,7 +1308,7 @@ if (ctx === "WZ_CPF") {
     return;
   }
 
-  const s = await ensureSession(phone); || {};
+  const s = await ensureSession(phone); {};
   s.portal = s.portal || { form: {} };
   s.portal.form.cpf = cpf;
   await saveSession(phone, s);
@@ -1631,7 +1631,7 @@ await saveSession(phone, s2);
 // -------------------
 if (ctx === "PARTICULAR") {
   if (digits === "1") {
-  const s = await ensureSession(phone); || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  const s = await ensureSession(phone); { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
@@ -1677,7 +1677,7 @@ if (ctx === "PARTICULAR") {
   // -------------------
   if (ctx === "MEDSENIOR") {
     if (digits === "1") {
-  const s = await ensureSession(phone); || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+  const s = await ensureSession(phone); { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
   s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
