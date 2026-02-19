@@ -336,14 +336,38 @@ function sessionKey(phone) {
 async function loadSession(phone) {
   const key = sessionKey(phone);
   console.log("[REDIS GET] key=", key);
+
   const raw = await redis.get(key);
-  return raw ? JSON.parse(raw) : null;
+
+  // Upstash pode devolver string ou null
+  if (raw == null) return null;
+
+  // Se por algum motivo vier objeto, retorna direto (sem JSON.parse)
+  if (typeof raw === "object") return raw;
+
+  // Se vier string
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.log("[REDIS] sessão corrompida, limpando key=", key, "raw=", raw);
+      await redis.del(key);
+      return null;
+    }
+  }
+
+  // fallback seguro
+  return null;
 }
 
 async function saveSession(phone, sessionObj) {
   const key = sessionKey(phone);
-  console.log("[REDIS SET] key=", key);
-  await redis.set(key, JSON.stringify(sessionObj), { ex: SESSION_TTL_SECONDS });
+  const val = JSON.stringify(sessionObj);
+
+  console.log("[REDIS SET] key=", key, "len=", val.length);
+
+  // Upstash: options object
+  await redis.set(key, val, { ex: SESSION_TTL_SECONDS });
   return true;
 }
 
@@ -1946,6 +1970,20 @@ app.get("/debug/session/del", async (req, res) => {
   const key = sessionKey(phone);
   await redis.del(key);
   return res.json({ ok: true, phone, key, deleted: true });
+});
+
+app.post("/debug/session/clear", async (req, res) => {
+  try {
+    const phone = String(req.body?.phone || "").replace(/\D+/g, "");
+    if (!phone) return res.status(400).json({ ok: false, error: "phone obrigatório" });
+
+    const key = sessionKey(phone);
+    await redis.del(key);
+
+    return res.json({ ok: true, deleted: key });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 // =======================
