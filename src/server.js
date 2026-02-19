@@ -589,13 +589,13 @@ Descreva abaixo como podemos te ajudar.
 // =======================
 // HELPERS
 // =======================
-// phone -> { state, lastUserTs, lastPhoneNumberIdFallback, ... }
-const sessions = new Map();
 
-function setBookingPlan(phone, planoKey) {
-  const s = sessions.get(phone) || { state: null, lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
+// ✅ NÃO usar Map. Tudo no Redis.
+async function setBookingPlan(phone, planoKey) {
+  const s = await ensureSession(phone);
   s.booking = { ...(s.booking || {}), planoKey };
-  sessions.set(phone, s);
+  await saveSession(phone, s);
+  return s;
 }
 
 function resolveCodPlanoFromSession(s) {
@@ -913,7 +913,7 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
     phoneNumberIdFallback,
   });
 
-  if (state) setState(phone, state);
+  if (state) await setState(phone, state);
 }
 
 // =======================
@@ -1585,7 +1585,7 @@ sessions.set(phone, s2);
   // -------------------
   if (ctx === "MAIN") {
     if (digits === "1") {
-  setBookingPlan(phone, "PARTICULAR");
+  await setBookingPlan(phone, "PARTICULAR");
   return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
 }
     if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
@@ -1623,7 +1623,7 @@ if (ctx === "PARTICULAR") {
     if (digits === "3") return sendAndSetState(phone, MSG.CONVENIO_SALUSMED, "CONV_DETALHE", phoneNumberIdFallback);
     if (digits === "4") return sendAndSetState(phone, MSG.CONVENIO_PROASA, "CONV_DETALHE", phoneNumberIdFallback);
     if (digits === "5") {
-  setBookingPlan(phone, "MEDSENIOR_SP");
+  await setBookingPlan(phone, "MEDSENIOR_SP");
   return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
 }
 
