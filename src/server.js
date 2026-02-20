@@ -117,9 +117,14 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
   const out = await versatilisFetch(`/api/Login/CodUsuario?CPF=${encodeURIComponent(cpf)}`);
   if (!out.ok) return null;
 
-  const n = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
+  const d = out?.data;
+
+let n =
+  (d && typeof d === "object")
+    ? Number(d.CodUsuario ?? d.codUsuario)
+    : Number(d);
+
+return Number.isFinite(n) && n > 0 ? n : null;
 
 async function versaGetDadosUsuarioPorCodigo(codUsuario) {
   const id = Number(codUsuario);
@@ -427,9 +432,11 @@ const MSG = {
   ASK_CPF_PORTAL: `Para prosseguir com o agendamento, preciso confirmar seu cadastro.\n\nEnvie seu CPF (somente números).`,
 CPF_INVALIDO: `⚠️ CPF inválido. Envie 11 dígitos (somente números).`,
 PORTAL_NEED_DATA: (faltas) => `Para prosseguir, preciso completar seu cadastro do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
+PORTAL_NEED_DATA_EXISTING: (faltas) =>
+  `Encontrei seu cadastro ✅, mas precisamos completar algumas informações do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
 ASK_NOME: `Informe seu nome completo:`,
 ASK_DTNASC: `Informe sua data de nascimento (DD/MM/AAAA):`,
-ASK_SEXO: `Selecione seu sexo (opcional):`,
+ASK_SEXO: `Selecione seu sexo:`,
 ASK_CONVENIO: `Selecione o convênio para este agendamento:`,
 ASK_EMAIL: `Informe seu e-mail:`,
 ASK_CEP: `Informe seu CEP (somente números):`,
@@ -1305,9 +1312,11 @@ ${link}`,
 if (ctx === "WZ_CPF") {
   const cpf = onlyCpfDigits(raw);
   if (!cpf) {
-    await sendText({ to: phone, body: MSG.CPF_INVALIDO, phoneNumberIdFallback });
-    return;
-  }
+    await sendText({
+  to: phone,
+  body: MSG.PORTAL_NEED_DATA_EXISTING(formatMissing(v.missing)),
+  phoneNumberIdFallback,
+});
 
   const s = await ensureSession(phone);
   s.portal = s.portal || { form: {} };
@@ -1564,12 +1573,16 @@ if (ctx === "WZ_UF") {
 
  // Dispara reset SOMENTE se for paciente novo
 if (!existsCodUsuario) {
-  await versaSolicitarSenhaPorCPF(
-    s.portal.form.cpf,
-    s.portal.form.dtNascISO
-  );
-}
+  let reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
 
+  if (!reset?.ok) {
+    await new Promise(r => setTimeout(r, 1200)); // 1.2s
+    reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
+  }
+
+  console.log("[PORTAL] solicitar senha", { ok: !!reset?.ok, status: reset?.out?.status });
+}
+  
   // Revalida 100% no Versatilis
   const prof2 = await versaGetDadosUsuarioPorCodigo(up.codUsuario);
   const v2 = prof2.ok ? validatePortalCompleteness(prof2.data) : { ok: false, missing: ["dados do cadastro"] };
