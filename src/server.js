@@ -1272,30 +1272,31 @@ ${link}`,
     return;
   }
 
-  // Texto livre: se estiver em ATENDENTE, gera link com a mensagem
-  if (!digits) {
-    if (ctx === "ATENDENTE") {
-      const prefill = `Olá! Preciso falar com um atendente.
+ // Texto livre: se estiver em ATENDENTE, gera link com a mensagem
+// ⚠️ NÃO aplicar fallback enquanto estiver em wizard WZ_*
+if (!digits && !String(ctx || "").startsWith("WZ_")) {
+  if (ctx === "ATENDENTE") {
+    const prefill = `Olá! Preciso falar com um atendente.
 
 Paciente: ${phone}
 Mensagem: ${raw}`;
-      const link = makeWaLink(prefill);
+    const link = makeWaLink(prefill);
 
-      await sendAndSetState(
-        phone,
-        `Certo ✅ Clique no link abaixo para falar com nossa equipe e envie a mensagem:
+    await sendAndSetState(
+      phone,
+      `Certo ✅ Clique no link abaixo para falar com nossa equipe e envie a mensagem:
 
 ${link}`,
-        "MAIN",
-        phoneNumberIdFallback
-      );
-      return;
-    }
-
-    // padrão: volta ao menu
-    await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+      "MAIN",
+      phoneNumberIdFallback
+    );
     return;
   }
+
+  // padrão: volta ao menu
+  await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+  return;
+}
 
 // =======================
 // WIZARD PORTAL COMPLETO (CPF obrigatório)
