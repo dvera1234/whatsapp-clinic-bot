@@ -327,6 +327,8 @@ function pickPhoneNumberId(fallbackFromWebhook) {
 console.log("ENV CHECK:", {
   hasToken: !!pickToken(),
   hasVerifyToken: !!process.env.VERIFY_TOKEN,
+  hasFlowResetCode: !!String(process.env.FLOW_RESET_CODE || "").trim(),
+  flowResetCodeLen: String(process.env.FLOW_RESET_CODE || "").trim().length,
 });
 
 // =======================
@@ -985,17 +987,37 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const upper = raw.toUpperCase();
   const digits = onlyDigits(raw);
 
-  // =======================
-  // RESET GLOBAL (funciona em qualquer etapa)
-  // =======================
-  if (FLOW_RESET_CODE && raw === FLOW_RESET_CODE) {
-    // escolha 1: limpa tudo (mais seguro para teste)
-    await clearSession(phone);
+ // =======================
+// RESET GLOBAL (funciona em qualquer etapa) — robusto
+// Aceita:
+// - "#menu123" exatamente
+// - variação de maiúsc/minúsc
+// - se ENV estiver sem "#", aceita com ou sem "#"
+// =======================
+{
+  const code = String(FLOW_RESET_CODE || "").trim();
+  if (code) {
+    const msg = String(raw || "").trim();
+    const msgU = msg.toUpperCase();
 
-    // recria sessão mínima e vai para MAIN
-    await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-    return;
+    const codeU = code.toUpperCase();
+    const withHashU = ("#" + code).toUpperCase();
+
+    const hit =
+      msgU === codeU ||
+      msgU === withHashU ||
+      (code.startsWith("#") && msgU === codeU) ||
+      (!code.startsWith("#") && msgU === ("#" + codeU));
+
+    if (hit) {
+      console.log("[FLOW RESET] triggered", { phone: String(phone).slice(0, 4) + "****" });
+
+      await clearSession(phone);
+      await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+      return;
+    }
   }
+}
 
   const ctx = (await getState(phone)) || "MAIN";
 
