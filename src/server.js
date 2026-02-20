@@ -335,6 +335,12 @@ console.log("ENV CHECK:", {
 const INACTIVITY_MS = 10 * 60 * 1000; // mantemos por enquanto (será revisado)
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900); // 15 min (900s)
 
+// =======================
+// RESET DE FLUXO (código secreto de teste)
+// =======================
+const FLOW_RESET_CODE = String(process.env.FLOW_RESET_CODE || "").trim(); 
+// exemplo de ENV: FLOW_RESET_CODE="#menu123"
+
 // Sessão 100% Redis (uma chave por telefone)
 function sessionKey(phone) {
   return `sess:${String(phone || "").replace(/\D+/g, "")}`;
@@ -978,6 +984,18 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   const raw = normalizeSpaces(inboundText);
   const upper = raw.toUpperCase();
   const digits = onlyDigits(raw);
+
+  // =======================
+  // RESET GLOBAL (funciona em qualquer etapa)
+  // =======================
+  if (FLOW_RESET_CODE && raw === FLOW_RESET_CODE) {
+    // escolha 1: limpa tudo (mais seguro para teste)
+    await clearSession(phone);
+
+    // recria sessão mínima e vai para MAIN
+    await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    return;
+  }
 
   const ctx = (await getState(phone)) || "MAIN";
 
