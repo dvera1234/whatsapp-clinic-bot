@@ -115,16 +115,18 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
   if (cpf.length !== 11) return null;
 
   const out = await versatilisFetch(`/api/Login/CodUsuario?CPF=${encodeURIComponent(cpf)}`);
+  console.log("[VERSA] CodUsuario endpoint", { ok: out.ok, status: out.status, type: typeof out.data });
+
   if (!out.ok) return null;
 
   const d = out?.data;
+  let n =
+    (d && typeof d === "object")
+      ? Number(d.CodUsuario ?? d.codUsuario)
+      : Number(d);
 
-let n =
-  (d && typeof d === "object")
-    ? Number(d.CodUsuario ?? d.codUsuario)
-    : Number(d);
-
-return Number.isFinite(n) && n > 0 ? n : null;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 async function versaGetDadosUsuarioPorCodigo(codUsuario) {
   const id = Number(codUsuario);
@@ -1308,310 +1310,39 @@ ${link}`,
 // =======================
 // WIZARD PORTAL COMPLETO (CPF obrigatório)
 // =======================
+// ordem fixa de coleta quando precisa completar
+function nextWizardStateFromMissing(missingList) {
+  const m = new Set((missingList || []).map(x => String(x).toLowerCase()));
 
-if (ctx === "WZ_CPF") {
-  const cpf = onlyCpfDigits(raw);
-  if (!cpf) {
-    await sendText({
-  to: phone,
-  body: MSG.PORTAL_NEED_DATA_EXISTING(formatMissing(v.missing)),
-  phoneNumberIdFallback,
-});
+  // mesma linguagem do validatePortalCompleteness
+  if (m.has("nome completo")) return "WZ_NOME";
+  if (m.has("data de nascimento")) return "WZ_DTNASC";
+  if (m.has("e-mail")) return "WZ_EMAIL";
+  if (m.has("cep")) return "WZ_CEP";
+  if (m.has("endereço")) return "WZ_ENDERECO";
+  if (m.has("número")) return "WZ_NUMERO";
+  if (m.has("bairro")) return "WZ_BAIRRO";
+  if (m.has("cidade")) return "WZ_CIDADE";
+  if (m.has("estado (uf)")) return "WZ_UF";
 
-  const s = await ensureSession(phone);
-  s.portal = s.portal || { form: {} };
-  s.portal.form.cpf = cpf;
-  await saveSession(phone, s);
-
-  const codUsuario = await versaFindCodUsuarioByCPF(cpf);
-  s.portal.codUsuario = codUsuario;
-  s.portal.exists = !!codUsuario;
-
-  if (codUsuario) {
-    const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
-    s.portal.profile = prof.ok ? prof.data : null;
-
-    // valida completude
-    const v = prof.ok ? validatePortalCompleteness(prof.data) : { ok: false, missing: ["dados do cadastro"] };
-
-    await saveSession(phone, s);
-
-    if (v.ok) {
-      // cadastro ok -> segue (mas ainda vamos coletar convênio permitido no bot)
-      await sendButtons({
-        to: phone,
-        body: "Cadastro confirmado ✅\n\nSelecione o convênio para este agendamento:",
-        buttons: [
-          { id: "PL_PART", title: "Particular" },
-          { id: "PL_MED", title: "MedSênior SP" },
-        ],
-        phoneNumberIdFallback,
-      });
-       await setState(phone, "WZ_PLANO");
-      return;
-    }
-
-    // falta algo -> wizard completo (não deixa passar)
-    await sendText({
-      to: phone,
-      body: MSG.PORTAL_NEED_DATA(formatMissing(v.missing)),
-      phoneNumberIdFallback,
-    });
-
-    // pré-preenche com o que já existe
-    const p = prof.data || {};
-    s.portal.form.nome = cleanStr(p.Nome) || "";
-    s.portal.form.email = cleanStr(p.Email) || "";
-    // DtNasc pode vir com hora; pega só a parte da data
-    const dt = cleanStr(p.DtNasc);
-    s.portal.form.dtNascISO = dt ? dt.slice(0, 10) : "";
-    s.portal.form.celular = cleanStr(p.Celular).replace(/\D+/g, "") || formatCellFromWA(phone);
-
-    s.portal.form.cep = cleanStr(p.CEP).replace(/\D+/g, "") || "";
-    s.portal.form.endereco = cleanStr(p.Endereco) || "";
-    s.portal.form.numero = cleanStr(p.Numero) || "";
-    s.portal.form.complemento = cleanStr(p.Complemento) || "";
-    s.portal.form.bairro = cleanStr(p.Bairro) || "";
-    s.portal.form.cidade = cleanStr(p.Cidade) || "";
-
-    await saveSession(phone, s);
-
-    // Começa pedindo nome (se já tiver, você pode pular manualmente depois)
-    await sendAndSetState(phone, MSG.ASK_NOME, "WZ_NOME", phoneNumberIdFallback);
-    return;
-  }
-
-  // Não existe -> wizard completo (cadastrar)
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_NOME, "WZ_NOME", phoneNumberIdFallback);
-  return;
+  // se chegou aqui, falta algo fora do previsto
+  return "WZ_NOME";
 }
 
-if (ctx === "WZ_NOME") {
-  const s = await ensureSession(phone);
-  const nome = cleanStr(raw);
-  if (nome.length < 5) {
-    await sendText({ to: phone, body: "⚠️ Envie seu nome completo.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.nome = nome;
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_DTNASC, "WZ_DTNASC", phoneNumberIdFallback);
-  return;
-}
+async function finishWizardAndGoToDates({ phone, phoneNumberIdFallback, codUsuario, planoKeyFromWizard }) {
+  const s2 = await ensureSession(phone);
 
-if (ctx === "WZ_DTNASC") {
-  const s = await ensureSession(phone);
-  const iso = parseBRDateToISO(raw);
-  if (!iso) {
-    await sendText({ to: phone, body: "⚠️ Data inválida. Use DD/MM/AAAA.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.dtNascISO = iso;
-  await saveSession(phone, s);
+  const isRetorno = await versaHadAppointmentLast30Days(codUsuario);
 
-  await sendButtons({
-    to: phone,
-    body: "Sexo (opcional):",
-    buttons: [
-      { id: "SX_M", title: "Masculino" },
-      { id: "SX_F", title: "Feminino" },
-      { id: "SX_NI", title: "Prefiro não informar" },
-    ],
-    phoneNumberIdFallback,
-  });
-   await setState(phone, "WZ_SEXO");
-  return;
-}
+  s2.booking = s2.booking || {};
+  s2.booking.codUsuario = codUsuario;
+  s2.booking.codColaborador = 3;
+  s2.booking.isRetorno = isRetorno;
 
-if (ctx === "WZ_SEXO") {
-  const s = await ensureSession(phone);
-  if (upper === "SX_M") s.portal.form.sexoOpt = "M";
-  else if (upper === "SX_F") s.portal.form.sexoOpt = "F";
-  else s.portal.form.sexoOpt = "NI"; // não envia
+  // garante plano do wizard
+  if (planoKeyFromWizard) s2.booking.planoKey = planoKeyFromWizard;
 
-  await saveSession(phone, s);
-
-  await sendButtons({
-    to: phone,
-    body: "Selecione o convênio para este agendamento:",
-    buttons: [
-      { id: "PL_PART", title: "Particular" },
-      { id: "PL_MED", title: "MedSênior SP" },
-    ],
-    phoneNumberIdFallback,
-  });
-   await setState(phone, "WZ_PLANO");
-  return;
-}
-
-if (ctx === "WZ_PLANO") {
-  const s = await ensureSession(phone);
-  if (upper !== "PL_PART" && upper !== "PL_MED") {
-    await sendText({ to: phone, body: "Use os botões para selecionar o convênio.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.planoKey = (upper === "PL_MED") ? "MEDSENIOR_SP" : "PARTICULAR";
-
-  // Celular: usa o do WA (confirmável depois se quiser)
-  s.portal.form.celular = formatCellFromWA(phone);
-
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_EMAIL, "WZ_EMAIL", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_EMAIL") {
-  const s = await ensureSession(phone);
-  const email = cleanStr(raw);
-  if (!isValidEmail(email)) {
-    await sendText({ to: phone, body: "⚠️ E-mail inválido.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.email = email;
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_CEP, "WZ_CEP", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_CEP") {
-  const s = await ensureSession(phone);
-  const cep = normalizeCEP(raw);
-  if (cep.length !== 8) {
-    await sendText({ to: phone, body: "⚠️ CEP inválido. Envie 8 dígitos.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.cep = cep;
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_ENDERECO, "WZ_ENDERECO", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_ENDERECO") {
-  const s = await ensureSession(phone);
-  const v = cleanStr(raw);
-  if (v.length < 3) {
-    await sendText({ to: phone, body: "⚠️ Endereço inválido.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.endereco = v;
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_NUMERO, "WZ_NUMERO", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_NUMERO") {
-  const s = await ensureSession(phone);
-  const v = cleanStr(raw);
-  if (!v) {
-    await sendText({ to: phone, body: "⚠️ Informe o número.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.numero = v;
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_COMPLEMENTO, "WZ_COMPLEMENTO", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_COMPLEMENTO") {
-  const s = await ensureSession(phone);
-  const v = cleanStr(raw);
-  s.portal.form.complemento = v; // "0" permitido
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_BAIRRO, "WZ_BAIRRO", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_BAIRRO") {
-  const s = await ensureSession(phone);
-  const v = cleanStr(raw);
-  if (!v) {
-    await sendText({ to: phone, body: "⚠️ Informe o bairro.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.bairro = v;
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_CIDADE, "WZ_CIDADE", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_CIDADE") {
-  const s = await ensureSession(phone);
-  const v = cleanStr(raw);
-  if (!v) {
-    await sendText({ to: phone, body: "⚠️ Informe a cidade.", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.cidade = v;
-  await saveSession(phone, s);
-  await sendAndSetState(phone, MSG.ASK_UF, "WZ_UF", phoneNumberIdFallback);
-  return;
-}
-
-if (ctx === "WZ_UF") {
-  const s = await ensureSession(phone);
-  const uf = cleanStr(raw).toUpperCase();
-  if (!/^[A-Z]{2}$/.test(uf)) {
-    await sendText({ to: phone, body: "⚠️ UF inválida. Ex.: SP", phoneNumberIdFallback });
-    return;
-  }
-  s.portal.form.uf = uf;
-
-  // UPSERT + reset
-  const existsCodUsuario = s.portal.exists ? s.portal.codUsuario : null;
-
-  const up = await versaUpsertPortalCompleto({
-    existsCodUsuario,
-    form: s.portal.form,
-  });
-
-  if (!up.ok || !up.codUsuario) {
-    await sendText({ to: phone, body: "⚠️ Não consegui atualizar seu cadastro agora. Digite AJUDA para falar com nossa equipe.", phoneNumberIdFallback });
-     await setState(phone, "MAIN");
-    return;
-  }
-
- // Dispara reset SOMENTE se for paciente novo
-if (!existsCodUsuario) {
-  let reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
-
-  if (!reset?.ok) {
-    await new Promise(r => setTimeout(r, 1200)); // 1.2s
-    reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
-  }
-
-  console.log("[PORTAL] solicitar senha", { ok: !!reset?.ok, status: reset?.out?.status });
-}
-  
-  // Revalida 100% no Versatilis
-  const prof2 = await versaGetDadosUsuarioPorCodigo(up.codUsuario);
-  const v2 = prof2.ok ? validatePortalCompleteness(prof2.data) : { ok: false, missing: ["dados do cadastro"] };
-
-  if (!v2.ok) {
-    // Continua wizard — não deixa passar
-    await sendText({ to: phone, body: MSG.PORTAL_NEED_DATA(formatMissing(v2.missing)), phoneNumberIdFallback });
-    // reinicia do e-mail (é o mais comum faltar/formatar)
-     await setState(phone, "WZ_EMAIL");
-    await sendText({ to: phone, body: MSG.ASK_EMAIL, phoneNumberIdFallback });
-    return;
-  }
-
-  // Cadastro ok -> segue para regra retorno vs primeira e datas/slots
- const codUsuario = up.codUsuario;
-const s2 = await ensureSession(phone) || s;
-
-// regra 30 dias
-const isRetorno = await versaHadAppointmentLast30Days(codUsuario);
-
-s2.booking = s2.booking || {};
-s2.booking.codUsuario = codUsuario;
-s2.booking.codColaborador = 3; // fixo
-s2.booking.isRetorno = isRetorno;
-
-// 🔹 GARANTE QUE O PLANO DO WIZARD VÁ PARA O BOOKING
-s2.booking.planoKey = s.portal.form.planoKey;
-
-await saveSession(phone, s2);
+  await saveSession(phone, s2);
 
   await sendText({ to: phone, body: MSG.PORTAL_OK_RESET, phoneNumberIdFallback });
 
@@ -1622,7 +1353,343 @@ await saveSession(phone, s2);
     codUsuario,
   });
 
-  // muda estado para seleção de data (showNextDates já seta ASK_DATE_PICK)
+  // showNextDates já seta ASK_DATE_PICK
+}
+
+// ---- roteamento do wizard por estado ----
+if (String(ctx || "").startsWith("WZ_")) {
+
+  // garante estrutura mínima
+  const s = await ensureSession(phone);
+  if (!s.portal) {
+    s.portal = { codUsuario: null, exists: false, profile: null, form: {} };
+  }
+  if (!s.portal.form) s.portal.form = {};
+
+  // =======================
+  // WZ_CPF
+  // =======================
+  if (ctx === "WZ_CPF") {
+    const cpf = onlyCpfDigits(raw);
+
+    if (!cpf) {
+      await sendText({ to: phone, body: MSG.CPF_INVALIDO, phoneNumberIdFallback });
+      return;
+    }
+
+    s.portal.form.cpf = cpf;
+
+    // tenta achar cadastro
+    const codUsuario = await versaFindCodUsuarioByCPF(cpf);
+
+    if (codUsuario) {
+      s.portal.exists = true;
+      s.portal.codUsuario = codUsuario;
+
+      const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
+      s.portal.profile = prof.ok ? prof.data : null;
+
+      if (prof.ok && prof.data) {
+        const v = validatePortalCompleteness(prof.data);
+
+        // se já está completo, pula wizard e vai direto pras datas
+        if (v.ok) {
+          await saveSession(phone, s);
+          await finishWizardAndGoToDates({
+            phone,
+            phoneNumberIdFallback,
+            codUsuario,
+            planoKeyFromWizard: s.booking?.planoKey || null,
+          });
+          return;
+        }
+
+        // se está incompleto, avisa faltas e vai para o primeiro passo faltante
+        await saveSession(phone, s);
+        await sendText({
+          to: phone,
+          body: MSG.PORTAL_NEED_DATA_EXISTING(formatMissing(v.missing)),
+          phoneNumberIdFallback,
+        });
+
+        const next = nextWizardStateFromMissing(v.missing);
+        await setState(phone, next);
+
+        // dispara a primeira pergunta
+        if (next === "WZ_NOME") await sendText({ to: phone, body: MSG.ASK_NOME, phoneNumberIdFallback });
+        else if (next === "WZ_DTNASC") await sendText({ to: phone, body: MSG.ASK_DTNASC, phoneNumberIdFallback });
+        else if (next === "WZ_EMAIL") await sendText({ to: phone, body: MSG.ASK_EMAIL, phoneNumberIdFallback });
+        else if (next === "WZ_CEP") await sendText({ to: phone, body: MSG.ASK_CEP, phoneNumberIdFallback });
+        else if (next === "WZ_ENDERECO") await sendText({ to: phone, body: MSG.ASK_ENDERECO, phoneNumberIdFallback });
+        else if (next === "WZ_NUMERO") await sendText({ to: phone, body: MSG.ASK_NUMERO, phoneNumberIdFallback });
+        else if (next === "WZ_BAIRRO") await sendText({ to: phone, body: MSG.ASK_BAIRRO, phoneNumberIdFallback });
+        else if (next === "WZ_CIDADE") await sendText({ to: phone, body: MSG.ASK_CIDADE, phoneNumberIdFallback });
+        else if (next === "WZ_UF") await sendText({ to: phone, body: MSG.ASK_UF, phoneNumberIdFallback });
+
+        return;
+      }
+
+      // se não conseguiu ler perfil, segue wizard completo por segurança
+      await saveSession(phone, s);
+      await sendAndSetState(phone, MSG.ASK_NOME, "WZ_NOME", phoneNumberIdFallback);
+      return;
+    }
+
+    // paciente novo -> wizard completo
+    s.portal.exists = false;
+    s.portal.codUsuario = null;
+    await saveSession(phone, s);
+
+    await sendAndSetState(phone, MSG.ASK_NOME, "WZ_NOME", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_NOME
+  // =======================
+  if (ctx === "WZ_NOME") {
+    const nome = cleanStr(raw);
+    if (nome.length < 5) {
+      await sendText({ to: phone, body: "⚠️ Envie seu nome completo.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.nome = nome;
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_DTNASC, "WZ_DTNASC", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_DTNASC
+  // =======================
+  if (ctx === "WZ_DTNASC") {
+    const iso = parseBRDateToISO(raw);
+    if (!iso) {
+      await sendText({ to: phone, body: "⚠️ Data inválida. Use DD/MM/AAAA.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.dtNascISO = iso;
+    await saveSession(phone, s);
+
+    await sendButtons({
+      to: phone,
+      body: "Sexo (opcional):",
+      buttons: [
+        { id: "SX_M", title: "Masculino" },
+        { id: "SX_F", title: "Feminino" },
+        { id: "SX_NI", title: "Prefiro não informar" },
+      ],
+      phoneNumberIdFallback,
+    });
+    await setState(phone, "WZ_SEXO");
+    return;
+  }
+
+  // =======================
+  // WZ_SEXO
+  // =======================
+  if (ctx === "WZ_SEXO") {
+    if (upper === "SX_M") s.portal.form.sexoOpt = "M";
+    else if (upper === "SX_F") s.portal.form.sexoOpt = "F";
+    else s.portal.form.sexoOpt = "NI";
+
+    await saveSession(phone, s);
+
+    await sendButtons({
+      to: phone,
+      body: "Selecione o convênio para este agendamento:",
+      buttons: [
+        { id: "PL_PART", title: "Particular" },
+        { id: "PL_MED", title: "MedSênior SP" },
+      ],
+      phoneNumberIdFallback,
+    });
+    await setState(phone, "WZ_PLANO");
+    return;
+  }
+
+  // =======================
+  // WZ_PLANO
+  // =======================
+  if (ctx === "WZ_PLANO") {
+    if (upper !== "PL_PART" && upper !== "PL_MED") {
+      await sendText({ to: phone, body: "Use os botões para selecionar o convênio.", phoneNumberIdFallback });
+      return;
+    }
+
+    s.portal.form.planoKey = (upper === "PL_MED") ? "MEDSENIOR_SP" : "PARTICULAR";
+    s.portal.form.celular = formatCellFromWA(phone);
+
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_EMAIL, "WZ_EMAIL", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_EMAIL
+  // =======================
+  if (ctx === "WZ_EMAIL") {
+    const email = cleanStr(raw);
+    if (!isValidEmail(email)) {
+      await sendText({ to: phone, body: "⚠️ E-mail inválido.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.email = email;
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_CEP, "WZ_CEP", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_CEP
+  // =======================
+  if (ctx === "WZ_CEP") {
+    const cep = normalizeCEP(raw);
+    if (cep.length !== 8) {
+      await sendText({ to: phone, body: "⚠️ CEP inválido. Envie 8 dígitos.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.cep = cep;
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_ENDERECO, "WZ_ENDERECO", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_ENDERECO
+  // =======================
+  if (ctx === "WZ_ENDERECO") {
+    const v = cleanStr(raw);
+    if (v.length < 3) {
+      await sendText({ to: phone, body: "⚠️ Endereço inválido.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.endereco = v;
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_NUMERO, "WZ_NUMERO", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_NUMERO
+  // =======================
+  if (ctx === "WZ_NUMERO") {
+    const v = cleanStr(raw);
+    if (!v) {
+      await sendText({ to: phone, body: "⚠️ Informe o número.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.numero = v;
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_COMPLEMENTO, "WZ_COMPLEMENTO", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_COMPLEMENTO
+  // =======================
+  if (ctx === "WZ_COMPLEMENTO") {
+    s.portal.form.complemento = cleanStr(raw);
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_BAIRRO, "WZ_BAIRRO", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_BAIRRO
+  // =======================
+  if (ctx === "WZ_BAIRRO") {
+    const v = cleanStr(raw);
+    if (!v) {
+      await sendText({ to: phone, body: "⚠️ Informe o bairro.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.bairro = v;
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_CIDADE, "WZ_CIDADE", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_CIDADE
+  // =======================
+  if (ctx === "WZ_CIDADE") {
+    const v = cleanStr(raw);
+    if (!v) {
+      await sendText({ to: phone, body: "⚠️ Informe a cidade.", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.cidade = v;
+    await saveSession(phone, s);
+    await sendAndSetState(phone, MSG.ASK_UF, "WZ_UF", phoneNumberIdFallback);
+    return;
+  }
+
+  // =======================
+  // WZ_UF  -> UPSERT + RESET (se novo) + VALIDAR + IR PRA DATAS
+  // =======================
+  if (ctx === "WZ_UF") {
+    const uf = cleanStr(raw).toUpperCase();
+    if (!/^[A-Z]{2}$/.test(uf)) {
+      await sendText({ to: phone, body: "⚠️ UF inválida. Ex.: SP", phoneNumberIdFallback });
+      return;
+    }
+    s.portal.form.uf = uf;
+
+    const existsCodUsuario = s.portal.exists ? s.portal.codUsuario : null;
+
+    const up = await versaUpsertPortalCompleto({
+      existsCodUsuario,
+      form: s.portal.form,
+    });
+
+    if (!up.ok || !up.codUsuario) {
+      await sendText({
+        to: phone,
+        body: "⚠️ Não consegui atualizar seu cadastro agora. Digite AJUDA para falar com nossa equipe.",
+        phoneNumberIdFallback
+      });
+      await setState(phone, "MAIN");
+      return;
+    }
+
+    // reset SOMENTE se novo
+    if (!existsCodUsuario) {
+      let reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
+      if (!reset?.ok) {
+        await new Promise(r => setTimeout(r, 1200));
+        reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
+      }
+      console.log("[PORTAL] solicitar senha", { ok: !!reset?.ok, status: reset?.out?.status });
+    }
+
+    // revalida
+    const prof2 = await versaGetDadosUsuarioPorCodigo(up.codUsuario);
+    const v2 = prof2.ok ? validatePortalCompleteness(prof2.data) : { ok: false, missing: ["dados do cadastro"] };
+
+    if (!v2.ok) {
+      await sendText({ to: phone, body: MSG.PORTAL_NEED_DATA(formatMissing(v2.missing)), phoneNumberIdFallback });
+
+      const next = nextWizardStateFromMissing(v2.missing);
+      await setState(phone, next);
+      await sendText({ to: phone, body: MSG.ASK_EMAIL, phoneNumberIdFallback }); // fallback simples
+      return;
+    }
+
+    await saveSession(phone, s);
+
+    await finishWizardAndGoToDates({
+      phone,
+      phoneNumberIdFallback,
+      codUsuario: up.codUsuario,
+      planoKeyFromWizard: s.portal.form.planoKey,
+    });
+
+    return;
+  }
+
+  // se cair aqui por algum motivo, volta pro CPF
+  await sendAndSetState(phone, MSG.ASK_CPF_PORTAL, "WZ_CPF", phoneNumberIdFallback);
   return;
 }
   
