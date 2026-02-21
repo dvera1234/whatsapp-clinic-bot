@@ -110,22 +110,75 @@ async function versatilisFetch(path, { method = "GET", jsonBody } = {}) {
   return { ok: r.ok, status: r.status, data };
 }
 
+function formatCPFMask(cpf11) {
+  const c = String(cpf11 || "").replace(/\D+/g, "");
+  if (c.length !== 11) return null;
+  return `${c.slice(0,3)}.${c.slice(3,6)}.${c.slice(6,9)}-${c.slice(9,11)}`;
+}
+
+function parseCodUsuarioFromAny(data) {
+  if (data == null) return null;
+
+  // string pura "17" ou "\"17\""
+  if (typeof data === "string") {
+    const s = data.trim().replace(/^"+|"+$/g, ""); // remove aspas externas
+    const n = Number(s);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  // número
+  if (typeof data === "number") {
+    return Number.isFinite(data) && data > 0 ? data : null;
+  }
+
+  // objeto (várias possibilidades)
+  if (typeof data === "object") {
+    const cand =
+      data.CodUsuario ??
+      data.codUsuario ??
+      data?.Data?.CodUsuario ??
+      data?.data?.CodUsuario ??
+      data?.Result?.CodUsuario ??
+      data?.result?.CodUsuario;
+
+    const n = Number(String(cand ?? "").trim().replace(/^"+|"+$/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  return null;
+}
+
 async function versaFindCodUsuarioByCPF(cpfDigits) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return null;
 
-  const out = await versatilisFetch(`/api/Login/CodUsuario?CPF=${encodeURIComponent(cpf)}`);
-  console.log("[VERSA] CodUsuario endpoint", { ok: out.ok, status: out.status, type: typeof out.data });
+  const cpfMask = formatCPFMask(cpf);
 
-  if (!out.ok) return null;
+  // tenta variações comuns (CPF vs cpf) e CPF formatado
+  const candidates = [
+    `/api/Login/CodUsuario?CPF=${encodeURIComponent(cpf)}`,
+    `/api/Login/CodUsuario?cpf=${encodeURIComponent(cpf)}`,
+    cpfMask ? `/api/Login/CodUsuario?CPF=${encodeURIComponent(cpfMask)}` : null,
+    cpfMask ? `/api/Login/CodUsuario?cpf=${encodeURIComponent(cpfMask)}` : null,
+  ].filter(Boolean);
 
-  const d = out?.data;
-  let n =
-    (d && typeof d === "object")
-      ? Number(d.CodUsuario ?? d.codUsuario)
-      : Number(d);
+  for (const path of candidates) {
+    const out = await versatilisFetch(path);
 
-  return Number.isFinite(n) && n > 0 ? n : null;
+    const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
+
+    console.log("[VERSA] CodUsuario try", {
+      ok: out.ok,
+      status: out.status,
+      path,
+      parsed: parsed ? "OK" : "null",
+      dataType: typeof out.data,
+    });
+
+    if (parsed) return parsed;
+  }
+
+  return null;
 }
 
 async function versaGetDadosUsuarioPorCodigo(codUsuario) {
@@ -2108,6 +2161,18 @@ app.post("/debug/session/clear", async (req, res) => {
     await redis.del(key);
 
     return res.json({ ok: true, deleted: key });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/debug/versatilis/codusuario", async (req, res) => {
+  try {
+    const cpf = String(req.query.cpf || "").replace(/\D+/g, "");
+    if (cpf.length !== 11) return res.status(400).json({ ok: false, error: "cpf inválido (11 dígitos)" });
+
+    const codUsuario = await versaFindCodUsuarioByCPF(cpf);
+    return res.json({ ok: true, cpf, codUsuario });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
