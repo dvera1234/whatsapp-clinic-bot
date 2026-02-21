@@ -355,23 +355,39 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   const tempPass = generateTempPassword(10);
   const senhaMD5 = md5Hex(tempPass);
 
-  const payload = {
-    Nome: form.nome,
-    CPF: form.cpf,
-    Email: form.email,
-    Senha: senhaMD5,
-    DtNasc: form.dtNascISO,
-    Celular: form.celular,
-    Telefone: "",
-    CEP: form.cep,
-    Endereco: form.endereco,
-    Numero: form.numero,
-    Complemento: mergeComplementoWithUF(form.complemento, form.uf),
-    Bairro: form.bairro,
-    Cidade: form.cidade,
-    CodPlano: String(codPlano),
-    CodPlanos: [codPlano],
-  };
+ const dtNascBR = formatBRDateFromISO(form.dtNascISO); // DD/MM/AAAA
+
+// payload base (sem Senha por padrão)
+const payload = {
+  Nome: form.nome,
+  CPF: form.cpf,
+  Email: form.email,
+  DtNasc: dtNascBR, // ✅ Versatilis geralmente espera BR aqui
+  Celular: form.celular,
+  Telefone: "",
+  CEP: form.cep,
+  Endereco: form.endereco,
+  Numero: form.numero,
+  Complemento: mergeComplementoWithUF(form.complemento, form.uf),
+  Bairro: form.bairro,
+  Cidade: form.cidade,
+  CodPlano: String(codPlano),
+  CodPlanos: [codPlano],
+};
+
+if (form.sexoOpt === "M" || form.sexoOpt === "F") {
+  payload.Sexo = form.sexoOpt;
+}
+
+// ✅ Só define senha quando for CADASTRO novo
+if (!existsCodUsuario) {
+  payload.Senha = senhaMD5;
+}
+
+// ✅ Para ALTERAR, inclua CodUsuario no body (muito comum ser obrigatório)
+if (existsCodUsuario) {
+  payload.CodUsuario = Number(existsCodUsuario);
+}
 
   if (form.sexoOpt === "M" || form.sexoOpt === "F") {
     payload.Sexo = form.sexoOpt;
@@ -380,10 +396,26 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   let out;
   if (existsCodUsuario) {
     out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+
+    // 👇 cole aqui
+console.log("[PORTAL UPSERT] alterar", {
+  ok: out.ok,
+  status: out.status,
+  data: out.data,
+});
+    
     if (!out.ok) return { ok: false, stage: "alterar", out };
     return { ok: true, codUsuario: existsCodUsuario };
   } else {
     out = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
+
+    // 👇 cole aqui
+console.log("[PORTAL UPSERT] cadastrar", {
+  ok: out.ok,
+  status: out.status,
+  data: out.data,
+});
+    
     if (!out.ok) return { ok: false, stage: "cadastrar", out };
     const codUsuario = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
     return { ok: true, codUsuario: Number.isFinite(codUsuario) ? codUsuario : null };
