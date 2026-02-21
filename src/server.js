@@ -219,6 +219,42 @@ if (process.env.DEBUG_VERSA_SHAPE === "1" && out.ok && out.data && typeof out.da
   return null;
 }
 
+async function versaFindCodUsuarioByDadosCPF(cpfDigits) {
+  const cpf = String(cpfDigits || "").replace(/\D+/g, "");
+  if (cpf.length !== 11) return null;
+
+  const cpfMask = formatCPFMask(cpf);
+
+  const candidates = [
+    cpfMask ? `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpfMask)}` : null,
+    `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpf)}`,
+  ].filter(Boolean);
+
+ for (const path of candidates) {
+  const out = await versatilisFetch(path);
+
+  const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
+
+  console.log("[VERSA] CodUsuario try", {
+    ok: out.ok,
+    status: out.status,
+    path,
+    parsed: parsed ? "OK" : "null",
+    dataType: typeof out.data,
+  });
+
+  if (parsed) return parsed;
+}
+
+// 🔒 FALLBACK seguro pelo endpoint oficial do manual
+const byDados = await versaFindCodUsuarioByDadosCPF(cpf);
+if (byDados) {
+  console.log("[VERSA] fallback DadosUsuarioPorCPF funcionou");
+  return byDados;
+}
+
+return null;
+
 async function versaGetDadosUsuarioPorCodigo(codUsuario) {
   const id = Number(codUsuario);
   if (!Number.isFinite(id) || id <= 0) return { ok: false, data: null };
@@ -391,7 +427,7 @@ if (existsCodUsuario) {
 
   let out;
   if (existsCodUsuario) {
-   out = await versatilisFetch("/api/Login/AtualizarUsuario", { method: "POST", jsonBody: payload });
+  out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
 
     // 👇 cole aqui
 console.log("[PORTAL UPSERT] alterar", {
