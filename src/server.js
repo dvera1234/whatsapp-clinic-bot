@@ -1,11 +1,12 @@
 import express from "express";
+import crypto from "crypto";
+
+console.log("[BUILD]", "2026-02-21T19:xx PUT-FIX-1");
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
-
-import crypto from "crypto";
 
 function md5Hex(s) {
   return crypto.createHash("md5").update(String(s), "utf8").digest("hex");
@@ -90,7 +91,25 @@ async function versatilisGetToken() {
 async function versatilisFetch(path, { method = "GET", jsonBody } = {}) {
   const token = await versatilisGetToken();
 
-  const r = await fetch(`${VERSA_BASE}${path}`, {
+  const rid = crypto.randomUUID();
+  const url = `${VERSA_BASE}${path}`;
+
+  // LOG ANTES DO FETCH
+  console.log("[VERSATILIS OUT]", {
+    rid,
+    method,
+    url,
+    hasBody: !!jsonBody,
+  });
+
+  if (path === "/api/Login/AlterarUsuario" && method !== "PUT") {
+    console.log("[VERSATILIS GUARD] ALTERAR USUARIO method errado!", {
+      rid,
+      method,
+    });
+  }
+
+  const r = await fetch(url, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -104,10 +123,15 @@ async function versatilisFetch(path, { method = "GET", jsonBody } = {}) {
   let data;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
-  // log mínimo (sem dados sensíveis)
-  console.log("[VERSATILIS]", { method, path, status: r.status });
+  // LOG DEPOIS DO FETCH
+  console.log("[VERSATILIS IN]", {
+    rid,
+    method,
+    path,
+    status: r.status,
+  });
 
-  return { ok: r.ok, status: r.status, data };
+  return { ok: r.ok, status: r.status, data, rid };
 }
 
 function formatCPFMask(cpf11) {
@@ -429,10 +453,10 @@ if (existsCodUsuario) {
   if (existsCodUsuario) {
   out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
 
-    // 👇 cole aqui
-console.log("[PORTAL UPSERT] alterar", {
+   console.log("[PORTAL UPSERT] alterar", {
   ok: out.ok,
   status: out.status,
+  rid: out.rid,
   data: out.data,
 });
     
@@ -441,10 +465,10 @@ console.log("[PORTAL UPSERT] alterar", {
   } else {
     out = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
 
-    // 👇 cole aqui
-console.log("[PORTAL UPSERT] cadastrar", {
+    console.log("[PORTAL UPSERT] cadastrar", {
   ok: out.ok,
   status: out.status,
+  rid: out.rid,
   data: out.data,
 });
     
