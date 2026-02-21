@@ -391,7 +391,7 @@ if (existsCodUsuario) {
 
   let out;
   if (existsCodUsuario) {
-    out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "POST", jsonBody: payload });
+   out = await versatilisFetch("/api/Login/AtualizarUsuario", { method: "POST", jsonBody: payload });
 
     // 👇 cole aqui
 console.log("[PORTAL UPSERT] alterar", {
