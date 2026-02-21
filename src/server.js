@@ -389,13 +389,9 @@ if (existsCodUsuario) {
   payload.CodUsuario = Number(existsCodUsuario);
 }
 
-  if (form.sexoOpt === "M" || form.sexoOpt === "F") {
-    payload.Sexo = form.sexoOpt;
-  }
-
   let out;
   if (existsCodUsuario) {
-    out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+    out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "POST", jsonBody: payload });
 
     // 👇 cole aqui
 console.log("[PORTAL UPSERT] alterar", {
