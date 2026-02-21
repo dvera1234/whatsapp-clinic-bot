@@ -116,36 +116,68 @@ function formatCPFMask(cpf11) {
   return `${c.slice(0,3)}.${c.slice(3,6)}.${c.slice(6,9)}-${c.slice(9,11)}`;
 }
 
-function parseCodUsuarioFromAny(data) {
-  if (data == null) return null;
+function parsePositiveInt(v) {
+  if (v == null) return null;
 
-  // string pura "17" ou "\"17\""
-  if (typeof data === "string") {
-    const s = data.trim().replace(/^"+|"+$/g, ""); // remove aspas externas
+  if (typeof v === "number") {
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  if (typeof v === "string") {
+    const s = v.trim().replace(/^"+|"+$/g, "");
     const n = Number(s);
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
-  // número
-  if (typeof data === "number") {
-    return Number.isFinite(data) && data > 0 ? data : null;
+  return null;
+}
+
+function findCodUsuarioDeep(obj, depth = 0, maxDepth = 6, seen = new Set()) {
+  if (obj == null) return null;
+
+  // tenta direto se for number/string
+  const direct = parsePositiveInt(obj);
+  if (direct) return direct;
+
+  if (typeof obj !== "object") return null;
+  if (seen.has(obj)) return null;
+  seen.add(obj);
+
+  if (depth > maxDepth) return null;
+
+  // Se for array, varre itens
+  if (Array.isArray(obj)) {
+    for (const it of obj) {
+      const found = findCodUsuarioDeep(it, depth + 1, maxDepth, seen);
+      if (found) return found;
+    }
+    return null;
   }
 
-  // objeto (várias possibilidades)
-  if (typeof data === "object") {
-    const cand =
-      data.CodUsuario ??
-      data.codUsuario ??
-      data?.Data?.CodUsuario ??
-      data?.data?.CodUsuario ??
-      data?.Result?.CodUsuario ??
-      data?.result?.CodUsuario;
+  // Se for objeto, tenta achar chaves que “parecem” CodUsuario
+  for (const [k, v] of Object.entries(obj)) {
+    const key = String(k || "").toLowerCase();
 
-    const n = Number(String(cand ?? "").trim().replace(/^"+|"+$/g, ""));
-    return Number.isFinite(n) && n > 0 ? n : null;
+    // pega variantes comuns (bem permissivo)
+    if (key === "codusuario" || key === "codigoUsuario".toLowerCase() || key.includes("codusuario")) {
+      const n = parsePositiveInt(v);
+      if (n) return n;
+      const deep = findCodUsuarioDeep(v, depth + 1, maxDepth, seen);
+      if (deep) return deep;
+    }
+  }
+
+  // Se não achou por chave, varre tudo (fallback)
+  for (const v of Object.values(obj)) {
+    const found = findCodUsuarioDeep(v, depth + 1, maxDepth, seen);
+    if (found) return found;
   }
 
   return null;
+}
+
+function parseCodUsuarioFromAny(data) {
+  return findCodUsuarioDeep(data);
 }
 
 async function versaFindCodUsuarioByCPF(cpfDigits) {
@@ -165,6 +197,12 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
   for (const path of candidates) {
     const out = await versatilisFetch(path);
 
+    // DEBUG de estrutura (não imprime valores)
+if (process.env.DEBUG_VERSA_SHAPE === "1" && out.ok && out.data && typeof out.data === "object") {
+  const keys = Object.keys(out.data || {}).slice(0, 30);
+  console.log("[VERSA] CodUsuario shape keys (top)", { path, keys, isArray: Array.isArray(out.data) });
+}
+    
     const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
 
     console.log("[VERSA] CodUsuario try", {
