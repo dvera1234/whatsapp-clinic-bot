@@ -179,6 +179,7 @@ if (r.status === 405) {
 }
 
 return { ok: r.ok, status: r.status, data, rid, allow };
+}
 
 function formatCPFMask(cpf11) {
   const c = String(cpf11 || "").replace(/\D+/g, "");
@@ -1746,7 +1747,7 @@ if (String(ctx || "").startsWith("WZ_")) {
 
     await sendButtons({
       to: phone,
-      body: "Sexo (opcional):",
+      body: "Sexo :",
       buttons: [
         { id: "SX_M", title: "Masculino" },
         { id: "SX_F", title: "Feminino" },
