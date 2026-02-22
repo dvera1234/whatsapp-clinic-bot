@@ -148,9 +148,6 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } 
     body: jsonBody ? JSON.stringify(jsonBody) : undefined,
   });
 
-  // ... resto igual
-}
-
 const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
 
 const text = await r.text().catch(() => "");
