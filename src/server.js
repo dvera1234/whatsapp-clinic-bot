@@ -504,7 +504,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
     payload.Senha = senhaMD5;
   }
 
-  // ✅ Para ALTERAR, inclua CodUsuario no body (muito comum ser obrigatório)
+  // ✅ Para ALTERAR, inclua CodUsuario no body
   if (existsCodUsuario) {
     payload.CodUsuario = Number(existsCodUsuario);
   }
@@ -535,54 +535,59 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   );
 
   console.log("[PORTAL UPSERT] payload shape", {
-  hasCodUsuario: !!payload.CodUsuario,
-  empties,
-  shape,
-});
-
-// 🔒 Bloqueio: não chama Versatilis com payload inválido
-if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.trim().length < 8) {
-  console.log("[PORTAL UPSERT] BLOCKED invalid payload — form shape", {
-    hasForm: !!form,
-    formKeys: form ? Object.keys(form).sort() : [],
-    // mostra apenas tipos/len, sem valores
-    formShape: form
-      ? Object.fromEntries(
-          Object.entries(form).map(([k, v]) => {
-            if (v == null) return [k, "null/undefined"];
-            if (typeof v === "string") return [k, `string(len=${v.length})`];
-            if (typeof v === "number") return [k, "number"];
-            if (typeof v === "boolean") return [k, "boolean"];
-            if (Array.isArray(v)) return [k, `array(len=${v.length})`];
-            return [k, typeof v];
-          })
-        )
-      : {},
+    hasCodUsuario: !!payload.CodUsuario,
+    empties,
+    shape,
   });
 
-  return {
-    ok: false,
-    stage: "blocked_missing_fields",
-    missing: empties,
-    hint: "Wizard não preencheu dados obrigatórios (Nome/Email/Celular/DtNasc/Telefone). Corrigir fluxo WZ_*.",
-  };
-}
+  // 🔒 Bloqueio: não chama Versatilis com payload inválido
+  if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.trim().length < 8) {
+    console.log("[PORTAL UPSERT] BLOCKED invalid payload — form shape", {
+      hasForm: !!form,
+      formKeys: form ? Object.keys(form).sort() : [],
+      // mostra apenas tipos/len, sem valores
+      formShape: form
+        ? Object.fromEntries(
+            Object.entries(form).map(([k, v]) => {
+              if (v == null) return [k, "null/undefined"];
+              if (typeof v === "string") return [k, `string(len=${v.length})`];
+              if (typeof v === "number") return [k, "number"];
+              if (typeof v === "boolean") return [k, "boolean"];
+              if (Array.isArray(v)) return [k, `array(len=${v.length})`];
+              return [k, typeof v];
+            })
+          )
+        : {},
+    });
+
+    return {
+      ok: false,
+      stage: "blocked_missing_fields",
+      missing: empties,
+      hint: "Wizard não preencheu dados obrigatórios. Corrigir fluxo WZ_*.",
+    };
+  }
 
   let out;
 
   // ======= TENTA ALTERAR (se existir) =======
   if (existsCodUsuario) {
-    out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+    // 1) tenta POST (muito comum em APIs legadas para “alterar”)
+    out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "POST", jsonBody: payload });
 
-    // ✅ 405: fallback para cadastrar (upsert)
-    if (!out.ok && out.status === 405) {
-      console.log("[PORTAL UPSERT] AlterarUsuario 405 — tentando fallback via CadastrarUsuario (upsert)", {
+    // 2) se falhar, tenta PUT (mantém compatibilidade com instalações que aceitam PUT)
+    if (!out.ok) {
+      out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+    }
+
+    // 3) ainda falhou? fallback upsert via CadastrarUsuario
+    if (!out.ok) {
+      console.log("[PORTAL UPSERT] AlterarUsuario falhou — tentando fallback via CadastrarUsuario (upsert)", {
         status: out.status,
         rid: out.rid,
         allow: out.allow || null,
       });
 
-      // ⚠️ Aqui ainda não mudamos payload — só vamos medir o erro com o log acima.
       const out2 = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
 
       console.log("[PORTAL UPSERT] fallback cadastrar (com CodUsuario)", {
@@ -594,11 +599,13 @@ if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.t
 
       if (!out2.ok) return { ok: false, stage: "fallback_cadastrar", out: out2 };
 
-      // se der certo, consideramos atualizado
-      return { ok: true, codUsuario: Number(existsCodUsuario) };
+      // tenta extrair CodUsuario do retorno; se não vier, usa o existente
+      const parsedFromReturn = parseCodUsuarioFromAny(out2.data);
+      return {
+        ok: true,
+        codUsuario: parsedFromReturn || Number(existsCodUsuario),
+      };
     }
-
-    if (!out.ok) return { ok: false, stage: "alterar", out };
 
     return { ok: true, codUsuario: Number(existsCodUsuario) };
   }
@@ -615,8 +622,11 @@ if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.t
 
   if (!out.ok) return { ok: false, stage: "cadastrar", out };
 
-  const codUsuario = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
-  return { ok: true, codUsuario: Number.isFinite(codUsuario) ? codUsuario : null };
+  const codUsuario =
+    parseCodUsuarioFromAny(out.data) ||
+    Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
+
+  return { ok: true, codUsuario: Number.isFinite(Number(codUsuario)) ? Number(codUsuario) : null };
 }
 
 // =======================
