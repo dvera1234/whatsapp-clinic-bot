@@ -457,103 +457,119 @@ function mergeComplementoWithUF(complementoUser, uf) {
 async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   // form: { nome, cpf, dtNascISO, sexoOpt, celular, email, cep, endereco, numero, complemento, bairro, cidade, uf, planoKey }
   // planoKey: "PARTICULAR" ou "MEDSENIOR_SP"
+
   const planoKey = form.planoKey;
-  const codPlano = resolveCodPlano(planoKey); // ajuste depois com seus ENV se necessário
+  const codPlano = resolveCodPlano(planoKey);
 
   const tempPass = generateTempPassword(10);
   const senhaMD5 = md5Hex(tempPass);
 
- const dtNascBR = formatBRDateFromISO(form.dtNascISO); // DD/MM/AAAA
+  const dtNascBR = formatBRDateFromISO(form.dtNascISO); // DD/MM/AAAA
 
-// payload base (sem Senha por padrão)
-const payload = {
-  Nome: form.nome,
-  CPF: form.cpf,
-  Email: form.email,
-  DtNasc: dtNascBR, // ✅ Versatilis geralmente espera BR aqui
-  Celular: form.celular,
-  Telefone: "",
-  CEP: form.cep,
-  Endereco: form.endereco,
-  Numero: form.numero,
-  Complemento: mergeComplementoWithUF(form.complemento, form.uf),
-  Bairro: form.bairro,
-  Cidade: form.cidade,
-  CodPlano: String(codPlano),
-  CodPlanos: [codPlano],
-};
+  // payload base (sem Senha por padrão)
+  const payload = {
+    Nome: form.nome,
+    CPF: form.cpf,
+    Email: form.email,
+    DtNasc: dtNascBR, // Versatilis geralmente espera BR aqui
+    Celular: form.celular,
+    Telefone: "",
+    CEP: form.cep,
+    Endereco: form.endereco,
+    Numero: form.numero,
+    Complemento: mergeComplementoWithUF(form.complemento, form.uf),
+    Bairro: form.bairro,
+    Cidade: form.cidade,
+    CodPlano: String(codPlano),
+    CodPlanos: [codPlano],
+  };
 
-if (form.sexoOpt === "M" || form.sexoOpt === "F") {
-  payload.Sexo = form.sexoOpt;
-}
+  if (form.sexoOpt === "M" || form.sexoOpt === "F") {
+    payload.Sexo = form.sexoOpt;
+  }
 
-// ✅ Só define senha quando for CADASTRO novo
-if (!existsCodUsuario) {
-  payload.Senha = senhaMD5;
-}
+  // Só define senha quando for CADASTRO novo
+  if (!existsCodUsuario) {
+    payload.Senha = senhaMD5;
+  }
 
-// ✅ Para ALTERAR, inclua CodUsuario no body (muito comum ser obrigatório)
-if (existsCodUsuario) {
-  payload.CodUsuario = Number(existsCodUsuario);
-}
-
-  let out;
+  // Para ALTERAR, inclui CodUsuario no body
   if (existsCodUsuario) {
-  out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+    payload.CodUsuario = Number(existsCodUsuario);
+  }
 
-// ✅ 405: não retorna ainda — vamos tratar no próximo passo (fallback)
-if (!out.ok && out.status === 405) {
-  console.log("[PORTAL UPSERT] AlterarUsuario 405 (sem update nessa instância) — preparando fallback", {
+  // =========================
+  // ALTERAR (quando existe)
+  // =========================
+  if (existsCodUsuario) {
+    let out = await versatilisFetch("/api/Login/AlterarUsuario", {
+      method: "PUT",
+      jsonBody: payload,
+    });
+
+    // 405: endpoint não aceita PUT nessa instância -> fallback
+    if (!out.ok && out.status === 405) {
+      console.log("[PORTAL UPSERT] AlterarUsuario 405 — tentando fallback via CadastrarUsuario (upsert)", {
+        status: out.status,
+        rid: out.rid,
+        allow: out.allow,
+      });
+
+      out = await versatilisFetch("/api/Login/CadastrarUsuario", {
+        method: "POST",
+        jsonBody: payload, // contém CodUsuario
+      });
+
+      console.log("[PORTAL UPSERT] fallback cadastrar (com CodUsuario)", {
+        ok: out.ok,
+        status: out.status,
+        rid: out.rid,
+        dataType: typeof out.data,
+      });
+
+      if (!out.ok) return { ok: false, stage: "alterar_fallback_cadastrar", out };
+
+      // se o backend devolve o CodUsuario, ótimo; se não, mantemos o original
+      const codUsuarioReturned = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
+      return {
+        ok: true,
+        codUsuario: Number.isFinite(codUsuarioReturned) && codUsuarioReturned > 0 ? codUsuarioReturned : Number(existsCodUsuario),
+        usedFallback: true,
+      };
+    }
+
+    // outros erros
+    if (!out.ok) return { ok: false, stage: "alterar", out };
+
+    console.log("[PORTAL UPSERT] alterar", {
+      ok: out.ok,
+      status: out.status,
+      rid: out.rid,
+      dataType: typeof out.data,
+    });
+
+    return { ok: true, codUsuario: Number(existsCodUsuario), usedFallback: false };
+  }
+
+  // =========================
+  // CADASTRAR (novo)
+  // =========================
+  const out = await versatilisFetch("/api/Login/CadastrarUsuario", {
+    method: "POST",
+    jsonBody: payload,
+  });
+
+  console.log("[PORTAL UPSERT] cadastrar", {
+    ok: out.ok,
     status: out.status,
     rid: out.rid,
+    dataType: typeof out.data,
   });
-  // Por enquanto: devolve erro específico (no passo 2 vamos fazer fallback real)
-  return {
-    ok: false,
-    stage: "alterar_405",
-    out,
-    hint: "AlterarUsuario não aceita PUT nessa instância (405). Próximo passo: tentar upsert via CadastrarUsuario com CodUsuario."
-  };
-}
 
-// ❌ Qualquer outro erro continua sendo erro
-if (!out.ok) {
-  return { ok: false, stage: "alterar", out };
-}
+  if (!out.ok) return { ok: false, stage: "cadastrar", out };
 
-console.log("[PORTAL UPSERT] alterar", {
-  ok: out.ok,
-  status: out.status,
-  rid: out.rid,
-  data: out.data,
-});
-
-return { ok: true, codUsuario: existsCodUsuario }; 
-  }
-
-   console.log("[PORTAL UPSERT] alterar", {
-  ok: out.ok,
-  status: out.status,
-  rid: out.rid,
-  data: out.data,
-});
-    
-    if (!out.ok) return { ok: false, stage: "alterar", out };
-    return { ok: true, codUsuario: existsCodUsuario };
-  } else {
-    out = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
-
-    console.log("[PORTAL UPSERT] cadastrar", {
-  ok: out.ok,
-  status: out.status,
-  rid: out.rid,
-  data: out.data,
-});
-    
-    if (!out.ok) return { ok: false, stage: "cadastrar", out };
-    const codUsuario = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
-    return { ok: true, codUsuario: Number.isFinite(codUsuario) ? codUsuario : null };
-  }
+  const codUsuario = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
+  return { ok: true, codUsuario: Number.isFinite(codUsuario) && codUsuario > 0 ? codUsuario : null };
 }
 
 // =======================
