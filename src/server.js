@@ -161,6 +161,19 @@ try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
 console.log("[VERSATILIS IN]", { rid, method, path, status: r.status, allow });
 
+if (!r.ok) {
+  const preview =
+    typeof data === "string"
+      ? data.slice(0, 400)
+      : JSON.stringify(data).slice(0, 400);
+
+  console.log("[VERSATILIS ERR BODY]", {
+    rid,
+    status: r.status,
+    preview,
+  });
+}
+
 if (r.status === 405) {
   // Tenta descobrir métodos aceitos (nem todo servidor responde, mas quando responde resolve na hora)
   try {
