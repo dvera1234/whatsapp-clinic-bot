@@ -501,20 +501,35 @@ if (existsCodUsuario) {
   if (existsCodUsuario) {
   out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
 
-if (!out.ok) {
-  // 405 aqui NÃO é para “trocar método”; é endpoint inexistente/não publicado.
+// ✅ 405: não retorna ainda — vamos tratar no próximo passo (fallback)
+if (!out.ok && out.status === 405) {
+  console.log("[PORTAL UPSERT] AlterarUsuario 405 (sem update nessa instância) — preparando fallback", {
+    status: out.status,
+    rid: out.rid,
+  });
+  // Por enquanto: devolve erro específico (no passo 2 vamos fazer fallback real)
   return {
     ok: false,
-    stage: "alterar",
+    stage: "alterar_405",
     out,
-    hint: "AlterarUsuario retornou 405. Endpoint provavelmente não existe/não está habilitado nessa instância. Verifique com o fornecedor a rota correta para update de usuário."
+    hint: "AlterarUsuario não aceita PUT nessa instância (405). Próximo passo: tentar upsert via CadastrarUsuario com CodUsuario."
   };
 }
 
-if (!out.ok && out.status === 405) {
-  // 405 aqui quase sempre é rota/base errada, não método.
-  return { ok: false, stage: "alterar", out, hint: "405 em AlterarUsuario: confira VERSATILIS_BASE (sem /api) e se o endpoint existe nessa instalação." };
+// ❌ Qualquer outro erro continua sendo erro
+if (!out.ok) {
+  return { ok: false, stage: "alterar", out };
 }
+
+console.log("[PORTAL UPSERT] alterar", {
+  ok: out.ok,
+  status: out.status,
+  rid: out.rid,
+  data: out.data,
+});
+
+return { ok: true, codUsuario: existsCodUsuario }; 
+  }
 
    console.log("[PORTAL UPSERT] alterar", {
   ok: out.ok,
