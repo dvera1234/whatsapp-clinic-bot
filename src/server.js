@@ -276,13 +276,21 @@ if (process.env.DEBUG_VERSA_SHAPE === "1" && out.ok && out.data && typeof out.da
     
     const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
 
-    console.log("[VERSA] CodUsuario try", {
-      ok: out.ok,
-      status: out.status,
-      path,
-      parsed: parsed ? "OK" : "null",
-      dataType: typeof out.data,
-    });
+   console.log("[VERSA] CodUsuario try", {
+  ok: out.ok,
+  status: out.status,
+  path,
+  parsed: parsed ? "OK" : "null",
+  dataType: typeof out.data,
+  dataPreview:
+    typeof out.data === "string"
+      ? out.data.slice(0, 80)
+      : Array.isArray(out.data)
+      ? "array"
+      : out.data
+      ? "object"
+      : "null",
+});
 
     if (parsed) return parsed;
   }
@@ -1653,18 +1661,23 @@ if (String(ctx || "").startsWith("WZ_")) {
 
     s.portal.form.cpf = cpf;
 
-    // tenta achar cadastro
-    const codUsuario = await versaFindCodUsuarioByCPF(cpf);
+    // tenta achar cadastro (rota principal)
+let codUsuario = await versaFindCodUsuarioByCPF(cpf);
 
-    if (codUsuario) {
-      s.portal.exists = true;
-      s.portal.codUsuario = codUsuario;
+// ✅ fallback: algumas instalações respondem melhor por DadosUsuarioPorCPF
+if (!codUsuario) {
+  codUsuario = await versaFindCodUsuarioByDadosCPF(cpf);
+}
 
-      const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
-      s.portal.profile = prof.ok ? prof.data : null;
+if (codUsuario) {
+  s.portal.exists = true;
+  s.portal.codUsuario = codUsuario;
 
-      if (prof.ok && prof.data) {
-        const v = validatePortalCompleteness(prof.data);
+  const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
+  s.portal.profile = prof.ok ? prof.data : null;
+
+  if (prof.ok && prof.data) {
+    const v = validatePortalCompleteness(prof.data);
 
         // se já está completo, pula wizard e vai direto pras datas
         if (v.ok) {
