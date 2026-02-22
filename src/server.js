@@ -122,18 +122,11 @@ async function versatilisGetToken() {
   return versaToken;
 }
 
-async function versatilisFetch(path, { method = "GET", jsonBody } = {}) {
+async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } = {}) {
   const token = await versatilisGetToken();
 
   const rid = crypto.randomUUID();
   const url = `${VERSA_BASE}${path}`;
-
-if ((VERSA_BASE || "").toLowerCase().includes("/api")) {
-  console.log("[VERSATILIS GUARD] VERSA_BASE contém /api (ERRADO).", { rid, VERSA_BASE });
-}
-if (url.toLowerCase().includes("/api/api/")) {
-  console.log("[VERSATILIS GUARD] URL com /api duplicado (ERRADO).", { rid, url });
-}
 
   // LOG ANTES DO FETCH
   console.log("[VERSATILIS OUT]", {
@@ -141,17 +134,22 @@ if (url.toLowerCase().includes("/api/api/")) {
     method,
     url,
     hasBody: !!jsonBody,
+    hasExtraHeaders: !!extraHeaders,
   });
 
-const r = await fetch(url, {
-  method,
-  headers: {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/json",
-    ...(jsonBody ? { "Content-Type": "application/json" } : {}),
-  },
-  body: jsonBody ? JSON.stringify(jsonBody) : undefined,
-});
+  const r = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(jsonBody ? { "Content-Type": "application/json" } : {}),
+      ...(extraHeaders ? extraHeaders : {}),
+    },
+    body: jsonBody ? JSON.stringify(jsonBody) : undefined,
+  });
+
+  // ... resto igual
+}
 
 const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
 
@@ -571,45 +569,39 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   let out;
 
   // ======= TENTA ALTERAR (se existir) =======
-  if (existsCodUsuario) {
-    // 1) tenta POST (muito comum em APIs legadas para “alterar”)
-    out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "POST", jsonBody: payload });
+ if (existsCodUsuario) {
+  // 0) POST com override PUT (contorna IIS bloqueando PUT)
+  out = await versatilisFetch("/api/Login/AlterarUsuario", {
+    method: "POST",
+    jsonBody: payload,
+    extraHeaders: {
+      "X-HTTP-Method-Override": "PUT",
+      "X-Method-Override": "PUT",
+    },
+  });
 
-    // 2) se falhar, tenta PUT (mantém compatibilidade com instalações que aceitam PUT)
-    if (!out.ok) {
-      out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
-    }
+  if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
 
-    // 3) ainda falhou? fallback upsert via CadastrarUsuario
-    if (!out.ok) {
-      console.log("[PORTAL UPSERT] AlterarUsuario falhou — tentando fallback via CadastrarUsuario (upsert)", {
-        status: out.status,
-        rid: out.rid,
-        allow: out.allow || null,
-      });
+  // 1) POST “puro” (se a API aceita POST mesmo)
+  out = await versatilisFetch("/api/Login/AlterarUsuario", {
+    method: "POST",
+    jsonBody: payload,
+  });
 
-      const out2 = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
+  if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
 
-      console.log("[PORTAL UPSERT] fallback cadastrar (com CodUsuario)", {
-        ok: out2.ok,
-        status: out2.status,
-        rid: out2.rid,
-        dataType: typeof out2.data,
-      });
+  // 2) PUT “puro” (pode continuar falhando no IIS, mas mantém tentativa)
+  out = await versatilisFetch("/api/Login/AlterarUsuario", {
+    method: "PUT",
+    jsonBody: payload,
+  });
 
-      if (!out2.ok) return { ok: false, stage: "fallback_cadastrar", out: out2 };
+  if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
 
-      // tenta extrair CodUsuario do retorno; se não vier, usa o existente
-      const parsedFromReturn = parseCodUsuarioFromAny(out2.data);
-      return {
-        ok: true,
-        codUsuario: parsedFromReturn || Number(existsCodUsuario),
-      };
-    }
-
-    return { ok: true, codUsuario: Number(existsCodUsuario) };
-  }
-
+  // 3) Aqui NÃO tenta mais CadastrarUsuario, porque no seu ambiente dá 400 "já existe"
+  return { ok: false, stage: "alterar_falhou", out };
+}
+  
   // ======= CADASTRO NOVO =======
   out = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
 
