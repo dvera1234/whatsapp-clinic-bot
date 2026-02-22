@@ -484,7 +484,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
     Email: form.email,
     DtNasc: dtNascBR,
     Celular: form.celular,
-    Telefone: form.celular || "",
+    Telefone: form.telefone || form.celular || "",
     CEP: form.cep,
     Endereco: form.endereco,
     Numero: form.numero,
@@ -1764,7 +1764,7 @@ if (codUsuario) {
   const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
   s.portal.profile = prof.ok ? prof.data : null;
 
-  // ✅ HIDRATAR FORM com dados existentes do cadastro (evita undefined no upsert)
+// ✅ HIDRATAR FORM com dados existentes do cadastro (evita undefined no upsert)
 if (prof.ok && prof.data) {
   const p = prof.data;
 
@@ -1779,6 +1779,29 @@ if (prof.ok && prof.data) {
   // Celular (pode vir com máscara)
   const celExist = cleanStr(p?.Celular).replace(/\D+/g, "");
   if (celExist.length >= 10 && !s.portal.form.celular) s.portal.form.celular = celExist;
+
+  // ✅ Telefone (se existir no perfil) — opcional, mas ajuda a não mandar vazio
+  const telExist = cleanStr(p?.Telefone).replace(/\D+/g, "");
+  if (telExist.length >= 10 && !s.portal.form.telefone) s.portal.form.telefone = telExist;
+
+  // ✅ CEP / Endereço / Número / Complemento / Bairro / Cidade
+  const cepExist = String(p?.CEP ?? "").replace(/\D+/g, "");
+  if (cepExist.length === 8 && !s.portal.form.cep) s.portal.form.cep = cepExist;
+
+  const endExist = cleanStr(p?.Endereco);
+  if (endExist && !s.portal.form.endereco) s.portal.form.endereco = endExist;
+
+  const numExist = cleanStr(p?.Numero);
+  if (numExist && !s.portal.form.numero) s.portal.form.numero = numExist;
+
+  const compExist = cleanStr(p?.Complemento);
+  if (compExist && !s.portal.form.complemento) s.portal.form.complemento = compExist;
+
+  const bairroExist = cleanStr(p?.Bairro);
+  if (bairroExist && !s.portal.form.bairro) s.portal.form.bairro = bairroExist;
+
+  const cidadeExist = cleanStr(p?.Cidade);
+  if (cidadeExist && !s.portal.form.cidade) s.portal.form.cidade = cidadeExist;
 
   // DtNasc: pode vir "DD/MM/AAAA" ou "YYYY-MM-DD" ou ISO com hora
   const dtRaw = cleanStr(p?.DtNasc);
