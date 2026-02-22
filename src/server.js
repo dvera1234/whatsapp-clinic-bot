@@ -469,8 +469,6 @@ function mergeComplementoWithUF(complementoUser, uf) {
 
 async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   // form: { nome, cpf, dtNascISO, sexoOpt, celular, email, cep, endereco, numero, complemento, bairro, cidade, uf, planoKey }
-  // planoKey: "PARTICULAR" ou "MEDSENIOR_SP"
-
   const planoKey = form.planoKey;
   const codPlano = resolveCodPlano(planoKey);
 
@@ -479,12 +477,12 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
 
   const dtNascBR = formatBRDateFromISO(form.dtNascISO); // DD/MM/AAAA
 
-  // payload base (sem Senha por padrão)
+  // payload base
   const payload = {
     Nome: form.nome,
     CPF: form.cpf,
     Email: form.email,
-    DtNasc: dtNascBR, // Versatilis geralmente espera BR aqui
+    DtNasc: dtNascBR,
     Celular: form.celular,
     Telefone: "",
     CEP: form.cep,
@@ -501,76 +499,84 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
     payload.Sexo = form.sexoOpt;
   }
 
-  // Só define senha quando for CADASTRO novo
+  // ✅ Só define senha quando for CADASTRO novo
   if (!existsCodUsuario) {
     payload.Senha = senhaMD5;
   }
 
-  // Para ALTERAR, inclui CodUsuario no body
+  // ✅ Para ALTERAR, inclua CodUsuario no body (muito comum ser obrigatório)
   if (existsCodUsuario) {
     payload.CodUsuario = Number(existsCodUsuario);
   }
 
-  // =========================
-  // ALTERAR (quando existe)
-  // =========================
-  if (existsCodUsuario) {
-    let out = await versatilisFetch("/api/Login/AlterarUsuario", {
-      method: "PUT",
-      jsonBody: payload,
-    });
+  // ============================
+  // 🔎 DEBUG SEGURO: mostra quais campos estão vazios
+  // (não imprime valores!)
+  // ============================
+  function isEmpty(v) {
+    if (v == null) return true;
+    if (typeof v === "string") return v.trim().length === 0;
+    if (Array.isArray(v)) return v.length === 0;
+    return false;
+  }
 
-    // 405: endpoint não aceita PUT nessa instância -> fallback
+  const empties = Object.entries(payload)
+    .filter(([k, v]) => isEmpty(v))
+    .map(([k]) => k);
+
+  const shape = Object.fromEntries(
+    Object.entries(payload).map(([k, v]) => {
+      if (typeof v === "string") return [k, `string(len=${v.length})`];
+      if (typeof v === "number") return [k, "number"];
+      if (Array.isArray(v)) return [k, `array(len=${v.length})`];
+      if (typeof v === "boolean") return [k, "boolean"];
+      return [k, typeof v];
+    })
+  );
+
+  console.log("[PORTAL UPSERT] payload shape", {
+    hasCodUsuario: !!payload.CodUsuario,
+    empties,
+    shape,
+  });
+
+  let out;
+
+  // ======= TENTA ALTERAR (se existir) =======
+  if (existsCodUsuario) {
+    out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+
+    // ✅ 405: fallback para cadastrar (upsert)
     if (!out.ok && out.status === 405) {
       console.log("[PORTAL UPSERT] AlterarUsuario 405 — tentando fallback via CadastrarUsuario (upsert)", {
         status: out.status,
         rid: out.rid,
-        allow: out.allow,
+        allow: out.allow || null,
       });
 
-      out = await versatilisFetch("/api/Login/CadastrarUsuario", {
-        method: "POST",
-        jsonBody: payload, // contém CodUsuario
-      });
+      // ⚠️ Aqui ainda não mudamos payload — só vamos medir o erro com o log acima.
+      const out2 = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
 
       console.log("[PORTAL UPSERT] fallback cadastrar (com CodUsuario)", {
-        ok: out.ok,
-        status: out.status,
-        rid: out.rid,
-        dataType: typeof out.data,
+        ok: out2.ok,
+        status: out2.status,
+        rid: out2.rid,
+        dataType: typeof out2.data,
       });
 
-      if (!out.ok) return { ok: false, stage: "alterar_fallback_cadastrar", out };
+      if (!out2.ok) return { ok: false, stage: "fallback_cadastrar", out: out2 };
 
-      // se o backend devolve o CodUsuario, ótimo; se não, mantemos o original
-      const codUsuarioReturned = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
-      return {
-        ok: true,
-        codUsuario: Number.isFinite(codUsuarioReturned) && codUsuarioReturned > 0 ? codUsuarioReturned : Number(existsCodUsuario),
-        usedFallback: true,
-      };
+      // se der certo, consideramos atualizado
+      return { ok: true, codUsuario: Number(existsCodUsuario) };
     }
 
-    // outros erros
     if (!out.ok) return { ok: false, stage: "alterar", out };
 
-    console.log("[PORTAL UPSERT] alterar", {
-      ok: out.ok,
-      status: out.status,
-      rid: out.rid,
-      dataType: typeof out.data,
-    });
-
-    return { ok: true, codUsuario: Number(existsCodUsuario), usedFallback: false };
+    return { ok: true, codUsuario: Number(existsCodUsuario) };
   }
 
-  // =========================
-  // CADASTRAR (novo)
-  // =========================
-  const out = await versatilisFetch("/api/Login/CadastrarUsuario", {
-    method: "POST",
-    jsonBody: payload,
-  });
+  // ======= CADASTRO NOVO =======
+  out = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
 
   console.log("[PORTAL UPSERT] cadastrar", {
     ok: out.ok,
@@ -582,7 +588,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   if (!out.ok) return { ok: false, stage: "cadastrar", out };
 
   const codUsuario = Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
-  return { ok: true, codUsuario: Number.isFinite(codUsuario) && codUsuario > 0 ? codUsuario : null };
+  return { ok: true, codUsuario: Number.isFinite(codUsuario) ? codUsuario : null };
 }
 
 // =======================
