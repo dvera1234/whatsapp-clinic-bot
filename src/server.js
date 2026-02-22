@@ -57,12 +57,29 @@ function sanitizeVersaBase(u) {
   // se alguém colar /api/... no ENV, corta fora
   s = s.replace(/\/api\/.*$/i, "");
 
+  // se alguém colar /api no fim, remove também
+  s = s.replace(/\/api$/i, "");
+
   return s;
 }
 
 const VERSA_BASE = sanitizeVersaBase(VERSA_BASE_RAW);
 
-console.log("[VERSATILIS BASE]", { raw: VERSA_BASE_RAW, sanitized: VERSA_BASE });
+function maskUrl(u) {
+  const s = String(u || "");
+  if (!s) return "";
+  // mantém domínio + 1º segmento e mascara o resto
+  try {
+    const url = new URL(s);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const keep = parts.slice(0, 1).join("/");
+    return `${url.origin}/${keep}/***`;
+  } catch {
+    return "***";
+  }
+}
+
+console.log("[VERSATILIS BASE]", { raw: maskUrl(VERSA_BASE_RAW), sanitized: maskUrl(VERSA_BASE) });
 
 let versaToken = null;
 let versaTokenExpMs = 0;
@@ -125,13 +142,6 @@ if (url.toLowerCase().includes("/api/api/")) {
     url,
     hasBody: !!jsonBody,
   });
-
-  if (path === "/api/Login/AlterarUsuario" && method !== "PUT") {
-    console.log("[VERSATILIS GUARD] ALTERAR USUARIO method errado!", {
-      rid,
-      method,
-    });
-  }
 
   const r = await fetch(url, {
     method,
@@ -469,8 +479,10 @@ if (existsCodUsuario) {
   let out;
   if (existsCodUsuario) {
   out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+
 if (!out.ok && out.status === 405) {
-  out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "POST", jsonBody: payload });
+  // 405 aqui quase sempre é rota/base errada, não método.
+  return { ok: false, stage: "alterar", out, hint: "405 em AlterarUsuario: confira VERSATILIS_BASE (sem /api) e se o endpoint existe nessa instalação." };
 }
 
    console.log("[PORTAL UPSERT] alterar", {
