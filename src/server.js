@@ -484,7 +484,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
     Email: form.email,
     DtNasc: dtNascBR,
     Celular: form.celular,
-    Telefone: "",
+    Telefone: form.celular || "",
     CEP: form.cep,
     Endereco: form.endereco,
     Numero: form.numero,
@@ -1753,6 +1753,38 @@ if (codUsuario) {
 
   const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
   s.portal.profile = prof.ok ? prof.data : null;
+
+  // ✅ HIDRATAR FORM com dados existentes do cadastro (evita undefined no upsert)
+if (prof.ok && prof.data) {
+  const p = prof.data;
+
+  // Nome
+  const nomeExist = cleanStr(p?.Nome);
+  if (nomeExist && !s.portal.form.nome) s.portal.form.nome = nomeExist;
+
+  // Email
+  const emailExist = cleanStr(p?.Email);
+  if (isValidEmail(emailExist) && !s.portal.form.email) s.portal.form.email = emailExist;
+
+  // Celular (pode vir com máscara)
+  const celExist = cleanStr(p?.Celular).replace(/\D+/g, "");
+  if (celExist.length >= 10 && !s.portal.form.celular) s.portal.form.celular = celExist;
+
+  // DtNasc: pode vir "DD/MM/AAAA" ou "YYYY-MM-DD" ou ISO com hora
+  const dtRaw = cleanStr(p?.DtNasc);
+  let dtISO = null;
+
+  // tenta DD/MM/AAAA
+  dtISO = parseBRDateToISO(dtRaw) || dtISO;
+
+  // tenta YYYY-MM-DD
+  if (!dtISO) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dtRaw);
+    if (m) dtISO = `${m[1]}-${m[2]}-${m[3]}`;
+  }
+
+  if (dtISO && !s.portal.form.dtNascISO) s.portal.form.dtNascISO = dtISO;
+}
 
   if (prof.ok && prof.data) {
     const v = validatePortalCompleteness(prof.data);
