@@ -1,7 +1,7 @@
 import express from "express";
 import crypto from "crypto";
 
-console.log("[BUILD]", "2026-02-21T19:xx PUT-FIX-1");
+console.log("[BUILD]", "2026-02-21T20:05 ALTERARUSUARIO-POST");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -469,6 +469,9 @@ if (existsCodUsuario) {
   let out;
   if (existsCodUsuario) {
   out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+if (!out.ok && out.status === 405) {
+  out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "POST", jsonBody: payload });
+}
 
    console.log("[PORTAL UPSERT] alterar", {
   ok: out.ok,
