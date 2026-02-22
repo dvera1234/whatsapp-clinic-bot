@@ -43,9 +43,26 @@ function resolveCodPlano(planoKey) {
 // =======================
 // VERSATILIS (fetch) — helper mínimo e seguro
 // =======================
-const VERSA_BASE = process.env.VERSATILIS_BASE; // ex: https://sistema.versatilis.com.br/DraNellieRubio/api/Controller/Action/
+const VERSA_BASE_RAW = process.env.VERSATILIS_BASE || ""; // deve ser só a raiz do cliente (SEM /api)
 const VERSA_USER = process.env.VERSATILIS_USER;
 const VERSA_PASS = process.env.VERSATILIS_PASS;
+
+function sanitizeVersaBase(u) {
+  let s = String(u).trim();
+
+  // remove espaços e barras finais
+  s = s.replace(/\s+/g, "");
+  s = s.replace(/\/+$/, "");
+
+  // se alguém colar /api/... no ENV, corta fora
+  s = s.replace(/\/api\/.*$/i, "");
+
+  return s;
+}
+
+const VERSA_BASE = sanitizeVersaBase(VERSA_BASE_RAW);
+
+console.log("[VERSATILIS BASE]", { raw: VERSA_BASE_RAW, sanitized: VERSA_BASE });
 
 let versaToken = null;
 let versaTokenExpMs = 0;
@@ -93,6 +110,13 @@ async function versatilisFetch(path, { method = "GET", jsonBody } = {}) {
 
   const rid = crypto.randomUUID();
   const url = `${VERSA_BASE}${path}`;
+
+if ((VERSA_BASE || "").toLowerCase().includes("/api")) {
+  console.log("[VERSATILIS GUARD] VERSA_BASE contém /api (ERRADO).", { rid, VERSA_BASE });
+}
+if (url.toLowerCase().includes("/api/api/")) {
+  console.log("[VERSATILIS GUARD] URL com /api duplicado (ERRADO).", { rid, url });
+}
 
   // LOG ANTES DO FETCH
   console.log("[VERSATILIS OUT]", {
