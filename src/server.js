@@ -563,42 +563,37 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
     };
   }
 
-  let out;
+    let out;
 
   // ======= TENTA ALTERAR (se existir) =======
- if (existsCodUsuario) {
-  // 0) POST com override PUT (contorna IIS bloqueando PUT)
-  out = await versatilisFetch("/api/Login/AlterarUsuario", {
-    method: "POST",
-    jsonBody: payload,
-    extraHeaders: {
-      "X-HTTP-Method-Override": "PUT",
-      "X-Method-Override": "PUT",
-    },
-  });
+  if (existsCodUsuario) {
+    const route = await resolveVersaUpdateRoute(payload);
 
-  if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
+    if (!route) {
+      return {
+        ok: false,
+        stage: "alterar_sem_rota",
+        out: {
+          ok: false,
+          status: 0,
+          rid: null,
+          allow: null,
+          data: "Não foi possível resolver endpoint/método de atualização (probe falhou).",
+        },
+      };
+    }
 
-  // 1) POST “puro” (se a API aceita POST mesmo)
-  out = await versatilisFetch("/api/Login/AlterarUsuario", {
-    method: "POST",
-    jsonBody: payload,
-  });
+    out = await versatilisFetch(route.path, {
+      method: route.method,
+      jsonBody: payload,
+    });
 
-  if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
+    if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
 
-  // 2) PUT “puro” (pode continuar falhando no IIS, mas mantém tentativa)
-  out = await versatilisFetch("/api/Login/AlterarUsuario", {
-    method: "PUT",
-    jsonBody: payload,
-  });
+    // se falhou, não faz fallback de cadastro (você já confirmou que dá 400 "já existe")
+    return { ok: false, stage: "alterar_falhou", out, resolved: route };
+  }
 
-  if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
-
-  // 3) Aqui NÃO tenta mais CadastrarUsuario, porque no seu ambiente dá 400 "já existe"
-  return { ok: false, stage: "alterar_falhou", out };
-}
-  
   // ======= CADASTRO NOVO =======
   out = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
 
@@ -941,6 +936,101 @@ Descreva abaixo como podemos te ajudar.
 
   AJUDA_PERGUNTA: `Certo — me diga qual foi a dificuldade no agendamento (o que aconteceu).`,
 };
+
+// =======================
+// PROBE: descobrir endpoint de UPDATE que funcione (sem PUT)
+// =======================
+const UPDATE_PROBE_CANDIDATES = [
+  // Login/*
+  "/api/Login/AlterarUsuario",
+  "/api/Login/AtualizarUsuario",
+  "/api/Login/SalvarUsuario",
+  "/api/Login/EditarUsuario",
+  "/api/Login/AtualizarDadosUsuario",
+  "/api/Login/AtualizarCadastro",
+  "/api/Login/AtualizarPortal",
+  // Usuario/*
+  "/api/Usuario/AlterarUsuario",
+  "/api/Usuario/AtualizarUsuario",
+  "/api/Usuario/SalvarUsuario",
+];
+
+function isProbablyIisBlock405(out) {
+  if (out?.status !== 405) return false;
+  if (typeof out?.data !== "string") return false;
+  // IIS costuma devolver HTML com esse title
+  return out.data.includes("HTTP verb used to access this page is not allowed");
+}
+
+function pickSafeProbePayload(payload) {
+  // manda o mínimo, mas suficiente pra API “entender” que é update
+  // IMPORTANTe: mantém no body, não em querystring
+  return {
+    CodUsuario: payload.CodUsuario,
+    CPF: payload.CPF,
+    Nome: payload.Nome,
+  };
+}
+
+let versaUpdateResolved = null; // cache em memória: { path, method }
+
+async function resolveVersaUpdateRoute(samplePayload) {
+  if (versaUpdateResolved) return versaUpdateResolved;
+
+  // se você quiser “fixar” por ENV por cliente, pode setar:
+  // VERSA_UPDATE_PATH=/api/Login/AtualizarUsuario
+  // VERSA_UPDATE_METHOD=POST
+  const forcedPath = String(process.env.VERSA_UPDATE_PATH || "").trim();
+  const forcedMethod = String(process.env.VERSA_UPDATE_METHOD || "").trim().toUpperCase();
+
+  if (forcedPath && forcedMethod) {
+    versaUpdateResolved = { path: forcedPath, method: forcedMethod };
+    console.log("[VERSA UPDATE] forced via ENV", versaUpdateResolved);
+    return versaUpdateResolved;
+  }
+
+  const probeBody = pickSafeProbePayload(samplePayload);
+
+  // estratégia: testar POST primeiro (porque PUT está bloqueado nessa instalação)
+  const methods = ["POST", "PUT"];
+
+  for (const path of UPDATE_PROBE_CANDIDATES) {
+    for (const method of methods) {
+      const out = await versatilisFetch(path, { method, jsonBody: probeBody });
+
+      console.log("[VERSA UPDATE PROBE]", {
+        path,
+        method,
+        status: out.status,
+        ok: out.ok,
+        allow: out.allow || null,
+        iis405: isProbablyIisBlock405(out),
+      });
+
+      const isHtml = typeof out?.data === "string" && out.data.trim().startsWith("<!DOCTYPE");
+      const iis405 = isProbablyIisBlock405(out);
+
+      const statusLooksApi =
+        out.ok ||
+        [400, 401, 403, 409, 422].includes(out.status);
+
+      // aceita como rota válida apenas se:
+      // - não é 405
+      // - não é HTML
+      // - não é bloqueio IIS
+      // - e o status “parece API”
+      if (statusLooksApi && out.status !== 405 && !isHtml && !iis405) {
+        versaUpdateResolved = { path, method };
+        console.log("[VERSA UPDATE] resolved", versaUpdateResolved);
+        return versaUpdateResolved;
+      }
+    }
+  }
+
+  versaUpdateResolved = null;
+  console.log("[VERSA UPDATE] no route resolved");
+  return null;
+}
 
 // =======================
 // HELPERS
