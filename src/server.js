@@ -535,10 +535,38 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   );
 
   console.log("[PORTAL UPSERT] payload shape", {
-    hasCodUsuario: !!payload.CodUsuario,
-    empties,
-    shape,
+  hasCodUsuario: !!payload.CodUsuario,
+  empties,
+  shape,
+});
+
+// 🔒 Bloqueio: não chama Versatilis com payload inválido
+if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.trim().length < 8) {
+  console.log("[PORTAL UPSERT] BLOCKED invalid payload — form shape", {
+    hasForm: !!form,
+    formKeys: form ? Object.keys(form).sort() : [],
+    // mostra apenas tipos/len, sem valores
+    formShape: form
+      ? Object.fromEntries(
+          Object.entries(form).map(([k, v]) => {
+            if (v == null) return [k, "null/undefined"];
+            if (typeof v === "string") return [k, `string(len=${v.length})`];
+            if (typeof v === "number") return [k, "number"];
+            if (typeof v === "boolean") return [k, "boolean"];
+            if (Array.isArray(v)) return [k, `array(len=${v.length})`];
+            return [k, typeof v];
+          })
+        )
+      : {},
   });
+
+  return {
+    ok: false,
+    stage: "blocked_missing_fields",
+    missing: empties,
+    hint: "Wizard não preencheu dados obrigatórios (Nome/Email/Celular/DtNasc/Telefone). Corrigir fluxo WZ_*.",
+  };
+}
 
   let out;
 
