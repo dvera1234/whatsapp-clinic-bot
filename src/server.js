@@ -43,7 +43,7 @@ function resolveCodPlano(planoKey) {
 // =======================
 // VERSATILIS (fetch) — helper mínimo e seguro
 // =======================
-const VERSA_BASE = process.env.VERSATILIS_BASE; // ex: https://sistema.versatilis.com.br/DraNellieRubio
+const VERSA_BASE = process.env.VERSATILIS_BASE; // ex: https://sistema.versatilis.com.br/DraNellieRubio/api/Controller/Action/
 const VERSA_USER = process.env.VERSATILIS_USER;
 const VERSA_PASS = process.env.VERSATILIS_PASS;
 
@@ -254,30 +254,23 @@ async function versaFindCodUsuarioByDadosCPF(cpfDigits) {
     `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpf)}`,
   ].filter(Boolean);
 
- for (const path of candidates) {
-  const out = await versatilisFetch(path);
+  for (const path of candidates) {
+    const out = await versatilisFetch(path);
+    const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
 
-  const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
+    console.log("[VERSA] CodUsuario try (DadosUsuarioPorCPF)", {
+      ok: out.ok,
+      status: out.status,
+      path,
+      parsed: parsed ? "OK" : "null",
+      dataType: typeof out.data,
+    });
 
-  console.log("[VERSA] CodUsuario try", {
-    ok: out.ok,
-    status: out.status,
-    path,
-    parsed: parsed ? "OK" : "null",
-    dataType: typeof out.data,
-  });
+    if (parsed) return parsed;
+  }
 
-  if (parsed) return parsed;
+  return null;
 }
-
-// 🔒 FALLBACK seguro pelo endpoint oficial do manual
-const byDados = await versaFindCodUsuarioByDadosCPF(cpf);
-if (byDados) {
-  console.log("[VERSA] fallback DadosUsuarioPorCPF funcionou");
-  return byDados;
-}
-
-return null;
 
 async function versaGetDadosUsuarioPorCodigo(codUsuario) {
   const id = Number(codUsuario);
