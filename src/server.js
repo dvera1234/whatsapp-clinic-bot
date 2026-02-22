@@ -143,30 +143,42 @@ if (url.toLowerCase().includes("/api/api/")) {
     hasBody: !!jsonBody,
   });
 
-  const r = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-      ...(jsonBody ? { "Content-Type": "application/json" } : {}),
-    },
-    body: jsonBody ? JSON.stringify(jsonBody) : undefined,
-  });
+const r = await fetch(url, {
+  method,
+  headers: {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+    ...(jsonBody ? { "Content-Type": "application/json" } : {}),
+  },
+  body: jsonBody ? JSON.stringify(jsonBody) : undefined,
+});
 
-  const text = await r.text().catch(() => "");
-  let data;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
 
-  // LOG DEPOIS DO FETCH
-  console.log("[VERSATILIS IN]", {
-    rid,
-    method,
-    path,
-    status: r.status,
-  });
+const text = await r.text().catch(() => "");
+let data;
+try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
-  return { ok: r.ok, status: r.status, data, rid };
+console.log("[VERSATILIS IN]", { rid, method, path, status: r.status, allow });
+
+if (r.status === 405) {
+  // Tenta descobrir métodos aceitos (nem todo servidor responde, mas quando responde resolve na hora)
+  try {
+    const ro = await fetch(url, {
+      method: "OPTIONS",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+    const allow2 = ro.headers.get("allow") || ro.headers.get("Allow") || null;
+    console.log("[VERSATILIS OPTIONS]", { rid, path, status: ro.status, allow: allow2 });
+  } catch (e) {
+    console.log("[VERSATILIS OPTIONS]", { rid, path, error: String(e?.message || e) });
+  }
 }
+
+return { ok: r.ok, status: r.status, data, rid, allow };
 
 function formatCPFMask(cpf11) {
   const c = String(cpf11 || "").replace(/\D+/g, "");
@@ -479,6 +491,16 @@ if (existsCodUsuario) {
   let out;
   if (existsCodUsuario) {
   out = await versatilisFetch("/api/Login/AlterarUsuario", { method: "PUT", jsonBody: payload });
+
+if (!out.ok) {
+  // 405 aqui NÃO é para “trocar método”; é endpoint inexistente/não publicado.
+  return {
+    ok: false,
+    stage: "alterar",
+    out,
+    hint: "AlterarUsuario retornou 405. Endpoint provavelmente não existe/não está habilitado nessa instância. Verifique com o fornecedor a rota correta para update de usuário."
+  };
+}
 
 if (!out.ok && out.status === 405) {
   // 405 aqui quase sempre é rota/base errada, não método.
@@ -2336,5 +2358,20 @@ app.get("/debug/versatilis/codusuario", async (req, res) => {
   }
 });
 
+  app.get("/debug/versatilis/options", async (req, res) => {
+  try {
+    const path = String(req.query.path || "/api/Login/AlterarUsuario");
+    const out = await (async () => {
+      const token = await versatilisGetToken();
+      const url = `${VERSA_BASE}${path}`;
+      const r = await fetch(url, { method: "OPTIONS", headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      return { ok: r.ok, status: r.status, allow: r.headers.get("allow") || r.headers.get("Allow") || null };
+    })();
+    return res.json(out);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+  
 // =======================
 app.listen(port, () => console.log(`Server running on port ${port}`));
