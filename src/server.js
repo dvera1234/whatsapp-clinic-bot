@@ -977,9 +977,6 @@ let versaUpdateResolved = null; // cache em memória: { path, method }
 async function resolveVersaUpdateRoute(samplePayload) {
   if (versaUpdateResolved) return versaUpdateResolved;
 
-  // se você quiser “fixar” por ENV por cliente, pode setar:
-  // VERSA_UPDATE_PATH=/api/Login/AtualizarUsuario
-  // VERSA_UPDATE_METHOD=POST
   const forcedPath = String(process.env.VERSA_UPDATE_PATH || "").trim();
   const forcedMethod = String(process.env.VERSA_UPDATE_METHOD || "").trim().toUpperCase();
 
@@ -991,16 +988,45 @@ async function resolveVersaUpdateRoute(samplePayload) {
 
   const probeBody = pickSafeProbePayload(samplePayload);
 
-  // estratégia: testar POST primeiro (porque PUT está bloqueado nessa instalação)
-  const methods = ["POST", "PUT"];
+  // 🔎 Nova estratégia:
+  // 1) POST + override (simula PUT sem usar verbo PUT)
+  // 2) POST puro
+  // 3) PUT direto (por último)
+
+  const variants = [
+    {
+      method: "POST",
+      extraHeaders: {
+        "X-HTTP-Method-Override": "PUT",
+        "X-Method-Override": "PUT",
+        "X-HTTP-Method": "PUT",
+      },
+      label: "POST+OVERRIDE",
+    },
+    {
+      method: "POST",
+      extraHeaders: null,
+      label: "POST",
+    },
+    {
+      method: "PUT",
+      extraHeaders: null,
+      label: "PUT",
+    },
+  ];
 
   for (const path of UPDATE_PROBE_CANDIDATES) {
-    for (const method of methods) {
-      const out = await versatilisFetch(path, { method, jsonBody: probeBody });
+    for (const v of variants) {
+      const out = await versatilisFetch(path, {
+        method: v.method,
+        jsonBody: probeBody,
+        ...(v.extraHeaders ? { extraHeaders: v.extraHeaders } : {}),
+      });
 
       console.log("[VERSA UPDATE PROBE]", {
         path,
-        method,
+        variant: v.label,
+        method: v.method,
         status: out.status,
         ok: out.ok,
         allow: out.allow || null,
@@ -1014,13 +1040,13 @@ async function resolveVersaUpdateRoute(samplePayload) {
         out.ok ||
         [400, 401, 403, 409, 422].includes(out.status);
 
-      // aceita como rota válida apenas se:
-      // - não é 405
-      // - não é HTML
-      // - não é bloqueio IIS
-      // - e o status “parece API”
       if (statusLooksApi && out.status !== 405 && !isHtml && !iis405) {
-        versaUpdateResolved = { path, method };
+        versaUpdateResolved = {
+          path,
+          method: v.method,
+          ...(v.extraHeaders ? { extraHeaders: v.extraHeaders } : {}),
+        };
+
         console.log("[VERSA UPDATE] resolved", versaUpdateResolved);
         return versaUpdateResolved;
       }
