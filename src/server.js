@@ -652,6 +652,21 @@ const INACTIVITY_MS = 10 * 60 * 1000; // mantemos por enquanto (será revisado)
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900); // 15 min (900s)
 
 // =======================
+// VERSATILIS FIXOS (via ENV) — NÃO hardcode
+// =======================
+function readPositiveIntEnv(name, fallback) {
+  const raw = String(process.env[name] ?? "").trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// mover configs para ENV (como regra)
+const COD_UNIDADE = readPositiveIntEnv("COD_UNIDADE", 2);
+const COD_ESPECIALIDADE = readPositiveIntEnv("COD_ESPECIALIDADE", 1003);
+const COD_COLABORADOR = readPositiveIntEnv("COD_COLABORADOR", 3);
+
+// =======================
 // RESET DE FLUXO (código secreto de teste)
 // =======================
 const FLOW_RESET_CODE = String(process.env.FLOW_RESET_CODE || "").trim(); 
@@ -664,7 +679,7 @@ function sessionKey(phone) {
 
 async function loadSession(phone) {
   const key = sessionKey(phone);
-  console.log("[REDIS GET] key=", key);
+  console.log("[REDIS GET]", { phone: maskPhone(phone), key: maskKey(key) });
 
   const raw = await redis.get(key);
 
@@ -679,7 +694,7 @@ async function loadSession(phone) {
     try {
       return JSON.parse(raw);
     } catch (e) {
-      console.log("[REDIS] sessão corrompida, limpando key=", key, "raw=", raw);
+      console.log("[REDIS] sessão corrompida, limpando", { phone: maskPhone(phone), key: maskKey(key) });
       await redis.del(key);
       return null;
     }
@@ -693,7 +708,7 @@ async function saveSession(phone, sessionObj) {
   const key = sessionKey(phone);
   const val = JSON.stringify(sessionObj);
 
-  console.log("[REDIS SET] key=", key, "len=", val.length);
+  console.log("[REDIS SET]", { phone: maskPhone(phone), key: maskKey(key), len: val.length });
 
   // Upstash: options object
   await redis.set(key, val, { ex: SESSION_TTL_SECONDS });
@@ -758,6 +773,14 @@ CPF_INVALIDO: `⚠️ CPF inválido. Envie 11 dígitos (somente números).`,
 PORTAL_NEED_DATA: (faltas) => `Para prosseguir, preciso completar seu cadastro do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
 PORTAL_NEED_DATA_EXISTING: (faltas) =>
   `Encontrei seu cadastro ✅, mas precisamos completar algumas informações do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
+
+// ✅ NOVO: Bloqueio formal para paciente EXISTENTE com cadastro incompleto
+PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO: (faltas) =>
+  `Encontrei seu cadastro ✅, porém ele está incompleto no Portal do Paciente.\n\nPor segurança, o agendamento por aqui fica bloqueado neste caso.\n\nFaltam:\n${faltas}\n\n✅  Precisaria entrar em contato com um atendente para regularizar seu cadastro.`,
+
+// ✅ NOVO: texto do botão único
+BTN_FALAR_ATENDENTE: `Falar com atendente`,
+
 ASK_NOME: `Informe seu nome completo:`,
 ASK_DTNASC: `Informe sua data de nascimento (DD/MM/AAAA):`,
 ASK_SEXO: `Selecione seu sexo:`,
@@ -1094,6 +1117,18 @@ function formatCellFromWA(phone) {
   return String(phone || "").replace(/\D+/g, "");
 }
 
+function maskPhone(p) {
+  const s = String(p || "").replace(/\D+/g, "");
+  if (!s) return "***";
+  return s.length > 6 ? s.slice(0, 4) + "****" + s.slice(-2) : "***";
+}
+
+function maskKey(k) {
+  const s = String(k || "");
+  if (!s) return "***";
+  return s.length > 12 ? s.slice(0, 8) + "***" : "***";
+}
+
 function formatMissing(list) {
   return list.map(x => `• ${x}`).join("\n");
 }
@@ -1133,7 +1168,7 @@ function toHHMM(hora) {
 // =======================
 // REGRAS DE TEMPO (segurança)
 // =======================
-const MIN_LEAD_HOURS = 6;              // mínimo de 6h
+const MIN_LEAD_HOURS = 12;             // mínimo de 12h
 const TZ_OFFSET = "-03:00";            // São Paulo (sem DST hoje)
 
 // Constrói epoch ms do horário (data ISO + HH:MM) em fuso -03:00
@@ -1152,7 +1187,7 @@ function isSlotAllowed(isoDate, hhmm) {
 }
 
 // =======================
-// BUSCAR HORÁRIOS DO DIA (Versatilis) + filtro 6h
+// BUSCAR HORÁRIOS DO DIA (Versatilis) + filtro 12h
 // =======================
 async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
   const path =
@@ -1175,14 +1210,14 @@ async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
     }))
     .filter((x) => x.codHorario && x.hhmm)
     .sort((a, b) => a.hhmm.localeCompare(b.hhmm))
-    // ✅ filtro 6h aqui
+    // ✅ filtro 12h aqui
     .filter((x) => isSlotAllowed(isoDate, x.hhmm));
 
   return { ok: true, slots };
 }
 
 // =======================
-// BUSCAR PRÓXIMAS 3 DATAS DISPONÍVEIS (com slots após filtro 6h)
+// BUSCAR PRÓXIMAS 3 DATAS DISPONÍVEIS (com slots após filtro 12h)
 // =======================
 async function fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead = 60, limit = 3 }) {
   const dates = [];
@@ -1250,7 +1285,7 @@ async function showSlotsPage({ phone, phoneNumberIdFallback, slots, page = 0 }) 
   if (!pageItems.length) {
     await sendText({
       to: phone,
-      body: "⚠️ Não há horários disponíveis (considerando o mínimo de 6h).",
+      body: "⚠️ Não há horários disponíveis (considerando o mínimo de 12h).",
       phoneNumberIdFallback,
     });
 
@@ -1454,7 +1489,64 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   }
 }
 
+// =======================
+// BOTÃO GLOBAL: FALAR COM ATENDENTE (qualquer momento)
+// =======================
+if (upper === "FALAR_ATENDENTE") {
+  const s = await ensureSession(phone);
+
+  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+  const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+
+  const prefill = `Olá! Preciso de ajuda para completar meu cadastro no Portal do Paciente.
+
+Paciente: ${phone}
+CPF: ${cpf || "(não informado)"}
+Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`
+  ;
+
+  const link = makeWaLink(prefill);
+
+  await sendAndSetState(
+    phone,
+    `✅ Para falar com nossa equipe, clique no link abaixo e envie a mensagem:\n\n${link}`,
+    "MAIN",
+    phoneNumberIdFallback
+  );
+  return;
+}
+  
   const ctx = (await getState(phone)) || "MAIN";
+
+  // =======================
+// BLOQUEIO FORMAL: PACIENTE EXISTENTE COM CADASTRO INCOMPLETO
+// ÚNICA OPÇÃO = HUMANO
+// =======================
+if (ctx === "BLOCK_EXISTING_INCOMPLETE") {
+  // Sempre gera link para humano com prefill (sem depender do que o usuário digitar)
+  const s = await ensureSession(phone);
+
+  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+  const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+
+  const prefill = `Olá! Preciso de ajuda para completar meu cadastro no Portal do Paciente.
+
+Paciente: ${phone}
+CPF: ${cpf || "(não informado)"}
+Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
+
+  const link = makeWaLink(prefill);
+
+  await sendText({
+    to: phone,
+    body: `✅ Para regularizar seu cadastro, clique no link abaixo e envie a mensagem:\n\n${link}`,
+    phoneNumberIdFallback,
+  });
+
+  // Mantém estado em MAIN depois de encaminhar
+  await setState(phone, "MAIN");
+  return;
+}
 
 // =======================
 // AGENDAMENTO (datas + slots + confirmação)
@@ -1465,7 +1557,7 @@ if (upper.startsWith("D_")) {
   const isoDate = raw.slice(2).trim(); // YYYY-MM-DD
   const s = await getSession(phone);
 
-  const codColaborador = s.booking?.codColaborador ?? 3;
+  const codColaborador = s.booking?.codColaborador ?? COD_COLABORADOR;
   const codUsuario = s.booking?.codUsuario;
 
   if (!codUsuario) {
@@ -1494,7 +1586,7 @@ if (upper.startsWith("D_")) {
 if (ctx === "ASK_DATE_PICK") {
   // Se o usuário digitou algo aleatório, reapresenta datas
   const s = await ensureSession(phone);
-  const codColaborador = s?.booking?.codColaborador ?? 3;
+  const codColaborador = s?.booking?.codColaborador ?? COD_COLABORADOR;
   const codUsuario = s?.booking?.codUsuario;
 if (!codUsuario) {
   await sendText({
@@ -1541,7 +1633,7 @@ if (ctx === "SLOTS") {
       await saveSession(phone, s);
     }
 
-    const codColaborador = s?.booking?.codColaborador ?? 3;
+    const codColaborador = s?.booking?.codColaborador ?? COD_COLABORADOR;
     const codUsuario = s?.booking?.codUsuario;
 if (!codUsuario) {
   await sendText({
@@ -1617,12 +1709,12 @@ const planoSelecionado = resolveCodPlano(s?.booking?.planoKey || PLAN_KEYS.PARTI
 const sConfirm = await ensureSession(phone);
 
 const payload = {
-  CodUnidade: 2,
-  CodEspecialidade: 1003,
+  CodUnidade: COD_UNIDADE,
+  CodEspecialidade: COD_ESPECIALIDADE,
   CodPlano: planoSelecionado,
   CodHorario: codHorario,
   CodUsuario: sConfirm?.booking?.codUsuario,
-  CodColaborador: 3, // fixo (é você)
+  CodColaborador: COD_COLABORADOR,
   BitTelemedicina: false,
   Confirmada: true,
 };
@@ -1650,7 +1742,7 @@ if (!payload.CodUsuario) {
       return;
     }
 
-    // ✅ Segurança extra: mesmo que tenha passado antes, revalida “6h” na hora de confirmar
+        // ✅ Segurança extra: mesmo que tenha passado antes, revalida “12h” na hora de confirmar
     const isoDate = s?.booking?.isoDate;
     const chosen = (s?.booking?.slots || []).find((x) => Number(x.codHorario) === codHorario);
     if (!isoDate || !chosen?.hhmm || !isSlotAllowed(isoDate, chosen.hhmm)) {
@@ -1658,10 +1750,10 @@ if (!payload.CodUsuario) {
       await saveSession(phone, s);
        await setState(phone, "SLOTS");
 
-      await sendText({ to: phone, body: "⚠️ Este horário não pode mais ser agendado (mínimo de 6h). Escolha outro.", phoneNumberIdFallback });
+      await sendText({ to: phone, body: "⚠️ Este horário não pode mais ser agendado (mínimo de 12h). Escolha outro.", phoneNumberIdFallback });
 
       // refaz slots do dia (pra evitar lista desatualizada)
-      const codColaborador = s?.booking?.codColaborador ?? 3;
+      const codColaborador = s?.booking?.codColaborador ?? COD_COLABORADOR;
       const codUsuario = s?.booking?.codUsuario;
 if (!codUsuario) {
   await sendText({
@@ -1678,7 +1770,7 @@ if (!codUsuario) {
 
       await showSlotsPage({ phone, phoneNumberIdFallback, slots: s?.booking?.slots || [], page: 0 });
       return;
-    }
+    }}
 
     const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
       method: "POST",
@@ -1811,7 +1903,7 @@ async function finishWizardAndGoToDates({ phone, phoneNumberIdFallback, codUsuar
 
   s2.booking = s2.booking || {};
   s2.booking.codUsuario = codUsuario;
-  s2.booking.codColaborador = 3;
+  s2.booking.codColaborador = COD_COLABORADOR;
   s2.booking.isRetorno = isRetorno;
 
   // garante plano do wizard
@@ -1927,42 +2019,32 @@ if (prof.ok && prof.data) {
   if (prof.ok && prof.data) {
     const v = validatePortalCompleteness(prof.data);
 
-        // se já está completo, pula wizard e vai direto pras datas
-        if (v.ok) {
-          await saveSession(phone, s);
-          await finishWizardAndGoToDates({
-            phone,
-            phoneNumberIdFallback,
-            codUsuario,
-            planoKeyFromWizard: s.booking?.planoKey || null,
-          });
-          return;
-        }
+    // ✅ Cadastro completo → agenda (OK)
+    if (v.ok) {
+      await saveSession(phone, s);
+      await finishWizardAndGoToDates({
+        phone,
+        phoneNumberIdFallback,
+        codUsuario,
+        planoKeyFromWizard: s.booking?.planoKey || null,
+      });
+      return;
+    }
 
-        // se está incompleto, avisa faltas e vai para o primeiro passo faltante
-        await saveSession(phone, s);
-        await sendText({
-          to: phone,
-          body: MSG.PORTAL_NEED_DATA_EXISTING(formatMissing(v.missing)),
-          phoneNumberIdFallback,
-        });
+    // ✅ Cadastro incompleto (paciente existente) → BLOQUEIA e encaminha para humano (ÚNICA OPÇÃO)
+    s.portal.missing = v.missing; // guarda para o prefill do humano
+    await saveSession(phone, s);
 
-        const next = nextWizardStateFromMissing(v.missing);
-        await setState(phone, next);
+    await sendButtons({
+      to: phone,
+      body: MSG.PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO(formatMissing(v.missing)),
+      buttons: [{ id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE }],
+      phoneNumberIdFallback,
+    });
 
-        // dispara a primeira pergunta
-        if (next === "WZ_NOME") await sendText({ to: phone, body: MSG.ASK_NOME, phoneNumberIdFallback });
-        else if (next === "WZ_DTNASC") await sendText({ to: phone, body: MSG.ASK_DTNASC, phoneNumberIdFallback });
-        else if (next === "WZ_EMAIL") await sendText({ to: phone, body: MSG.ASK_EMAIL, phoneNumberIdFallback });
-        else if (next === "WZ_CEP") await sendText({ to: phone, body: MSG.ASK_CEP, phoneNumberIdFallback });
-        else if (next === "WZ_ENDERECO") await sendText({ to: phone, body: MSG.ASK_ENDERECO, phoneNumberIdFallback });
-        else if (next === "WZ_NUMERO") await sendText({ to: phone, body: MSG.ASK_NUMERO, phoneNumberIdFallback });
-        else if (next === "WZ_BAIRRO") await sendText({ to: phone, body: MSG.ASK_BAIRRO, phoneNumberIdFallback });
-        else if (next === "WZ_CIDADE") await sendText({ to: phone, body: MSG.ASK_CIDADE, phoneNumberIdFallback });
-        else if (next === "WZ_UF") await sendText({ to: phone, body: MSG.ASK_UF, phoneNumberIdFallback });
-
-        return;
-      }
+    await setState(phone, "BLOCK_EXISTING_INCOMPLETE");
+    return;
+  }
 
       // se não conseguiu ler perfil, segue wizard completo por segurança
       await saveSession(phone, s);
@@ -2248,7 +2330,7 @@ if (prof.ok && prof.data) {
 if (ctx === "PARTICULAR") {
   if (digits === "1") {
   const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
+  s.booking = { codColaborador: COD_COLABORADOR, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
 
@@ -2294,7 +2376,7 @@ if (ctx === "PARTICULAR") {
   if (ctx === "MEDSENIOR") {
     if (digits === "1") {
   const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.booking = { codColaborador: 3, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
+  s.booking = { codColaborador: COD_COLABORADOR, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
   s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
   await saveSession(phone, s);
 
@@ -2391,13 +2473,6 @@ app.post("/webhook", async (req, res) => {
 
     const phoneNumberIdFallback = value?.metadata?.phone_number_id || "";
 
-    function maskPhone(p) {
-  if (!p) return "***";
-  return p.length > 6
-    ? p.slice(0, 4) + "****" + p.slice(-2)
-    : "***";
-}
-
 console.log("MSG FROM:", maskPhone(from));
 console.log("MSG RECEIVED: [hidden]");
 console.log("STATE:", (await getState(from)) || "(none)");
@@ -2410,7 +2485,18 @@ console.log("STATE:", (await getState(from)) || "(none)");
 
 // =======================
 // PROTEÇÃO GLOBAL PARA /debug
+// - debug só existe se ENV permitir
+// - e ainda exige DEBUG_KEY
 // =======================
+function isDebugEnabled() {
+  return String(process.env.ENABLE_DEBUG || "").trim() === "1";
+}
+
+function requireDebugEnabled(req, res, next) {
+  if (!isDebugEnabled()) return res.sendStatus(404);
+  next();
+}
+
 function requireDebugKey(req, res, next) {
   const DEBUG_KEY = process.env.DEBUG_KEY;
   const provided = req.query.k || req.headers["x-debug-key"];
@@ -2423,10 +2509,10 @@ function requireDebugKey(req, res, next) {
 }
 
 // Aplica proteção em TODAS as rotas que começam com /debug
-app.use("/debug", requireDebugKey);
+app.use("/debug", requireDebugEnabled, requireDebugKey);
 
 app.get("/debug/versatilis/especialidades", async (req, res) => {
-  try {
+    try {
     const out = await versatilisFetch("/api/Especialidade/Especialidades");
     return res.status(200).json(out);
   } catch (e) {
@@ -2575,34 +2661,6 @@ app.get("/debug/redis-ping", async (req, res) => {
     const read = await redis.get(key);
 
     return res.status(200).json({ ok: true, wrote: value, read });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
-});
-
-app.get("/debug/session/get", async (req, res) => {
-  const phone = String(req.query.phone || "");
-  const key = sessionKey(phone);
-  const raw = await redis.get(key);
-  return res.json({ ok: true, phone, key, raw });
-});
-
-app.get("/debug/session/del", async (req, res) => {
-  const phone = String(req.query.phone || "");
-  const key = sessionKey(phone);
-  await redis.del(key);
-  return res.json({ ok: true, phone, key, deleted: true });
-});
-
-app.post("/debug/session/clear", async (req, res) => {
-  try {
-    const phone = String(req.body?.phone || "").replace(/\D+/g, "");
-    if (!phone) return res.status(400).json({ ok: false, error: "phone obrigatório" });
-
-    const key = sessionKey(phone);
-    await redis.del(key);
-
-    return res.json({ ok: true, deleted: key });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
