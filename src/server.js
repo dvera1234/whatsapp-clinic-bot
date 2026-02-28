@@ -1770,7 +1770,7 @@ if (!codUsuario) {
 
       await showSlotsPage({ phone, phoneNumberIdFallback, slots: s?.booking?.slots || [], page: 0 });
       return;
-    }}
+    }
 
     const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
       method: "POST",
