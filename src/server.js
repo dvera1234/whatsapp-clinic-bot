@@ -1538,7 +1538,7 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
   await touchUser(phone, phoneNumberIdFallback);
 
   const raw = normalizeSpaces(inboundText);
-  const upper = raw.toUpperCase();
+  let upper = raw.toUpperCase();
   const digits = onlyDigits(raw);
 
  // =======================
@@ -1603,55 +1603,66 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`
   const ctx = (await getState(phone)) || "MAIN";
 
 // =======================
-// BOTÃO/COMANDO GLOBAL: REENVIAR SENHA (qualquer momento)
+// ESTADO: PWD_DTNASC
+// - usuário informou data de nascimento para reset de senha
+// - salva dtNascISO na sessão
+// - dispara reset por CPF
 // =======================
-if (upper === "REENVIAR_SENHA" || upper === "SENHA" || upper === "ESQUECI_SENHA") {
+if (ctx === "PWD_DTNASC") {
+  const iso = parseBRDateToISO(raw);
+  if (!iso) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Data inválida. Use DD/MM/AAAA.",
+      phoneNumberIdFallback,
+    });
+    return;
+  }
+
   const s = await ensureSession(phone);
+  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
 
-  const dtNascISO =
-    cleanStr(s?.portal?.form?.dtNascISO) ||
-    (function () {
-      const dtRaw = cleanStr(s?.portal?.profile?.DtNasc);
-      return parseBRDateToISO(dtRaw) || null;
-    })();
-
-  const chosen = pickLoginForSolicitarSenha(s);
-
-  if (!chosen.login || !dtNascISO) {
+  if (cpf.length !== 11) {
     await sendAndSetState(
       phone,
-      "⚠️ Para reenviar a senha, preciso confirmar seus dados.\n\nEnvie seu CPF (somente números).",
+      "⚠️ Não encontrei seu CPF nesta sessão. Envie seu CPF (somente números).",
       "WZ_CPF",
       phoneNumberIdFallback
     );
     return;
   }
 
-  const out = await versaSolicitarSenha({ login: chosen.login, dtNascISO });
+  // salva dtNascISO para não pedir novamente
+  s.portal = s.portal || {};
+  s.portal.form = s.portal.form || {};
+  s.portal.form.dtNascISO = iso;
+  await saveSession(phone, s);
+
+  const out = await versaSolicitarSenhaPorCPF(cpf, iso);
 
   if (!out.ok) {
     const prefill = `Olá! Não estou recebendo o e-mail de redefinição de senha do Portal do Paciente.
 
 Paciente: ${phone}
-Motivo: solicitação de senha falhou na integração.
-Login usado: ${chosen.kind}
-`;
+CPF: ${cpf}
+Motivo: solicitação de senha falhou na integração.`;
     const link = makeWaLink(prefill);
 
     await sendText({
       to: phone,
-      body: `⚠️ Não consegui reenviar a senha agora.\n\n✅ Para suporte, clique:\n${link}`,
+      body: `⚠️ Não consegui enviar o e-mail agora.\n\n✅ Para suporte, clique:\n${link}`,
       phoneNumberIdFallback,
     });
+
+    await setState(phone, "MAIN");
     return;
   }
 
   await sendText({
     to: phone,
     body:
-      `✅ Pronto! Enviei a solicitação de senha.\n` +
-      `📩 O e-mail será enviado para o e-mail cadastrado no Portal.\n` +
-      `Se não chegar, verifique Spam/Lixo Eletrônico.`,
+      "✅ Pronto! Enviamos o e-mail para redefinição de senha do Portal.\n" +
+      "Se não chegar, verifique também o Spam/Lixo Eletrônico.",
     phoneNumberIdFallback,
   });
 
@@ -1663,6 +1674,91 @@ Login usado: ${chosen.kind}
     });
   }
 
+  await setState(phone, "MAIN");
+  return;
+}
+
+// Compatibilidade: se vier botão antigo, redireciona
+if (upper === "REENVIAR_SENHA" || upper === "SENHA" || upper === "ESQUECI_SENHA") {
+  upper = "PWD_MUDAR";
+}
+  
+// =======================
+// BOTÕES GLOBAIS: CRIAR SENHA / MUDAR SENHA (qualquer momento)
+// - ambos fazem a mesma coisa: envia reset por e-mail
+// - CPF já existe na sessão (fluxo de agendamento)
+// - se faltar, pede só data de nascimento
+// =======================
+if (upper === "PWD_CRIAR" || upper === "PWD_MUDAR") {
+  const s = await ensureSession(phone);
+
+  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+  const dtNascISO =
+    cleanStr(s?.portal?.form?.dtNascISO) ||
+    (function () {
+      const dtRaw = cleanStr(s?.portal?.profile?.DtNasc);
+      return parseBRDateToISO(dtRaw) || null;
+    })();
+
+  // Se por algum motivo não houver CPF na sessão, volta pro CPF do wizard
+  if (cpf.length !== 11) {
+    await sendAndSetState(
+      phone,
+      "Para enviar o e-mail de senha do Portal, envie seu CPF (somente números).",
+      "WZ_CPF",
+      phoneNumberIdFallback
+    );
+    return;
+  }
+
+  // Se faltar data de nascimento, pede só isso (não volta pro CPF)
+  if (!dtNascISO) {
+    await sendAndSetState(
+      phone,
+      "Para enviar o e-mail de senha do Portal, informe sua data de nascimento (DD/MM/AAAA).",
+      "PWD_DTNASC",
+      phoneNumberIdFallback
+    );
+    return;
+  }
+
+  const out = await versaSolicitarSenhaPorCPF(cpf, dtNascISO);
+
+  if (!out.ok) {
+    const prefill = `Olá! Não estou recebendo o e-mail de redefinição de senha do Portal do Paciente.
+
+Paciente: ${phone}
+CPF: ${cpf}
+Motivo: solicitação de senha falhou na integração.`;
+    const link = makeWaLink(prefill);
+
+    await sendText({
+      to: phone,
+      body: `⚠️ Não consegui enviar o e-mail agora.\n\n✅ Para suporte, clique:\n${link}`,
+      phoneNumberIdFallback,
+    });
+
+    await setState(phone, "MAIN");
+    return;
+  }
+
+  await sendText({
+    to: phone,
+    body:
+      "✅ Pronto! Enviamos o e-mail para redefinição de senha do Portal.\n" +
+      "Se não chegar, verifique também o Spam/Lixo Eletrônico.",
+    phoneNumberIdFallback,
+  });
+
+  if (PORTAL_URL) {
+    await sendText({
+      to: phone,
+      body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
+      phoneNumberIdFallback,
+    });
+  }
+
+  await setState(phone, "MAIN");
   return;
 }
   
@@ -1947,11 +2043,11 @@ Há estacionamento com valet no prédio.
 
 Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
 
-const PORTAL_INFO = `📲 Portal do Paciente
+const PORTAL_INFO = `📲 Acesse o Portal do Paciente
 No Portal, você pode:
 • Consultar e atualizar seus dados cadastrais
 • Acompanhar seus agendamentos
-• Utilizar as funcionalidades disponíveis ao paciente (conforme configuração do sistema)
+• Acessar os serviços disponíveis para você
 
 🔑 Senha / Acesso
 A senha é enviada por e-mail (conforme cadastro no Portal).
@@ -1974,15 +2070,16 @@ try {
     });
   }
 
-  await sendButtons({
-    to: phone,
-    body: "Deseja reenviar a senha do Portal por e-mail?",
-    buttons: [
-      { id: "REENVIAR_SENHA", title: "Reenviar senha" },
-      { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
-    ],
-    phoneNumberIdFallback,
-  });
+await sendButtons({
+  to: phone,
+  body: "Senha do Portal do Paciente:",
+  buttons: [
+    { id: "PWD_CRIAR", title: "Criar senha" },
+    { id: "PWD_MUDAR", title: "Mudar senha" },
+    { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
+  ],
+  phoneNumberIdFallback,
+});
 } catch (e) {
   console.log("[POST-CONFIRM] falhou ao enviar mensagens", { err: String(e?.message || e) });
 
@@ -1993,25 +2090,6 @@ try {
     phoneNumberIdFallback,
   });
 }
-
-if (PORTAL_URL) {
-  await sendText({
-    to: phone,
-    body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
-    phoneNumberIdFallback,
-  });
-}
-
-// ✅ botão direto para disparar /api/Login/SolicitarSenha (manual)
-await sendButtons({
-  to: phone,
-  body: "Deseja reenviar a senha do Portal por e-mail?",
-  buttons: [
-    { id: "REENVIAR_SENHA", title: "Reenviar senha" },
-    { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
-  ],
-  phoneNumberIdFallback,
-});
 
 return;
   }
