@@ -2900,14 +2900,26 @@ Problema: não consegui anexar o plano do convênio no cadastro (Versatilis).`;
 // -------------------
 if (ctx === "PARTICULAR") {
   if (digits === "1") {
-  const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.booking = { codColaborador: COD_COLABORADOR, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
-  s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
-  await saveSession(phone, s);
+    const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
 
-  await sendAndSetState(phone, MSG.ASK_CPF_PORTAL, "WZ_CPF", phoneNumberIdFallback);
-  return;
-}
+    // ✅ garante plano Particular no fluxo
+    s.booking = {
+      ...(s.booking || {}),
+      planoKey: PLAN_KEYS.PARTICULAR,
+      codColaborador: COD_COLABORADOR,
+      codUsuario: null,
+      isoDate: null,
+      slots: [],
+      pageIndex: 0,
+      isRetorno: false,
+    };
+
+    s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
+    await saveSession(phone, s);
+
+    await sendAndSetState(phone, MSG.ASK_CPF_PORTAL, "WZ_CPF", phoneNumberIdFallback);
+    return;
+  }
 
   if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
   return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
@@ -2941,22 +2953,35 @@ if (ctx === "PARTICULAR") {
     return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
   }
 
-  // -------------------
-  // CONTEXTO: MEDSENIOR
-  // -------------------
-  if (ctx === "MEDSENIOR") {
-    if (digits === "1") {
-  const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
-  s.booking = { codColaborador: COD_COLABORADOR, codUsuario: null, isoDate: null, slots: [], pageIndex: 0, isRetorno: false };
-  s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
-  await saveSession(phone, s);
+// -------------------
+// CONTEXTO: MEDSENIOR
+// -------------------
+if (ctx === "MEDSENIOR") {
+  if (digits === "1") {
+    const s = (await ensureSession(phone)) || { state: "MAIN", lastUserTs: Date.now(), lastPhoneNumberIdFallback: "" };
 
-  await sendAndSetState(phone, MSG.ASK_CPF_PORTAL, "WZ_CPF", phoneNumberIdFallback);
-  return;
-}
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-    return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
+    // ✅ não apaga o plano do fluxo; garante MedSênior
+    s.booking = {
+      ...(s.booking || {}),
+      planoKey: PLAN_KEYS.MEDSENIOR_SP,
+      codColaborador: COD_COLABORADOR,
+      codUsuario: null,
+      isoDate: null,
+      slots: [],
+      pageIndex: 0,
+      isRetorno: false,
+    };
+
+    s.portal = { step: "CPF", codUsuario: null, exists: false, profile: null, form: {} };
+    await saveSession(phone, s);
+
+    await sendAndSetState(phone, MSG.ASK_CPF_PORTAL, "WZ_CPF", phoneNumberIdFallback);
+    return;
   }
+
+  if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+  return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
+}
 
   // -------------------
   // CONTEXTO: POS
