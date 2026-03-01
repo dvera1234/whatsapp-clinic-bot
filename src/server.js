@@ -416,60 +416,65 @@ function formatBRDateFromISO(iso) {
 }
 
 // =======================
-// RESET SENHA (ROBUSTO)
-// - Algumas instalações retornam 400 no GET simples
-// - Vamos tentar variações (GET/POST + nomes de parâmetros)
-// - SEM logar dados sensíveis
+// RESET SENHA (manual-first + divergência)
+// Manual: GET /api/Login/SolicitarSenha?login={login}&dtNasc={dataNascimento}
+// Observado no tenant: POST => 405 Allow: GET (então manter somente GET)
+// Divergência registrada se o tenant rejeitar o manual (400/404) mesmo com dataNascimento
 // =======================
-async function versaSolicitarSenhaRobusto({ login, dtNascISO }) {
-  const lg = String(login || "").trim();
-  const dtBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
-  if (!lg || !dtBR) return { ok: false, stage: "missing_login_or_dtnasc" };
 
-  // tentativas (ordem importa)
-  const tries = [
-    // GET padrão
-    { method: "GET", path: `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}&dtNasc=${encodeURIComponent(dtBR)}` },
-
-    // GET variações de case (alguns backends são chatos)
-    { method: "GET", path: `/api/Login/SolicitarSenha?Login=${encodeURIComponent(lg)}&DtNasc=${encodeURIComponent(dtBR)}` },
-
-    // POST com query (há instalações que só aceitam POST)
-    { method: "POST", path: `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}&dtNasc=${encodeURIComponent(dtBR)}` },
-
-    // POST com body JSON (há instalações que validam body)
-    { method: "POST", path: `/api/Login/SolicitarSenha`, jsonBody: { login: lg, dtNasc: dtBR } },
-    { method: "POST", path: `/api/Login/SolicitarSenha`, jsonBody: { Login: lg, DtNasc: dtBR } },
-
-    // fallback extra: algumas APIs usam "dtNasc" mas aceitam "dataNascimento"
-    { method: "POST", path: `/api/Login/SolicitarSenha`, jsonBody: { login: lg, dataNascimento: dtBR } },
-  ];
-
-  for (const t of tries) {
-    const out = await versatilisFetch(t.path, {
-      method: t.method,
-      ...(t.jsonBody ? { jsonBody: t.jsonBody } : {}),
-    });
-
-    console.log("[VERSA] solicitar senha try", {
-      method: t.method,
-      path: String(t.path).split("?")[0], // não loga query
-      ok: out.ok,
-      status: out.status,
-      rid: out.rid,
-    });
-
-    if (out.ok) return { ok: true, out, used: { method: t.method, path: t.path } };
+function previewOutData(out) {
+  const d = out?.data;
+  if (d == null) return null;
+  if (typeof d === "string") return d.slice(0, 240);
+  try {
+    return JSON.stringify(d).slice(0, 240);
+  } catch {
+    return "[unstringifiable]";
   }
+}
 
-  // se todas falharem
-  return { ok: false, stage: "all_failed", hint: "SolicitarSenha retornou erro em todas as variações." };
+async function versaSolicitarSenha({ login, dtNascISO }) {
+  const lg = String(login || "").trim();
+  const dataNascimento = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA (manual)
+  if (!lg || !dataNascimento) return { ok: false, stage: "missing_login_or_dtnasc" };
+
+  // ***MANUAL***: usar "dataNascimento" (não dtNasc)
+  const path =
+    `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
+    `&dataNascimento=${encodeURIComponent(dataNascimento)}`;
+
+  const out = await versatilisFetch(path, { method: "GET" });
+
+  console.log("[VERSA] solicitar senha", {
+    method: "GET",
+    path: "/api/Login/SolicitarSenha", // não loga query
+    ok: out.ok,
+    status: out.status,
+    rid: out.rid,
+    // preview curto do erro pra fechar divergência rápido
+    preview: out.ok ? null : previewOutData(out),
+  });
+
+  if (out.ok) return { ok: true, out };
+
+  // Divergência: manual diz que deveria aceitar; tenant recusou
+  return {
+    ok: false,
+    stage: "tenant_divergence_or_validation_error",
+    hint:
+      "Tenant recusou SolicitarSenha mesmo usando o formato do manual (login + dataNascimento DD/MM/AAAA). " +
+      "Verifique o preview do erro e/ou se o login deve ser CPF com máscara, email ou codUsuario.",
+    out,
+  };
 }
 
 async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return { ok: false, stage: "cpf_invalid" };
-  return await versaSolicitarSenhaRobusto({ login: cpf, dtNascISO });
+
+  // manual: login pode ser email, codigo do usuário ou CPF
+  // aqui começamos com CPF puro (sem máscara); se o tenant exigir máscara, ajustamos via divergência
+  return await versaSolicitarSenha({ login: cpf, dtNascISO });
 }
 
 // =======================
