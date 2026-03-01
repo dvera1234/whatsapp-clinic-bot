@@ -421,7 +421,6 @@ function formatBRDateFromISO(iso) {
 // Observado no tenant: POST => 405 Allow: GET (então manter somente GET)
 // Divergência registrada se o tenant rejeitar o manual (400/404) mesmo com dataNascimento
 // =======================
-
 function previewOutData(out) {
   const d = out?.data;
   if (d == null) return null;
@@ -433,64 +432,71 @@ function previewOutData(out) {
   }
 }
 
-const dataBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
-const dataISO = String(dtNascISO || "").trim(); // YYYY-MM-DD
-if (!lg || !dataBR || !dataISO) return { ok: false, stage: "missing_login_or_dtnasc" };
+// ✅ FUNÇÃO QUE ESTAVA FALTANDO (ou foi quebrada)
+// Tudo que estava “solto” agora fica aqui dentro.
+async function versaSolicitarSenha({ login, dtNascISO }) {
+  const lg = String(login || "").trim();
 
-// ✅ Primeiro tenta o que o log mostrou que existe: dtNasc (DateTime)
-const attempts = [
-  // dtNasc precisa ser parseável pelo ASP.NET → ISO é o mais seguro
-  { param: "dtNasc", value: dataISO },
-  { param: "dtNasc", value: `${dataISO}T00:00:00` },
-  { param: "dtNasc", value: `${dataISO}T00:00:00-03:00` },
+  const dataBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
+  const dataISO = String(dtNascISO || "").trim(); // YYYY-MM-DD
 
-  // (mantém as variações antigas, mas elas são 404 nesse tenant)
-  { param: "dataNascimento", value: dataBR },
-  { param: "dtNascimento", value: dataBR },
-  { param: "dataNasc", value: dataBR },
-
-  // dtnasc cai na mesma action (case-insensitive) → também tem que ser ISO
-  { param: "dtnasc", value: dataISO },
-];
-
-for (const a of attempts) {
-  const path =
-    `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
-    `&${a.param}=${encodeURIComponent(a.value)}`;
-
-  const out = await versatilisFetch(path, { method: "GET" });
-
-  console.log("[VERSA] solicitar senha try", {
-    method: "GET",
-    path: "/api/Login/SolicitarSenha",
-    param: a.param,
-    ok: out.ok,
-    status: out.status,
-    rid: out.rid,
-    preview: out.ok ? null : previewOutData(out),
-  });
-
-  if (out.ok) return { ok: true, out, usedParam: a.param, usedValue: a.value };
-
-  if (![404, 400, 422].includes(out.status)) {
-    return { ok: false, stage: "http_error", out, usedParam: a.param, usedValue: a.value };
+  if (!lg || !dataBR || !dataISO) {
+    return { ok: false, stage: "missing_login_or_dtnasc" };
   }
-}
 
-return {
-  ok: false,
-  stage: "no_matching_action_or_bad_date_format",
-  hint:
-    "A action existe para dtNasc (DateTime), mas o servidor não aceitou o formato. " +
-    "Mantivemos tentativas ISO; se persistir 400, precisamos confirmar o formato exato exigido pelo tenant.",
-};
+  // ✅ Primeiro tenta o que o log mostrou que existe: dtNasc (DateTime)
+  const attempts = [
+    // dtNasc precisa ser parseável pelo ASP.NET → ISO é o mais seguro
+    { param: "dtNasc", value: dataISO },
+    { param: "dtNasc", value: `${dataISO}T00:00:00` },
+    { param: "dtNasc", value: `${dataISO}T00:00:00-03:00` },
+
+    // (mantém as variações antigas, mas elas são 404 nesse tenant)
+    { param: "dataNascimento", value: dataBR },
+    { param: "dtNascimento", value: dataBR },
+    { param: "dataNasc", value: dataBR },
+
+    // dtnasc cai na mesma action (case-insensitive) → também tem que ser ISO
+    { param: "dtnasc", value: dataISO },
+  ];
+
+  for (const a of attempts) {
+    const path =
+      `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
+      `&${a.param}=${encodeURIComponent(a.value)}`;
+
+    const out = await versatilisFetch(path, { method: "GET" });
+
+    console.log("[VERSA] solicitar senha try", {
+      method: "GET",
+      path: "/api/Login/SolicitarSenha",
+      param: a.param,
+      ok: out.ok,
+      status: out.status,
+      rid: out.rid,
+      preview: out.ok ? null : previewOutData(out),
+    });
+
+    if (out.ok) return { ok: true, out, usedParam: a.param, usedValue: a.value };
+
+    if (![404, 400, 422].includes(out.status)) {
+      return { ok: false, stage: "http_error", out, usedParam: a.param, usedValue: a.value };
+    }
+  }
+
+  return {
+    ok: false,
+    stage: "no_matching_action_or_bad_date_format",
+    hint:
+      "A action existe para dtNasc (DateTime), mas o servidor não aceitou o formato. " +
+      "Mantivemos tentativas ISO; se persistir 400, precisamos confirmar o formato exato exigido pelo tenant.",
+  };
+}
 
 async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return { ok: false, stage: "cpf_invalid" };
 
-  // manual: login pode ser email, codigo do usuário ou CPF
-  // aqui começamos com CPF puro (sem máscara); se o tenant exigir máscara, ajustamos via divergência
   return await versaSolicitarSenha({ login: cpf, dtNascISO });
 }
 
