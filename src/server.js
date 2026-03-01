@@ -1991,14 +1991,37 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
 // PLANO DIVERGENTE: escolher qual usar neste agendamento
 // =======================
 if (ctx === "PLAN_PICK") {
+  // ✅ permite encaminhar ao atendente aqui também
+  if (upper === "FALAR_ATENDENTE") {
+    // reutiliza seu handler global (ele já existe acima),
+    // mas como aqui estamos dentro do PLAN_PICK, chamamos o mesmo comportamento:
+    const s = await ensureSession(phone);
+
+    const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+    const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+
+    const prefill = `Olá! Preciso de ajuda para convênio no agendamento.
+
+Paciente: ${phone}
+CPF: ${cpf || "(não informado)"}
+Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
+
+    const link = makeWaLink(prefill);
+
+    await sendAndSetState(
+      phone,
+      `✅ Para falar com nossa equipe, clique no link abaixo e envie a mensagem:\n\n${link}`,
+      "MAIN",
+      phoneNumberIdFallback
+    );
+    return;
+  }
+
   if (upper !== "PL_USE_PART" && upper !== "PL_USE_MED") {
-    await sendButtons({
+    // não força mostrar PL_USE_MED se ele não estiver disponível no contexto atual
+    await sendText({
       to: phone,
-      body: "Use os botões para selecionar o convênio:",
-      buttons: [
-        { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
-        { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
-      ],
+      body: "Use os botões apresentados para prosseguir.",
       phoneNumberIdFallback,
     });
     return;
@@ -2008,11 +2031,10 @@ if (ctx === "PLAN_PICK") {
 
   const s = await ensureSession(phone);
   s.booking = s.booking || {};
-  s.booking.planoKey = chosenKey; // ✅ isso garante CodPlano certo no ConfirmarAgendamento
+  s.booking.planoKey = chosenKey;
 
   await saveSession(phone, s);
 
-  // segue fluxo normal para datas
   const codUsuario = Number(s?.booking?.codUsuario || s?.portal?.codUsuario);
   if (!codUsuario) {
     await sendText({ to: phone, body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.", phoneNumberIdFallback });
@@ -2535,51 +2557,31 @@ if (prof.ok && prof.data) {
 
 // ✅ Cadastro completo → antes de agendar, reconcilia plano do fluxo
 if (v.ok) {
-  // plano do fluxo (vem do menu)
   const flowPlanKey = s?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
 
   const plansCod = normalizePlanListFromProfile(prof.data);
-  const flowPlanExists = hasPlanKey(plansCod, flowPlanKey);
+  const hasFlowPlan = hasPlanKey(plansCod, flowPlanKey);
+  const hasPart = hasPlanKey(plansCod, PLAN_KEYS.PARTICULAR);
+  const hasMed  = hasPlanKey(plansCod, PLAN_KEYS.MEDSENIOR_SP);
 
-  // Se o plano do fluxo NÃO existir no cadastro, tenta anexar
-  if (!flowPlanExists) {
-    const attach = await versaAttachPlanIfMissing({
-      codUsuario,
-      profile: prof.data,
-      planKeyToEnsure: flowPlanKey,
-    });
+  // garante codUsuario em sessão
+  s.booking = s.booking || {};
+  s.booking.codUsuario = codUsuario;
+  await saveSession(phone, s);
 
-    if (!attach.ok) {
-      // falhou anexar plano -> humano (mais seguro)
-      const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-      const prefill = `Olá! Preciso de ajuda com convênio no agendamento.
-
-Paciente: ${phone}
-CPF: ${cpf || "(não informado)"}
-Problema: não consegui anexar o plano do convênio no cadastro (Versatilis).`;
-      const link = makeWaLink(prefill);
-
-      await sendText({
-        to: phone,
-        body: `⚠️ Não consegui ajustar seu convênio automaticamente.\n\n✅ Para suporte, clique:\n${link}`,
-        phoneNumberIdFallback,
-      });
-
-      await setState(phone, "MAIN");
-      return;
-    }
-
-    // anexou (ou já estava ok) -> como houve divergência com o fluxo, pergunta qual usar
-    s.booking = s.booking || {};
-    s.booking.codUsuario = codUsuario; // garante
-    await saveSession(phone, s);
-
+  // ✅ Caso crítico (exatamente seu teste):
+  // Entrou no fluxo MedSênior, mas cadastro não tem MedSênior → NÃO tenta "anexar plano" (tenant não permite update)
+  // Oferece fallback para Particular ou atendente.
+  if (flowPlanKey === PLAN_KEYS.MEDSENIOR_SP && !hasMed) {
     await sendButtons({
       to: phone,
-      body: MSG.PLAN_DIVERGENCIA,
+      body:
+        `Notei que seu cadastro não possui MedSênior habilitado.\n\n` +
+        `Para agendar por MedSênior, é necessário regularizar o convênio com nossa equipe.\n\n` +
+        `Como deseja prosseguir?`,
       buttons: [
         { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
-        { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
+        { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
       ],
       phoneNumberIdFallback,
     });
@@ -2588,17 +2590,30 @@ Problema: não consegui anexar o plano do convênio no cadastro (Versatilis).`;
     return;
   }
 
-  // Plano do fluxo já existe no cadastro -> segue direto (sem perguntar)
-  s.booking = s.booking || {};
-  s.booking.codUsuario = codUsuario;
-  await saveSession(phone, s);
+  // ✅ Se o plano do fluxo existe no cadastro, segue direto
+  if (hasFlowPlan) {
+    await finishWizardAndGoToDates({
+      phone,
+      phoneNumberIdFallback,
+      codUsuario,
+      planoKeyFromWizard: flowPlanKey,
+    });
+    return;
+  }
 
-  await finishWizardAndGoToDates({
-    phone,
+  // ✅ Divergência genérica (ex.: fluxo Particular mas cadastro tem Med, ou outros cenários)
+  // Aqui você pode deixar escolher, mas só oferece Med se existir no cadastro.
+  const buttons = [{ id: "PL_USE_PART", title: MSG.BTN_PLAN_PART }];
+  if (hasMed) buttons.push({ id: "PL_USE_MED", title: MSG.BTN_PLAN_MED });
+
+  await sendButtons({
+    to: phone,
+    body: MSG.PLAN_DIVERGENCIA,
+    buttons,
     phoneNumberIdFallback,
-    codUsuario,
-    planoKeyFromWizard: flowPlanKey,
   });
+
+  await setState(phone, "PLAN_PICK");
   return;
 }
 
