@@ -1787,6 +1787,21 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
   }
 }
 
+// =======================
+// RESET LIMPO PARA MAIN (limpa pendências antigas)
+// =======================
+async function resetToMain(phone, phoneNumberIdFallback) {
+  const s = await ensureSession(phone);
+
+  // limpa pendências que ficam “grudadas” entre fluxos
+  if (s?.portal?.issue) delete s.portal.issue;
+  if (s?.portal?.missing) delete s.portal.missing;
+  if (s?.pending) delete s.pending;
+
+  await saveSession(phone, s);
+
+  await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+}
 
 // =======================
 // AUTO-ENCERRAMENTO (10 min silêncio)
@@ -1845,14 +1860,29 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
 if (upper === "FALAR_ATENDENTE") {
   const s = await ensureSession(phone);
 
-  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-  const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+ const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+const issue = s?.portal?.issue || null;
 
-  const prefill = `Olá! Preciso de ajuda para completar meu cadastro no Portal do Paciente.
+const motivo =
+  issue?.type === "CONVENIO_NAO_HABILITADO"
+    ? `Convênio não habilitado no cadastro (precisa atualizar plano no Versatilis). Desejado: ${issue.wantedPlan}.`
+    : "";
+
+const detalhesPlano =
+  issue?.type === "CONVENIO_NAO_HABILITADO"
+    ? `CodUsuario: ${issue.codUsuario || "(não identificado)"} | Planos detectados: ${
+        Array.isArray(issue.plansDetected) && issue.plansDetected.length ? issue.plansDetected.join(", ") : "(nenhum)"
+      }`
+    : "";
+
+const prefill = `Olá! Preciso de ajuda no agendamento.
 
 Paciente: ${phone}
 CPF: ${cpf || "(não informado)"}
-Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`
+${motivo ? `Motivo: ${motivo}` : ""}
+${detalhesPlano ? `Detalhes: ${detalhesPlano}` : ""}
+${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
   ;
 
   const link = makeWaLink(prefill);
@@ -1998,13 +2028,28 @@ if (ctx === "PLAN_PICK") {
     const s = await ensureSession(phone);
 
     const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-    const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+const issue = s?.portal?.issue || null;
 
-    const prefill = `Olá! Preciso de ajuda para convênio no agendamento.
+const motivo =
+  issue?.type === "CONVENIO_NAO_HABILITADO"
+    ? `Convênio não habilitado no cadastro (precisa atualizar plano no Versatilis). Desejado: ${issue.wantedPlan}.`
+    : "";
+
+const detalhesPlano =
+  issue?.type === "CONVENIO_NAO_HABILITADO"
+    ? `CodUsuario: ${issue.codUsuario || "(não identificado)"} | Planos detectados: ${
+        Array.isArray(issue.plansDetected) && issue.plansDetected.length ? issue.plansDetected.join(", ") : "(nenhum)"
+      }`
+    : "";
+
+const prefill = `Olá! Preciso de ajuda no agendamento.
 
 Paciente: ${phone}
 CPF: ${cpf || "(não informado)"}
-Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
+${motivo ? `Motivo: ${motivo}` : ""}
+${detalhesPlano ? `Detalhes: ${detalhesPlano}` : ""}
+${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
 
     const link = makeWaLink(prefill);
 
@@ -2027,13 +2072,18 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
     return;
   }
 
-  const chosenKey = (upper === "PL_USE_MED") ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
+const chosenKey = (upper === "PL_USE_MED") ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
 
-  const s = await ensureSession(phone);
-  s.booking = s.booking || {};
-  s.booking.planoKey = chosenKey;
+const s = await ensureSession(phone);
+s.booking = s.booking || {};
+s.booking.planoKey = chosenKey;
 
-  await saveSession(phone, s);
+// ✅ limpa motivo antigo para não reaparecer
+if (s.portal && s.portal.issue) {
+  delete s.portal.issue;
+}
+
+await saveSession(phone, s);
 
   const codUsuario = Number(s?.booking?.codUsuario || s?.portal?.codUsuario);
   if (!codUsuario) {
@@ -2406,9 +2456,9 @@ ${link}`,
     return;
   }
 
-  // padrão: volta ao menu
-  await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-  return;
+// padrão: volta ao menu (limpando pendências antigas)
+await resetToMain(phone, phoneNumberIdFallback);
+return;
 }
 
 // =======================
@@ -2573,22 +2623,33 @@ if (v.ok) {
   // Entrou no fluxo MedSênior, mas cadastro não tem MedSênior → NÃO tenta "anexar plano" (tenant não permite update)
   // Oferece fallback para Particular ou atendente.
   if (flowPlanKey === PLAN_KEYS.MEDSENIOR_SP && !hasMed) {
-    await sendButtons({
-      to: phone,
-      body:
-        `Notei que seu cadastro não possui MedSênior habilitado.\n\n` +
-        `Para agendar por MedSênior, é necessário regularizar o convênio com nossa equipe.\n\n` +
-        `Como deseja prosseguir?`,
-      buttons: [
-        { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
-        { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
-      ],
-      phoneNumberIdFallback,
-    });
+  // ✅ guarda motivo pro atendente (não é "pendência de cadastro", é "convênio não habilitado")
+  s.portal = s.portal || {};
+  s.portal.issue = {
+    type: "CONVENIO_NAO_HABILITADO",
+    wantedPlan: "MEDSENIOR_SP",
+    note: "Cadastro do paciente não possui MedSênior habilitado; necessário atualizar plano no Versatilis.",
+    codUsuario: Number(codUsuario) || null,
+    plansDetected: Array.isArray(plansCod) ? plansCod.map(Number) : [],
+  };
+  await saveSession(phone, s);
 
-    await setState(phone, "PLAN_PICK");
-    return;
-  }
+  await sendButtons({
+    to: phone,
+    body:
+      `Notei que seu cadastro não possui MedSênior habilitado.\n\n` +
+      `Para agendar por MedSênior, é necessário regularizar o convênio com nossa equipe.\n\n` +
+      `Como deseja prosseguir?`,
+    buttons: [
+      { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
+      { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
+    ],
+    phoneNumberIdFallback,
+  });
+
+  await setState(phone, "PLAN_PICK");
+  return;
+}
 
   // ✅ Se o plano do fluxo existe no cadastro, segue direto
   if (hasFlowPlan) {
@@ -2936,7 +2997,7 @@ if (ctx === "PARTICULAR") {
     return;
   }
 
-  if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+  if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
   return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
 }
 
@@ -2944,7 +3005,7 @@ if (ctx === "PARTICULAR") {
   // CONTEXTO: CONVENIOS
   // -------------------
   if (ctx === "CONVENIOS") {
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
 
     if (digits === "1") return sendAndSetState(phone, MSG.CONVENIO_GOCARE, "CONV_DETALHE", phoneNumberIdFallback);
     if (digits === "2") return sendAndSetState(phone, MSG.CONVENIO_SAMARITANO, "CONV_DETALHE", phoneNumberIdFallback);
@@ -2964,7 +3025,7 @@ if (ctx === "PARTICULAR") {
   // -------------------
   if (ctx === "CONV_DETALHE") {
     if (digits === "9") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
     return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
   }
 
@@ -2994,7 +3055,7 @@ if (ctx === "MEDSENIOR") {
     return;
   }
 
-  if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+  if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
   return sendAndSetState(phone, MSG.MEDSENIOR, "MEDSENIOR", phoneNumberIdFallback);
 }
 
@@ -3004,7 +3065,7 @@ if (ctx === "MEDSENIOR") {
   if (ctx === "POS") {
     if (digits === "1") return sendAndSetState(phone, MSG.POS_RECENTE, "POS_RECENTE", phoneNumberIdFallback);
     if (digits === "2") return sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO", phoneNumberIdFallback);
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
     return sendAndSetState(phone, MSG.POS_MENU, "POS", phoneNumberIdFallback);
   }
 
@@ -3012,7 +3073,7 @@ if (ctx === "MEDSENIOR") {
   // CONTEXTO: POS_RECENTE
   // -------------------
   if (ctx === "POS_RECENTE") {
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
     return sendAndSetState(phone, MSG.POS_RECENTE, "POS_RECENTE", phoneNumberIdFallback);
   }
 
@@ -3022,7 +3083,7 @@ if (ctx === "MEDSENIOR") {
   if (ctx === "POS_TARDIO") {
     if (digits === "1") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
     if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
     return sendAndSetState(phone, MSG.POS_TARDIO, "POS_TARDIO", phoneNumberIdFallback);
   }
 
@@ -3030,7 +3091,7 @@ if (ctx === "MEDSENIOR") {
   // CONTEXTO: ATENDENTE
   // -------------------
   if (ctx === "ATENDENTE") {
-    if (digits === "0") return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+    if (digits === "0") return resetToMain(phone, phoneNumberIdFallback);
     return sendAndSetState(phone, "Por favor, descreva abaixo como podemos te ajudar.", "ATENDENTE", phoneNumberIdFallback);
   }
 
