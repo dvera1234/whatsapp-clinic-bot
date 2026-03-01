@@ -169,13 +169,6 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } 
 
   const rid = crypto.randomUUID();
   const url = `${VERSA_BASE}${path}`;
-
-  async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } = {}) {
-  const token = await versatilisGetToken();
-
-  const rid = crypto.randomUUID();
-  const url = `${VERSA_BASE}${path}`;
-
   const t0 = Date.now();
 
   const r = await fetch(url, {
@@ -190,44 +183,40 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } 
   });
 
   const ms = Date.now() - t0;
-
   const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
 
   const text = await r.text().catch(() => "");
   let data;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
 
-  // 404 do Versatilis pode significar "sem datas disponíveis" (caso normal)
   const isNoDates404 =
     r.status === 404 &&
     typeof data === "string" &&
     data.toLowerCase().includes("não foram encontradas datas disponiveis");
 
-  // ✅ Linha única por request (INFO/WARN)
-  // - Sucesso: INFO
-  // - 404 no dates: DEBUG (rate-limited)
-  // - Outros erros: WARN
   const baseLog = { rid, method, path, status: r.status, ms };
 
   if (r.ok) {
     log("INFO", "VERSATILIS", baseLog);
   } else if (isNoDates404) {
-    // não spamma: 1 vez por minuto por path
     logRateLimited("DEBUG", `nodates:${path}`, "VERSATILIS_NO_DATES", baseLog, 60_000);
   } else {
     log("WARN", "VERSATILIS_FAIL", { ...baseLog, allow });
   }
 
-  // ✅ Body preview só quando erro REAL e só em DEBUG
   if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
-    const preview = typeof data === "string"
-      ? data.slice(0, 300)
-      : JSON.stringify(data).slice(0, 300);
+    const preview =
+      typeof data === "string"
+        ? data.slice(0, 300)
+        : JSON.stringify(data).slice(0, 300);
 
     log("DEBUG", "VERSATILIS_BODY", { rid, status: r.status, preview });
   }
 
-  // mantém seu diagnóstico de 405 (fica em DEBUG)
   if (r.status === 405 && canLog("DEBUG")) {
     try {
       const ro = await fetch(url, {
@@ -434,6 +423,13 @@ async function versaSolicitarSenha({ login, dtNascISO }) {
   const path = `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}&dtNasc=${encodeURIComponent(dtBR)}`;
   const out = await versatilisFetch(path);
   return { ok: out.ok, out };
+}
+
+async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
+  const cpf = String(cpfDigits || "").replace(/\D+/g, "");
+  if (cpf.length !== 11) return { ok: false, stage: "cpf_invalid" };
+
+  return await versaSolicitarSenha({ login: cpf, dtNascISO });
 }
 
 // =======================
@@ -830,6 +826,11 @@ async function clearSession(phone) {
 // CONTATO SUPORTE (link clicável)
 // =======================
 const SUPPORT_WA = "5519933005596";
+
+// =======================
+// PORTAL DO PACIENTE (ENV) — GLOBAL
+// =======================
+const PORTAL_URL = String(process.env.PORTAL_URL || "").trim();
 
 // =======================
 // TEXTOS
@@ -1945,9 +1946,7 @@ Nossa sala de espera foi pensada com carinho para seu conforto: ambiente acolhed
 Há estacionamento com valet no prédio.
 
 Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
-
-const PORTAL_URL = String(process.env.PORTAL_URL || "").trim();
-
+passo
 const PORTAL_INFO = `📲 Portal do Paciente
 No Portal, você pode:
 • Consultar e atualizar seus dados cadastrais
