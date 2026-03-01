@@ -435,36 +435,46 @@ function previewOutData(out) {
 
 async function versaSolicitarSenha({ login, dtNascISO }) {
   const lg = String(login || "").trim();
-  const dataNascimento = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA (manual)
-  if (!lg || !dataNascimento) return { ok: false, stage: "missing_login_or_dtnasc" };
+  const dataBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
+  if (!lg || !dataBR) return { ok: false, stage: "missing_login_or_dtnasc" };
 
-  // ***MANUAL***: usar "dataNascimento" (não dtNasc)
-  const path =
-    `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
-    `&dataNascimento=${encodeURIComponent(dataNascimento)}`;
+  // ✅ Tenant divergence: alguns Versatilis não usam "dataNascimento"
+  // Tentamos variações sem mudar a rota base.
+  const paramNames = ["dtNasc", "dataNascimento", "dtNascimento", "dataNasc", "dtnasc"];
 
-  const out = await versatilisFetch(path, { method: "GET" });
+  for (const p of paramNames) {
+    const path =
+      `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
+      `&${p}=${encodeURIComponent(dataBR)}`;
 
-  console.log("[VERSA] solicitar senha", {
-    method: "GET",
-    path: "/api/Login/SolicitarSenha", // não loga query
-    ok: out.ok,
-    status: out.status,
-    rid: out.rid,
-    // preview curto do erro pra fechar divergência rápido
-    preview: out.ok ? null : previewOutData(out),
-  });
+    const out = await versatilisFetch(path, { method: "GET" });
 
-  if (out.ok) return { ok: true, out };
+    console.log("[VERSA] solicitar senha try", {
+      method: "GET",
+      path: "/api/Login/SolicitarSenha", // não loga query
+      param: p,
+      ok: out.ok,
+      status: out.status,
+      rid: out.rid,
+      preview: out.ok ? null : previewOutData(out),
+    });
 
-  // Divergência: manual diz que deveria aceitar; tenant recusou
+    if (out.ok) return { ok: true, out, usedParam: p };
+
+    // 404 aqui normalmente significa "action não casa com esse nome de parâmetro" → continua tentando
+    // 400/422 pode ser validação → ainda vale tentar outras variações antes de desistir
+    if (![404, 400, 422].includes(out.status)) {
+      return { ok: false, stage: "http_error", out, usedParam: p };
+    }
+  }
+
+  // ✅ Se chegou aqui, nenhuma action casou com nenhum nome de parâmetro
   return {
     ok: false,
-    stage: "tenant_divergence_or_validation_error",
+    stage: "no_matching_action",
     hint:
-      "Tenant recusou SolicitarSenha mesmo usando o formato do manual (login + dataNascimento DD/MM/AAAA). " +
-      "Verifique o preview do erro e/ou se o login deve ser CPF com máscara, email ou codUsuario.",
-    out,
+      "Nenhuma variação de parâmetro (dtNasc/dataNascimento/...) casou com uma action válida neste tenant. " +
+      "Próximo passo: descobrir o endpoint correto de reset de senha no Versatilis desse cliente.",
   };
 }
 
