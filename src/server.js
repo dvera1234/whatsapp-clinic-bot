@@ -510,7 +510,49 @@ async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return { ok: false, stage: "cpf_invalid" };
 
-  return await versaSolicitarSenha({ login: cpf, dtNascISO });
+  const cpfMask = formatCPFMask(cpf);
+
+  // 1) tenta descobrir CodUsuario (mais “aceito” em muitos tenants)
+  const codUsuario =
+    (await versaFindCodUsuarioByCPF(cpf)) ||
+    (await versaFindCodUsuarioByDadosCPF(cpf));
+
+  // 2) se achar CodUsuario, tenta pegar e-mail do cadastro
+  let email = "";
+  if (codUsuario) {
+    const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
+    email = prof.ok ? cleanStr(prof.data?.Email) : "";
+  }
+
+  // 3) ordem de tentativas de login (mantendo dtNasc ISO)
+  const logins = [
+    isValidEmail(email) ? email : null,              // ✅ melhor tentativa
+    codUsuario ? String(codUsuario) : null,          // ✅ muito aceito em Login endpoints
+    cpf,                                             // cpf sem máscara
+    cpfMask || null,                                 // cpf com máscara
+  ].filter(Boolean);
+
+  for (const lg of logins) {
+    const out = await versaSolicitarSenha({ login: lg, dtNascISO });
+
+    console.log("[VERSA] solicitar senha login try", {
+      loginKind: isValidEmail(lg) ? "email" : (String(lg).length <= 6 ? "codUsuario" : "cpf"),
+      ok: out.ok,
+      stage: out.stage,
+      usedLogin: isValidEmail(lg) ? "email" : "masked",
+      status: out?.out?.status,
+      rid: out?.out?.rid,
+    });
+
+    if (out.ok) return out;
+
+    // se vier algo diferente de 400/404/422/500, para e devolve
+    if (out?.out?.status && ![400, 404, 422, 500].includes(out.out.status)) {
+      return out;
+    }
+  }
+
+  return { ok: false, stage: "all_login_variants_failed" };
 }
 
 // =======================
