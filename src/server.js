@@ -415,21 +415,61 @@ function formatBRDateFromISO(iso) {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-async function versaSolicitarSenha({ login, dtNascISO }) {
+// =======================
+// RESET SENHA (ROBUSTO)
+// - Algumas instalações retornam 400 no GET simples
+// - Vamos tentar variações (GET/POST + nomes de parâmetros)
+// - SEM logar dados sensíveis
+// =======================
+async function versaSolicitarSenhaRobusto({ login, dtNascISO }) {
   const lg = String(login || "").trim();
   const dtBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
   if (!lg || !dtBR) return { ok: false, stage: "missing_login_or_dtnasc" };
 
-  const path = `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}&dtNasc=${encodeURIComponent(dtBR)}`;
-  const out = await versatilisFetch(path);
-  return { ok: out.ok, out };
+  // tentativas (ordem importa)
+  const tries = [
+    // GET padrão
+    { method: "GET", path: `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}&dtNasc=${encodeURIComponent(dtBR)}` },
+
+    // GET variações de case (alguns backends são chatos)
+    { method: "GET", path: `/api/Login/SolicitarSenha?Login=${encodeURIComponent(lg)}&DtNasc=${encodeURIComponent(dtBR)}` },
+
+    // POST com query (há instalações que só aceitam POST)
+    { method: "POST", path: `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}&dtNasc=${encodeURIComponent(dtBR)}` },
+
+    // POST com body JSON (há instalações que validam body)
+    { method: "POST", path: `/api/Login/SolicitarSenha`, jsonBody: { login: lg, dtNasc: dtBR } },
+    { method: "POST", path: `/api/Login/SolicitarSenha`, jsonBody: { Login: lg, DtNasc: dtBR } },
+
+    // fallback extra: algumas APIs usam "dtNasc" mas aceitam "dataNascimento"
+    { method: "POST", path: `/api/Login/SolicitarSenha`, jsonBody: { login: lg, dataNascimento: dtBR } },
+  ];
+
+  for (const t of tries) {
+    const out = await versatilisFetch(t.path, {
+      method: t.method,
+      ...(t.jsonBody ? { jsonBody: t.jsonBody } : {}),
+    });
+
+    console.log("[VERSA] solicitar senha try", {
+      method: t.method,
+      path: String(t.path).split("?")[0], // não loga query
+      ok: out.ok,
+      status: out.status,
+      rid: out.rid,
+    });
+
+    if (out.ok) return { ok: true, out, used: { method: t.method, path: t.path } };
+  }
+
+  // se todas falharem
+  return { ok: false, stage: "all_failed", hint: "SolicitarSenha retornou erro em todas as variações." };
 }
 
 async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return { ok: false, stage: "cpf_invalid" };
-
-  return await versaSolicitarSenha({ login: cpf, dtNascISO });
+  return await versaSolicitarSenhaRobusto({ login: cpf, dtNascISO });
 }
 
 // =======================
@@ -1234,6 +1274,58 @@ function toHHMM(hora) {
   return `${hh}:${m[2]}`;
 }
 
+// =======================
+// dtNasc automático (SEM COLETA)
+// - Busca em: portal.form -> portal.profile -> Versatilis por CodUsuario
+// - Se não achar: não pede ao paciente; encaminha suporte
+// =======================
+async function getDtNascISOAuto(phone) {
+  const s = await ensureSession(phone);
+
+  // 1) Já na sessão (wizard)
+  const dt1 = cleanStr(s?.portal?.form?.dtNascISO);
+  if (dt1) return dt1;
+
+  // 2) Do profile em cache na sessão
+  const dtRaw = cleanStr(s?.portal?.profile?.DtNasc);
+  const dt2 = parseBRDateToISO(dtRaw) || (function () {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dtRaw);
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+  })();
+  if (dt2) return dt2;
+
+  // 3) Busca por codUsuario (preferência: booking.codUsuario)
+  const cod =
+    Number(s?.booking?.codUsuario) ||
+    Number(s?.portal?.codUsuario) ||
+    null;
+
+  if (!cod || !Number.isFinite(cod) || cod <= 0) return null;
+
+  const prof = await versaGetDadosUsuarioPorCodigo(cod);
+  if (!prof.ok || !prof.data) return null;
+
+  const dtApiRaw = cleanStr(prof.data?.DtNasc);
+  const dt3 =
+    parseBRDateToISO(dtApiRaw) ||
+    (function () {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dtApiRaw);
+      return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+    })();
+
+  // salva em sessão para próximas chamadas
+  if (dt3) {
+    s.portal = s.portal || {};
+    s.portal.profile = s.portal.profile || {};
+    s.portal.profile.DtNasc = prof.data?.DtNasc || s.portal.profile.DtNasc;
+    s.portal.form = s.portal.form || {};
+    s.portal.form.dtNascISO = dt3;
+    await saveSession(phone, s);
+  }
+
+  return dt3 || null;
+}
+
 function pickLoginForSolicitarSenha(session) {
   const email = cleanStr(session?.portal?.form?.email || session?.portal?.profile?.Email);
   const cpf = cleanStr(session?.portal?.form?.cpf || session?.portal?.profile?.CPF).replace(/\D+/g, "");
@@ -1602,103 +1694,21 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`
   
   const ctx = (await getState(phone)) || "MAIN";
 
-// =======================
-// ESTADO: PWD_DTNASC
-// - usuário informou data de nascimento para reset de senha
-// - salva dtNascISO na sessão
-// - dispara reset por CPF
-// =======================
-if (ctx === "PWD_DTNASC") {
-  const iso = parseBRDateToISO(raw);
-  if (!iso) {
-    await sendText({
-      to: phone,
-      body: "⚠️ Data inválida. Use DD/MM/AAAA.",
-      phoneNumberIdFallback,
-    });
-    return;
-  }
-
-  const s = await ensureSession(phone);
-  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-
-  if (cpf.length !== 11) {
-    await sendAndSetState(
-      phone,
-      "⚠️ Não encontrei seu CPF nesta sessão. Envie seu CPF (somente números).",
-      "WZ_CPF",
-      phoneNumberIdFallback
-    );
-    return;
-  }
-
-  // salva dtNascISO para não pedir novamente
-  s.portal = s.portal || {};
-  s.portal.form = s.portal.form || {};
-  s.portal.form.dtNascISO = iso;
-  await saveSession(phone, s);
-
-  const out = await versaSolicitarSenhaPorCPF(cpf, iso);
-
-  if (!out.ok) {
-    const prefill = `Olá! Não estou recebendo o e-mail de redefinição de senha do Portal do Paciente.
-
-Paciente: ${phone}
-CPF: ${cpf}
-Motivo: solicitação de senha falhou na integração.`;
-    const link = makeWaLink(prefill);
-
-    await sendText({
-      to: phone,
-      body: `⚠️ Não consegui enviar o e-mail agora.\n\n✅ Para suporte, clique:\n${link}`,
-      phoneNumberIdFallback,
-    });
-
-    await setState(phone, "MAIN");
-    return;
-  }
-
-  await sendText({
-    to: phone,
-    body:
-      "✅ Pronto! Enviamos o e-mail para redefinição de senha do Portal.\n" +
-      "Se não chegar, verifique também o Spam/Lixo Eletrônico.",
-    phoneNumberIdFallback,
-  });
-
-  if (PORTAL_URL) {
-    await sendText({
-      to: phone,
-      body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
-      phoneNumberIdFallback,
-    });
-  }
-
-  await setState(phone, "MAIN");
-  return;
-}
-
 // Compatibilidade: se vier botão antigo, redireciona
 if (upper === "REENVIAR_SENHA" || upper === "SENHA" || upper === "ESQUECI_SENHA") {
   upper = "PWD_MUDAR";
 }
-  
+
 // =======================
 // BOTÕES GLOBAIS: CRIAR SENHA / MUDAR SENHA (qualquer momento)
-// - ambos fazem a mesma coisa: envia reset por e-mail
-// - CPF já existe na sessão (fluxo de agendamento)
-// - se faltar, pede só data de nascimento
+// - NÃO pede data de nascimento
+// - dtNasc vem automaticamente via Versatilis (CodUsuario -> DadosUsuarioPorCodigo)
+// - se falhar, encaminha suporte
 // =======================
 if (upper === "PWD_CRIAR" || upper === "PWD_MUDAR") {
   const s = await ensureSession(phone);
 
   const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-  const dtNascISO =
-    cleanStr(s?.portal?.form?.dtNascISO) ||
-    (function () {
-      const dtRaw = cleanStr(s?.portal?.profile?.DtNasc);
-      return parseBRDateToISO(dtRaw) || null;
-    })();
 
   // Se por algum motivo não houver CPF na sessão, volta pro CPF do wizard
   if (cpf.length !== 11) {
@@ -1711,17 +1721,28 @@ if (upper === "PWD_CRIAR" || upper === "PWD_MUDAR") {
     return;
   }
 
-  // Se faltar data de nascimento, pede só isso (não volta pro CPF)
+  // ✅ dtNasc automático (sem coletar)
+  const dtNascISO = await getDtNascISOAuto(phone);
+
   if (!dtNascISO) {
-    await sendAndSetState(
-      phone,
-      "Para enviar o e-mail de senha do Portal, informe sua data de nascimento (DD/MM/AAAA).",
-      "PWD_DTNASC",
-      phoneNumberIdFallback
-    );
+    const prefill = `Olá! Preciso de ajuda para receber a senha do Portal do Paciente.
+
+Paciente: ${phone}
+CPF: ${cpf}
+Motivo: não consegui obter a data de nascimento automaticamente para disparar o reset.`;
+    const link = makeWaLink(prefill);
+
+    await sendText({
+      to: phone,
+      body: `⚠️ Não consegui disparar o e-mail automaticamente.\n\n✅ Para suporte, clique:\n${link}`,
+      phoneNumberIdFallback,
+    });
+
+    await setState(phone, "MAIN");
     return;
   }
 
+  // ✅ chama versão robusta (corrige o 400)
   const out = await versaSolicitarSenhaPorCPF(cpf, dtNascISO);
 
   if (!out.ok) {
@@ -1729,7 +1750,7 @@ if (upper === "PWD_CRIAR" || upper === "PWD_MUDAR") {
 
 Paciente: ${phone}
 CPF: ${cpf}
-Motivo: solicitação de senha falhou na integração.`;
+Motivo: SolicitarSenha falhou (integração retornou erro).`;
     const link = makeWaLink(prefill);
 
     await sendText({
