@@ -433,50 +433,57 @@ function previewOutData(out) {
   }
 }
 
-async function versaSolicitarSenha({ login, dtNascISO }) {
-  const lg = String(login || "").trim();
-  const dataBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
-  if (!lg || !dataBR) return { ok: false, stage: "missing_login_or_dtnasc" };
+const dataBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
+const dataISO = String(dtNascISO || "").trim(); // YYYY-MM-DD
+if (!lg || !dataBR || !dataISO) return { ok: false, stage: "missing_login_or_dtnasc" };
 
-  // ✅ Tenant divergence: alguns Versatilis não usam "dataNascimento"
-  // Tentamos variações sem mudar a rota base.
-  const paramNames = ["dtNasc", "dataNascimento", "dtNascimento", "dataNasc", "dtnasc"];
+// ✅ Primeiro tenta o que o log mostrou que existe: dtNasc (DateTime)
+const attempts = [
+  // dtNasc precisa ser parseável pelo ASP.NET → ISO é o mais seguro
+  { param: "dtNasc", value: dataISO },
+  { param: "dtNasc", value: `${dataISO}T00:00:00` },
+  { param: "dtNasc", value: `${dataISO}T00:00:00-03:00` },
 
-  for (const p of paramNames) {
-    const path =
-      `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
-      `&${p}=${encodeURIComponent(dataBR)}`;
+  // (mantém as variações antigas, mas elas são 404 nesse tenant)
+  { param: "dataNascimento", value: dataBR },
+  { param: "dtNascimento", value: dataBR },
+  { param: "dataNasc", value: dataBR },
 
-    const out = await versatilisFetch(path, { method: "GET" });
+  // dtnasc cai na mesma action (case-insensitive) → também tem que ser ISO
+  { param: "dtnasc", value: dataISO },
+];
 
-    console.log("[VERSA] solicitar senha try", {
-      method: "GET",
-      path: "/api/Login/SolicitarSenha", // não loga query
-      param: p,
-      ok: out.ok,
-      status: out.status,
-      rid: out.rid,
-      preview: out.ok ? null : previewOutData(out),
-    });
+for (const a of attempts) {
+  const path =
+    `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
+    `&${a.param}=${encodeURIComponent(a.value)}`;
 
-    if (out.ok) return { ok: true, out, usedParam: p };
+  const out = await versatilisFetch(path, { method: "GET" });
 
-    // 404 aqui normalmente significa "action não casa com esse nome de parâmetro" → continua tentando
-    // 400/422 pode ser validação → ainda vale tentar outras variações antes de desistir
-    if (![404, 400, 422].includes(out.status)) {
-      return { ok: false, stage: "http_error", out, usedParam: p };
-    }
+  console.log("[VERSA] solicitar senha try", {
+    method: "GET",
+    path: "/api/Login/SolicitarSenha",
+    param: a.param,
+    ok: out.ok,
+    status: out.status,
+    rid: out.rid,
+    preview: out.ok ? null : previewOutData(out),
+  });
+
+  if (out.ok) return { ok: true, out, usedParam: a.param, usedValue: a.value };
+
+  if (![404, 400, 422].includes(out.status)) {
+    return { ok: false, stage: "http_error", out, usedParam: a.param, usedValue: a.value };
   }
-
-  // ✅ Se chegou aqui, nenhuma action casou com nenhum nome de parâmetro
-  return {
-    ok: false,
-    stage: "no_matching_action",
-    hint:
-      "Nenhuma variação de parâmetro (dtNasc/dataNascimento/...) casou com uma action válida neste tenant. " +
-      "Próximo passo: descobrir o endpoint correto de reset de senha no Versatilis desse cliente.",
-  };
 }
+
+return {
+  ok: false,
+  stage: "no_matching_action_or_bad_date_format",
+  hint:
+    "A action existe para dtNasc (DateTime), mas o servidor não aceitou o formato. " +
+    "Mantivemos tentativas ISO; se persistir 400, precisamos confirmar o formato exato exigido pelo tenant.",
+};
 
 async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
