@@ -2147,15 +2147,18 @@ Há estacionamento com valet no prédio.
 
 Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
 
-const PORTAL_INFO = `📲 Acesse o Portal do Paciente
-No Portal, você pode:
-• Consultar e atualizar seus dados cadastrais
-• Acompanhar seus agendamentos
-• Acessar os serviços disponíveis para você
+const PORTAL_INFO = `📲 Portal do Paciente
 
-🔑 Senha / Acesso
-A senha é enviada por e-mail (conforme cadastro no Portal).
-Se precisar, posso reenviar agora por aqui.`;
+No Portal, você pode:
+• Consultar e atualizar seus dados cadastrais  
+• Acompanhar seus agendamentos  
+• Acessar informações e serviços disponíveis  
+
+🔑 Acesso ao Portal  
+Caso ainda não tenha senha ou não se recorde dela,  
+acesse o Portal e selecione a opção **“Esqueci minha senha”**.  
+
+As instruções para redefinição serão enviadas automaticamente para o e-mail cadastrado.`;
 
 try {
   await setState(phone, "MAIN");
@@ -2174,16 +2177,6 @@ try {
     });
   }
 
-await sendButtons({
-  to: phone,
-  body: "Senha do Portal do Paciente:",
-  buttons: [
-    { id: "PWD_CRIAR", title: "Criar senha" },
-    { id: "PWD_MUDAR", title: "Mudar senha" },
-    { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
-  ],
-  phoneNumberIdFallback,
-});
 } catch (e) {
   console.log("[POST-CONFIRM] falhou ao enviar mensagens", { err: String(e?.message || e) });
 
