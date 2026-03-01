@@ -185,37 +185,49 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } 
   const ms = Date.now() - t0;
   const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
 
-  const text = await r.text().catch(() => "");
-  let data;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text;
-  }
+  const contentType = r.headers.get("content-type") || null;
 
-  const isNoDates404 =
-    r.status === 404 &&
-    typeof data === "string" &&
-    data.toLowerCase().includes("não foram encontradas datas disponiveis");
+const text = await r.text().catch(() => "");
+const textLen = text ? text.length : 0;
 
-  const baseLog = { rid, method, path, status: r.status, ms };
+let data;
+try {
+  data = text ? JSON.parse(text) : null;
+} catch {
+  data = text; // pode ser HTML ou texto puro
+}
 
-  if (r.ok) {
-    log("INFO", "VERSATILIS", baseLog);
-  } else if (isNoDates404) {
-    logRateLimited("DEBUG", `nodates:${path}`, "VERSATILIS_NO_DATES", baseLog, 60_000);
-  } else {
-    log("WARN", "VERSATILIS_FAIL", { ...baseLog, allow });
-  }
+const isNoDates404 =
+  r.status === 404 &&
+  typeof data === "string" &&
+  data.toLowerCase().includes("não foram encontradas datas disponiveis");
 
-  if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
-    const preview =
-      typeof data === "string"
-        ? data.slice(0, 300)
-        : JSON.stringify(data).slice(0, 300);
+const baseLog = { rid, method, path, status: r.status, ms };
 
-    log("DEBUG", "VERSATILIS_BODY", { rid, status: r.status, preview });
-  }
+if (r.ok) {
+  log("INFO", "VERSATILIS", baseLog);
+} else if (isNoDates404) {
+  logRateLimited("DEBUG", `nodates:${path}`, "VERSATILIS_NO_DATES", baseLog, 60_000);
+} else {
+  log("WARN", "VERSATILIS_FAIL", { ...baseLog, allow, contentType, textLen });
+}
+
+if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
+  const preview =
+    typeof data === "string"
+      ? data.slice(0, 500)
+      : data == null
+      ? null
+      : JSON.stringify(data).slice(0, 500);
+
+  log("DEBUG", "VERSATILIS_BODY", {
+    rid,
+    status: r.status,
+    contentType,
+    textLen,
+    preview: preview || "[empty-body]",
+  });
+}
 
   if (r.status === 405 && canLog("DEBUG")) {
     try {
@@ -467,15 +479,16 @@ async function versaSolicitarSenha({ login, dtNascISO }) {
 
     const out = await versatilisFetch(path, { method: "GET" });
 
-    console.log("[VERSA] solicitar senha try", {
-      method: "GET",
-      path: "/api/Login/SolicitarSenha",
-      param: a.param,
-      ok: out.ok,
-      status: out.status,
-      rid: out.rid,
-      preview: out.ok ? null : previewOutData(out),
-    });
+console.log("[VERSA] solicitar senha try", {
+  method: "GET",
+  path: "/api/Login/SolicitarSenha",
+  param: a.param,
+  ok: out.ok,
+  status: out.status,
+  rid: out.rid,
+  preview: out.ok ? null : (previewOutData(out) || "[empty-or-nonjson-body]"),
+  allow: out.allow || null,
+});
 
     if (out.ok) return { ok: true, out, usedParam: a.param, usedValue: a.value };
 
