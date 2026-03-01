@@ -1148,7 +1148,7 @@ Avenida Orosimbo Maia, 360
 6º andar – Vila Itapura
 
 Escolha uma opção:
-1) Acesse o link de agendamento e escolha o melhor horário disponível
+1) Agendar minha consulta
 0) Voltar ao menu inicial`,
 
   POS_MENU: `Acompanhamento pós-operatório
