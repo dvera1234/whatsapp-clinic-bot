@@ -83,6 +83,44 @@ function resolveCodPlano(planoKey) {
 }
 
 // =======================
+// PLANOS: detectar/normalizar (Versatilis -> session)
+// =======================
+function normalizePlanListFromProfile(profile) {
+  const list = [];
+
+  // CodPlanos pode vir como array
+  if (Array.isArray(profile?.CodPlanos)) {
+    for (const x of profile.CodPlanos) {
+      const n = parsePositiveInt(x);
+      if (n) list.push(n);
+    }
+  }
+
+  // CodPlano pode vir como string/number
+  const one = parsePositiveInt(profile?.CodPlano);
+  if (one) list.push(one);
+
+  // unique
+  return Array.from(new Set(list));
+}
+
+function planKeyFromCodPlano(codPlano) {
+  const n = Number(codPlano);
+  if (n === COD_PLANO_MEDSENIOR_SP) return PLAN_KEYS.MEDSENIOR_SP;
+  if (n === COD_PLANO_PARTICULAR) return PLAN_KEYS.PARTICULAR;
+  return null; // desconhecido
+}
+
+function codPlanoFromPlanKey(planKey) {
+  return resolveCodPlano(planKey);
+}
+
+function hasPlanKey(plansCodList, planKey) {
+  const want = codPlanoFromPlanKey(planKey);
+  return (plansCodList || []).some((x) => Number(x) === Number(want));
+}
+
+// =======================
 // VERSATILIS (fetch) — helper mínimo e seguro
 // =======================
 const VERSA_BASE_RAW = process.env.VERSATILIS_BASE || ""; // deve ser só a raiz do cliente (SEM /api)
@@ -960,8 +998,16 @@ const PORTAL_URL = String(process.env.PORTAL_URL || "").trim();
 // =======================
 const MSG = {
  
-  ASK_CPF_PORTAL: `Para prosseguir com o agendamento, preciso confirmar seu cadastro.\n\nEnvie seu CPF (somente números).`,
+ASK_CPF_PORTAL: `Para prosseguir com o agendamento, preciso confirmar seu cadastro.\n\nEnvie seu CPF (somente números).`,
 CPF_INVALIDO: `⚠️ CPF inválido. Envie 11 dígitos (somente números).`,
+
+PLAN_DIVERGENCIA: `Notei uma divergência no convênio do seu cadastro.
+
+Por gentileza, qual convênio você quer usar nesta consulta?`,
+
+BTN_PLAN_PART: "Particular",
+BTN_PLAN_MED: "MedSênior SP",
+  
 PORTAL_NEED_DATA: (faltas) => `Para prosseguir, preciso completar seu cadastro do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
 PORTAL_NEED_DATA_EXISTING: (faltas) =>
   `Encontrei seu cadastro ✅, mas precisamos completar algumas informações do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
@@ -1271,6 +1317,51 @@ async function resolveVersaUpdateRoute(samplePayload) {
   versaUpdateResolved = null;
   console.log("[VERSA UPDATE] no route resolved");
   return null;
+}
+
+async function versaAttachPlanIfMissing({ codUsuario, profile, planKeyToEnsure }) {
+  const plans = normalizePlanListFromProfile(profile);
+  const wantCod = codPlanoFromPlanKey(planKeyToEnsure);
+
+  // já tem -> nada a fazer
+  if (plans.some((p) => Number(p) === Number(wantCod))) {
+    return { ok: true, changed: false, plansAfter: plans };
+  }
+
+  // tenta anexar
+  const route = await resolveVersaUpdateRoute({
+    CodUsuario: codUsuario,
+    CPF: cleanStr(profile?.CPF),
+    Nome: cleanStr(profile?.Nome),
+  });
+
+  if (!route) {
+    return { ok: false, stage: "no_update_route" };
+  }
+
+  const mergedPlans = Array.from(new Set([...(plans || []), wantCod]));
+
+  // Payload mínimo (evita depender de endereço etc.)
+  // IMPORTANT: mantém CPF/Nome para ajudar a API a aceitar update.
+  const payload = {
+    CodUsuario: Number(codUsuario),
+    CPF: cleanStr(profile?.CPF),
+    Nome: cleanStr(profile?.Nome),
+    CodPlano: String(wantCod),
+    CodPlanos: mergedPlans,
+  };
+
+  const out = await versatilisFetch(route.path, {
+    method: route.method,
+    jsonBody: payload,
+    ...(route.extraHeaders ? { extraHeaders: route.extraHeaders } : {}),
+  });
+
+  if (!out.ok) {
+    return { ok: false, stage: "update_failed", out };
+  }
+
+  return { ok: true, changed: true, plansAfter: mergedPlans };
 }
 
 // =======================
@@ -1897,6 +1988,49 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
 }
 
 // =======================
+// PLANO DIVERGENTE: escolher qual usar neste agendamento
+// =======================
+if (ctx === "PLAN_PICK") {
+  if (upper !== "PL_USE_PART" && upper !== "PL_USE_MED") {
+    await sendButtons({
+      to: phone,
+      body: "Use os botões para selecionar o convênio:",
+      buttons: [
+        { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
+        { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
+      ],
+      phoneNumberIdFallback,
+    });
+    return;
+  }
+
+  const chosenKey = (upper === "PL_USE_MED") ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
+
+  const s = await ensureSession(phone);
+  s.booking = s.booking || {};
+  s.booking.planoKey = chosenKey; // ✅ isso garante CodPlano certo no ConfirmarAgendamento
+
+  await saveSession(phone, s);
+
+  // segue fluxo normal para datas
+  const codUsuario = Number(s?.booking?.codUsuario || s?.portal?.codUsuario);
+  if (!codUsuario) {
+    await sendText({ to: phone, body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.", phoneNumberIdFallback });
+    await setState(phone, "MAIN");
+    return;
+  }
+
+  await finishWizardAndGoToDates({
+    phone,
+    phoneNumberIdFallback,
+    codUsuario,
+    planoKeyFromWizard: chosenKey,
+  });
+
+  return;
+}
+  
+// =======================
 // AGENDAMENTO (datas + slots + confirmação)
 // =======================
 
@@ -2399,17 +2533,74 @@ if (prof.ok && prof.data) {
   if (prof.ok && prof.data) {
     const v = validatePortalCompleteness(prof.data);
 
-    // ✅ Cadastro completo → agenda (OK)
-    if (v.ok) {
-      await saveSession(phone, s);
-      await finishWizardAndGoToDates({
-        phone,
+// ✅ Cadastro completo → antes de agendar, reconcilia plano do fluxo
+if (v.ok) {
+  // plano do fluxo (vem do menu)
+  const flowPlanKey = s?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
+
+  const plansCod = normalizePlanListFromProfile(prof.data);
+  const flowPlanExists = hasPlanKey(plansCod, flowPlanKey);
+
+  // Se o plano do fluxo NÃO existir no cadastro, tenta anexar
+  if (!flowPlanExists) {
+    const attach = await versaAttachPlanIfMissing({
+      codUsuario,
+      profile: prof.data,
+      planKeyToEnsure: flowPlanKey,
+    });
+
+    if (!attach.ok) {
+      // falhou anexar plano -> humano (mais seguro)
+      const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+      const prefill = `Olá! Preciso de ajuda com convênio no agendamento.
+
+Paciente: ${phone}
+CPF: ${cpf || "(não informado)"}
+Problema: não consegui anexar o plano do convênio no cadastro (Versatilis).`;
+      const link = makeWaLink(prefill);
+
+      await sendText({
+        to: phone,
+        body: `⚠️ Não consegui ajustar seu convênio automaticamente.\n\n✅ Para suporte, clique:\n${link}`,
         phoneNumberIdFallback,
-        codUsuario,
-        planoKeyFromWizard: s.booking?.planoKey || null,
       });
+
+      await setState(phone, "MAIN");
       return;
     }
+
+    // anexou (ou já estava ok) -> como houve divergência com o fluxo, pergunta qual usar
+    s.booking = s.booking || {};
+    s.booking.codUsuario = codUsuario; // garante
+    await saveSession(phone, s);
+
+    await sendButtons({
+      to: phone,
+      body: MSG.PLAN_DIVERGENCIA,
+      buttons: [
+        { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
+        { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
+      ],
+      phoneNumberIdFallback,
+    });
+
+    await setState(phone, "PLAN_PICK");
+    return;
+  }
+
+  // Plano do fluxo já existe no cadastro -> segue direto (sem perguntar)
+  s.booking = s.booking || {};
+  s.booking.codUsuario = codUsuario;
+  await saveSession(phone, s);
+
+  await finishWizardAndGoToDates({
+    phone,
+    phoneNumberIdFallback,
+    codUsuario,
+    planoKeyFromWizard: flowPlanKey,
+  });
+  return;
+}
 
     // ✅ Cadastro incompleto (paciente existente) → BLOQUEIA e encaminha para humano (ÚNICA OPÇÃO)
     s.portal.missing = v.missing; // guarda para o prefill do humano
