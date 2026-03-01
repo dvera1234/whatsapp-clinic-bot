@@ -1946,7 +1946,7 @@ Nossa sala de espera foi pensada com carinho para seu conforto: ambiente acolhed
 Há estacionamento com valet no prédio.
 
 Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
-passo
+
 const PORTAL_INFO = `📲 Portal do Paciente
 No Portal, você pode:
 • Consultar e atualizar seus dados cadastrais
@@ -1957,13 +1957,42 @@ No Portal, você pode:
 A senha é enviada por e-mail (conforme cadastro no Portal).
 Se precisar, posso reenviar agora por aqui.`;
 
-await setState(phone, "MAIN");
+try {
+  await setState(phone, "MAIN");
 
-await sendText({
-  to: phone,
-  body: `✅ ${msgOk}\n\n${ORIENTACOES}\n\n${PORTAL_INFO}`,
-  phoneNumberIdFallback,
-});
+  await sendText({
+    to: phone,
+    body: `✅ ${msgOk}\n\n${ORIENTACOES}\n\n${PORTAL_INFO}`,
+    phoneNumberIdFallback,
+  });
+
+  if (PORTAL_URL) {
+    await sendText({
+      to: phone,
+      body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
+      phoneNumberIdFallback,
+    });
+  }
+
+  await sendButtons({
+    to: phone,
+    body: "Deseja reenviar a senha do Portal por e-mail?",
+    buttons: [
+      { id: "REENVIAR_SENHA", title: "Reenviar senha" },
+      { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
+    ],
+    phoneNumberIdFallback,
+  });
+} catch (e) {
+  console.log("[POST-CONFIRM] falhou ao enviar mensagens", { err: String(e?.message || e) });
+
+  // fallback mínimo: tenta ao menos avisar o paciente
+  await sendText({
+    to: phone,
+    body: "✅ Agendamento confirmado. Se precisar, digite MENU para voltar.",
+    phoneNumberIdFallback,
+  });
+}
 
 if (PORTAL_URL) {
   await sendText({
