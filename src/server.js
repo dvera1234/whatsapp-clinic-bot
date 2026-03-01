@@ -25,6 +25,48 @@ import { getRedisClient } from "./redis.js";
 // ✅ Redis singleton (uma conexão por processo)
 const redis = getRedisClient();
 
+// =======================
+// LOGGING (níveis + rate limit simples)
+// =======================
+const LOG_LEVEL = String(process.env.LOG_LEVEL || "INFO").toUpperCase();
+// DEBUG < INFO < WARN < ERROR
+const LOG_RANK = { DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 };
+function canLog(level) {
+  const want = LOG_RANK[String(level || "INFO").toUpperCase()] ?? 20;
+  const have = LOG_RANK[LOG_LEVEL] ?? 20;
+  return want >= have;
+}
+
+function log(level, tag, obj) {
+  if (!canLog(level)) return;
+  const payload = obj ? ` ${safeJson(obj)}` : "";
+  console.log(`[${level}] ${tag}${payload}`);
+}
+
+// JSON seguro (sem quebrar log por circular)
+function safeJson(obj) {
+  try {
+    return JSON.stringify(obj);
+  } catch {
+    return JSON.stringify({ note: "unstringifiable" });
+  }
+}
+
+// rate limit de logs repetidos (em memória) — bom p/ 404 de agenda
+// key -> { lastMs, count }
+const _logRL = new Map();
+function logRateLimited(level, key, tag, obj, minIntervalMs = 60_000) {
+  const now = Date.now();
+  const prev = _logRL.get(key);
+  if (prev && now - prev.lastMs < minIntervalMs) {
+    prev.count++;
+    _logRL.set(key, prev);
+    return;
+  }
+  _logRL.set(key, { lastMs: now, count: 0 });
+  log(level, tag, obj);
+}
+
 // =====================================
 // PLANOS FIXOS 
 // =====================================
@@ -128,14 +170,13 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } 
   const rid = crypto.randomUUID();
   const url = `${VERSA_BASE}${path}`;
 
-  // LOG ANTES DO FETCH
-  console.log("[VERSATILIS OUT]", {
-    rid,
-    method,
-    url,
-    hasBody: !!jsonBody,
-    hasExtraHeaders: !!extraHeaders,
-  });
+  async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } = {}) {
+  const token = await versatilisGetToken();
+
+  const rid = crypto.randomUUID();
+  const url = `${VERSA_BASE}${path}`;
+
+  const t0 = Date.now();
 
   const r = await fetch(url, {
     method,
@@ -148,45 +189,62 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } 
     body: jsonBody ? JSON.stringify(jsonBody) : undefined,
   });
 
-const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
+  const ms = Date.now() - t0;
 
-const text = await r.text().catch(() => "");
-let data;
-try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
 
-console.log("[VERSATILIS IN]", { rid, method, path, status: r.status, allow });
+  const text = await r.text().catch(() => "");
+  let data;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
-if (!r.ok) {
-  const preview =
-    typeof data === "string"
-      ? data.slice(0, 400)
-      : JSON.stringify(data).slice(0, 400);
+  // 404 do Versatilis pode significar "sem datas disponíveis" (caso normal)
+  const isNoDates404 =
+    r.status === 404 &&
+    typeof data === "string" &&
+    data.toLowerCase().includes("não foram encontradas datas disponiveis");
 
-  console.log("[VERSATILIS ERR BODY]", {
-    rid,
-    status: r.status,
-    preview,
-  });
-}
+  // ✅ Linha única por request (INFO/WARN)
+  // - Sucesso: INFO
+  // - 404 no dates: DEBUG (rate-limited)
+  // - Outros erros: WARN
+  const baseLog = { rid, method, path, status: r.status, ms };
 
-if (r.status === 405) {
-  // Tenta descobrir métodos aceitos (nem todo servidor responde, mas quando responde resolve na hora)
-  try {
-    const ro = await fetch(url, {
-      method: "OPTIONS",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-    const allow2 = ro.headers.get("allow") || ro.headers.get("Allow") || null;
-    console.log("[VERSATILIS OPTIONS]", { rid, path, status: ro.status, allow: allow2 });
-  } catch (e) {
-    console.log("[VERSATILIS OPTIONS]", { rid, path, error: String(e?.message || e) });
+  if (r.ok) {
+    log("INFO", "VERSATILIS", baseLog);
+  } else if (isNoDates404) {
+    // não spamma: 1 vez por minuto por path
+    logRateLimited("DEBUG", `nodates:${path}`, "VERSATILIS_NO_DATES", baseLog, 60_000);
+  } else {
+    log("WARN", "VERSATILIS_FAIL", { ...baseLog, allow });
   }
-}
 
-return { ok: r.ok, status: r.status, data, rid, allow };
+  // ✅ Body preview só quando erro REAL e só em DEBUG
+  if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
+    const preview = typeof data === "string"
+      ? data.slice(0, 300)
+      : JSON.stringify(data).slice(0, 300);
+
+    log("DEBUG", "VERSATILIS_BODY", { rid, status: r.status, preview });
+  }
+
+  // mantém seu diagnóstico de 405 (fica em DEBUG)
+  if (r.status === 405 && canLog("DEBUG")) {
+    try {
+      const ro = await fetch(url, {
+        method: "OPTIONS",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+      const allow2 = ro.headers.get("allow") || ro.headers.get("Allow") || null;
+      log("DEBUG", "VERSATILIS_OPTIONS", { rid, path, status: ro.status, allow: allow2 });
+    } catch (e) {
+      log("DEBUG", "VERSATILIS_OPTIONS", { rid, path, error: String(e?.message || e) });
+    }
+  }
+
+  return { ok: r.ok, status: r.status, data, rid, allow };
 }
 
 function formatCPFMask(cpf11) {
@@ -368,12 +426,12 @@ function formatBRDateFromISO(iso) {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
-  const cpf = String(cpfDigits || "").replace(/\D+/g, "");
-  const dtBR = formatBRDateFromISO(dtNascISO);
-  if (!cpf || !dtBR) return { ok: false };
+async function versaSolicitarSenha({ login, dtNascISO }) {
+  const lg = String(login || "").trim();
+  const dtBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
+  if (!lg || !dtBR) return { ok: false, stage: "missing_login_or_dtnasc" };
 
-  const path = `/api/Login/SolicitarSenha?login=${encodeURIComponent(cpf)}&dtNasc=${encodeURIComponent(dtBR)}`;
+  const path = `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}&dtNasc=${encodeURIComponent(dtBR)}`;
   const out = await versatilisFetch(path);
   return { ok: out.ok, out };
 }
@@ -651,6 +709,16 @@ console.log("ENV CHECK:", {
 const INACTIVITY_MS = 10 * 60 * 1000; // mantemos por enquanto (será revisado)
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900); // 15 min (900s)
 
+  // =======================
+// DEBUG REDIS (controla logs de GET/SET)
+// =======================
+const DEBUG_REDIS = String(process.env.DEBUG_REDIS || "0").trim() === "1";
+
+function logRedis(tag, obj) {
+  if (!DEBUG_REDIS) return;
+  console.log(`[${tag}]`, obj);
+}
+  
 // =======================
 // VERSATILIS FIXOS (via ENV) — NÃO hardcode
 // =======================
@@ -679,7 +747,7 @@ function sessionKey(phone) {
 
 async function loadSession(phone) {
   const key = sessionKey(phone);
-  console.log("[REDIS GET]", { phone: maskPhone(phone), key: maskKey(key) });
+  logRedis("REDIS_GET", { phone: maskPhone(phone), key: maskKey(key) });
 
   const raw = await redis.get(key);
 
@@ -708,7 +776,7 @@ async function saveSession(phone, sessionObj) {
   const key = sessionKey(phone);
   const val = JSON.stringify(sessionObj);
 
-  console.log("[REDIS SET]", { phone: maskPhone(phone), key: maskKey(key), len: val.length });
+  logRedis("REDIS_SET", { phone: maskPhone(phone), key: maskKey(key), len: val.length });
 
   // Upstash: options object
   await redis.set(key, val, { ex: SESSION_TTL_SECONDS });
@@ -1165,6 +1233,16 @@ function toHHMM(hora) {
   return `${hh}:${m[2]}`;
 }
 
+function pickLoginForSolicitarSenha(session) {
+  const email = cleanStr(session?.portal?.form?.email || session?.portal?.profile?.Email);
+  const cpf = cleanStr(session?.portal?.form?.cpf || session?.portal?.profile?.CPF).replace(/\D+/g, "");
+
+  if (isValidEmail(email)) return { login: email, kind: "email" };
+  if (cpf.length === 11) return { login: cpf, kind: "cpf" };
+
+  return { login: "", kind: "none" };
+}
+  
 // =======================
 // REGRAS DE TEMPO (segurança)
 // =======================
@@ -1198,9 +1276,14 @@ async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
 
   const out = await versatilisFetch(path);
 
-  if (!out.ok || !Array.isArray(out.data)) {
-    return { ok: false, slots: [] };
-  }
+// 404 do Versatilis pode significar "sem datas disponíveis"
+if (out.status === 404) {
+  return { ok: true, slots: [] };
+}
+
+if (!out.ok || !Array.isArray(out.data)) {
+  return { ok: false, slots: [] };
+}
 
   const slots = out.data
     .filter((h) => h && h.PermiteConsulta === true && h.CodHorario != null)
@@ -1518,7 +1601,71 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`
   
   const ctx = (await getState(phone)) || "MAIN";
 
-  // =======================
+// =======================
+// BOTÃO/COMANDO GLOBAL: REENVIAR SENHA (qualquer momento)
+// =======================
+if (upper === "REENVIAR_SENHA" || upper === "SENHA" || upper === "ESQUECI_SENHA") {
+  const s = await ensureSession(phone);
+
+  const dtNascISO =
+    cleanStr(s?.portal?.form?.dtNascISO) ||
+    (function () {
+      const dtRaw = cleanStr(s?.portal?.profile?.DtNasc);
+      return parseBRDateToISO(dtRaw) || null;
+    })();
+
+  const chosen = pickLoginForSolicitarSenha(s);
+
+  if (!chosen.login || !dtNascISO) {
+    await sendAndSetState(
+      phone,
+      "⚠️ Para reenviar a senha, preciso confirmar seus dados.\n\nEnvie seu CPF (somente números).",
+      "WZ_CPF",
+      phoneNumberIdFallback
+    );
+    return;
+  }
+
+  const out = await versaSolicitarSenha({ login: chosen.login, dtNascISO });
+
+  if (!out.ok) {
+    const prefill = `Olá! Não estou recebendo o e-mail de redefinição de senha do Portal do Paciente.
+
+Paciente: ${phone}
+Motivo: solicitação de senha falhou na integração.
+Login usado: ${chosen.kind}
+`;
+    const link = makeWaLink(prefill);
+
+    await sendText({
+      to: phone,
+      body: `⚠️ Não consegui reenviar a senha agora.\n\n✅ Para suporte, clique:\n${link}`,
+      phoneNumberIdFallback,
+    });
+    return;
+  }
+
+  await sendText({
+    to: phone,
+    body:
+      `✅ Pronto! Enviei a solicitação de senha.\n` +
+      `📩 O e-mail será enviado para o e-mail cadastrado no Portal.\n` +
+      `Se não chegar, verifique Spam/Lixo Eletrônico.`,
+    phoneNumberIdFallback,
+  });
+
+  if (PORTAL_URL) {
+    await sendText({
+      to: phone,
+      body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
+      phoneNumberIdFallback,
+    });
+  }
+
+  return;
+}
+  
+// =======================
 // BLOQUEIO FORMAL: PACIENTE EXISTENTE COM CADASTRO INCOMPLETO
 // ÚNICA OPÇÃO = HUMANO
 // =======================
@@ -1789,7 +1936,7 @@ if (!codUsuario) {
       return;
     }
 
-    const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
+const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
 
 const ORIENTACOES = `Para que sua experiência seja ainda mais tranquila, recomendamos que chegue com 15 minutos de antecedência.
 
@@ -1797,16 +1944,47 @@ Nossa sala de espera foi pensada com carinho para seu conforto: ambiente acolhed
 
 Há estacionamento com valet no prédio.
 
-Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.
+Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
 
-Será um prazer recebê-lo(a). Até breve!`;
+const PORTAL_URL = String(process.env.PORTAL_URL || "").trim();
 
- await setState(phone, "MAIN");
+const PORTAL_INFO = `📲 Portal do Paciente
+No Portal, você pode:
+• Consultar e atualizar seus dados cadastrais
+• Acompanhar seus agendamentos
+• Utilizar as funcionalidades disponíveis ao paciente (conforme configuração do sistema)
+
+🔑 Senha / Acesso
+A senha é enviada por e-mail (conforme cadastro no Portal).
+Se precisar, posso reenviar agora por aqui.`;
+
+await setState(phone, "MAIN");
+
 await sendText({
   to: phone,
-  body: `✅ ${msgOk}\n\n${ORIENTACOES}`,
+  body: `✅ ${msgOk}\n\n${ORIENTACOES}\n\n${PORTAL_INFO}`,
   phoneNumberIdFallback,
 });
+
+if (PORTAL_URL) {
+  await sendText({
+    to: phone,
+    body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
+    phoneNumberIdFallback,
+  });
+}
+
+// ✅ botão direto para disparar /api/Login/SolicitarSenha (manual)
+await sendButtons({
+  to: phone,
+  body: "Deseja reenviar a senha do Portal por e-mail?",
+  buttons: [
+    { id: "REENVIAR_SENHA", title: "Reenviar senha" },
+    { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
+  ],
+  phoneNumberIdFallback,
+});
+
 return;
   }
 
@@ -1911,8 +2089,7 @@ async function finishWizardAndGoToDates({ phone, phoneNumberIdFallback, codUsuar
 
   await saveSession(phone, s2);
 
-  await sendText({ to: phone, body: MSG.PORTAL_OK_RESET, phoneNumberIdFallback });
-
+  // ✅ MOSTRA DATAS IMEDIATAMENTE (sem “mensagem do portal” antes)
   await showNextDates({
     phone,
     phoneNumberIdFallback,
