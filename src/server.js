@@ -2236,9 +2236,8 @@ if (ctx === "WAIT_CONFIRM") {
     if (s) delete s.pending;
     await saveSession(phone, s);
 
-     await setState(phone, "SLOTS");
+    await setState(phone, "SLOTS");
 
-    // ✅ AQUI estava o seu problema clássico: chamada errada de showSlotsPage (dava erro e "não fazia nada")
     const slots = s?.booking?.slots || [];
     await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
     return;
@@ -2248,71 +2247,84 @@ if (ctx === "WAIT_CONFIRM") {
     const s = await ensureSession(phone);
     const codHorario = Number(s?.pending?.codHorario);
 
-const planoSelecionado = resolveCodPlano(s?.booking?.planoKey || PLAN_KEYS.PARTICULAR);
+    const planoSelecionado = resolveCodPlano(s?.booking?.planoKey || PLAN_KEYS.PARTICULAR);
 
-const sConfirm = await ensureSession(phone);
+    const sConfirm = await ensureSession(phone);
 
-const payload = {
-  CodUnidade: COD_UNIDADE,
-  CodEspecialidade: COD_ESPECIALIDADE,
-  CodPlano: planoSelecionado,
-  CodHorario: codHorario,
-  CodUsuario: sConfirm?.booking?.codUsuario,
-  CodColaborador: COD_COLABORADOR,
-  BitTelemedicina: false,
-  Confirmada: true,
-};
+    const payload = {
+      CodUnidade: COD_UNIDADE,
+      CodEspecialidade: COD_ESPECIALIDADE,
+      CodPlano: planoSelecionado,
+      CodHorario: codHorario,
+      CodUsuario: sConfirm?.booking?.codUsuario,
+      CodColaborador: COD_COLABORADOR,
+      BitTelemedicina: false,
+      Confirmada: true,
+    };
 
-// Segurança: garante que existe paciente
-if (!payload.CodUsuario) {
-  await sendText({
-    to: phone,
-    body: "⚠️ Não consegui identificar o paciente. Digite AJUDA.",
-    phoneNumberIdFallback,
-  });
-   await setState(phone, "MAIN");
-  return;
-}
+    if (!payload.CodUsuario) {
+      await sendText({
+        to: phone,
+        body: "⚠️ Não consegui identificar o paciente. Digite AJUDA.",
+        phoneNumberIdFallback,
+      });
+      await setState(phone, "MAIN");
+      return;
+    }
 
     if (!codHorario || Number.isNaN(codHorario)) {
       if (s) delete s.pending;
       await saveSession(phone, s);
-       await setState(phone, "SLOTS");
+      await setState(phone, "SLOTS");
 
-      await sendText({ to: phone, body: "⚠️ Não encontrei o horário selecionado. Escolha novamente.", phoneNumberIdFallback });
+      await sendText({
+        to: phone,
+        body: "⚠️ Não encontrei o horário selecionado. Escolha novamente.",
+        phoneNumberIdFallback,
+      });
 
       const slots = s?.booking?.slots || [];
       await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
       return;
     }
 
-        // ✅ Segurança extra: mesmo que tenha passado antes, revalida “12h” na hora de confirmar
     const isoDate = s?.booking?.isoDate;
     const chosen = (s?.booking?.slots || []).find((x) => Number(x.codHorario) === codHorario);
+
     if (!isoDate || !chosen?.hhmm || !isSlotAllowed(isoDate, chosen.hhmm)) {
       if (s) delete s.pending;
       await saveSession(phone, s);
-       await setState(phone, "SLOTS");
+      await setState(phone, "SLOTS");
 
-      await sendText({ to: phone, body: "⚠️ Este horário não pode mais ser agendado (mínimo de 12h). Escolha outro.", phoneNumberIdFallback });
+      await sendText({
+        to: phone,
+        body: "⚠️ Este horário não pode mais ser agendado (mínimo de 12h). Escolha outro.",
+        phoneNumberIdFallback,
+      });
 
-      // refaz slots do dia (pra evitar lista desatualizada)
       const codColaborador = s?.booking?.codColaborador ?? COD_COLABORADOR;
       const codUsuario = s?.booking?.codUsuario;
-if (!codUsuario) {
-  await sendText({
-    to: phone,
-    body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
-    phoneNumberIdFallback,
-  });
-   await setState(phone, "MAIN");
-  return;
-}
+
+      if (!codUsuario) {
+        await sendText({
+          to: phone,
+          body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
+          phoneNumberIdFallback,
+        });
+        await setState(phone, "MAIN");
+        return;
+      }
+
       const out = await fetchSlotsDoDia({ codColaborador, codUsuario, isoDate });
       if (s?.booking) s.booking.slots = out.ok ? out.slots : [];
       await saveSession(phone, s);
 
-      await showSlotsPage({ phone, phoneNumberIdFallback, slots: s?.booking?.slots || [], page: 0 });
+      await showSlotsPage({
+        phone,
+        phoneNumberIdFallback,
+        slots: s?.booking?.slots || [],
+        page: 0,
+      });
       return;
     }
 
@@ -2325,17 +2337,22 @@ if (!codUsuario) {
     await saveSession(phone, s);
 
     if (!out.ok) {
-       await setState(phone, "SLOTS");
-      await sendText({ to: phone, body: "⚠️ Não consegui confirmar agora. Tente outro horário ou digite AJUDA.", phoneNumberIdFallback });
+      await setState(phone, "SLOTS");
+
+      await sendText({
+        to: phone,
+        body: "⚠️ Não consegui confirmar agora. Tente outro horário ou digite AJUDA.",
+        phoneNumberIdFallback,
+      });
 
       const slots = s?.booking?.slots || [];
       await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
       return;
     }
 
-const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
+    const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
 
-const ORIENTACOES = `Para que sua experiência seja ainda mais tranquila, recomendamos que chegue com 15 minutos de antecedência.
+    const ORIENTACOES = `Para que sua experiência seja ainda mais tranquila, recomendamos que chegue com 15 minutos de antecedência.
 
 Nossa sala de espera foi pensada com carinho para seu conforto: ambiente acolhedor, água disponível, Wi-Fi gratuito e honest market com opções variadas.
 
@@ -2343,7 +2360,7 @@ Há estacionamento com valet no prédio.
 
 Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
 
-const PORTAL_INFO = `📲 Portal do Paciente
+    const PORTAL_INFO = `📲 Portal do Paciente
 
 No Portal, você pode:
 • Consultar e atualizar seus dados cadastrais  
@@ -2356,56 +2373,55 @@ acesse o Portal e selecione a opção **“Esqueci minha senha”**.
 
 As instruções para redefinição serão enviadas automaticamente para o e-mail cadastrado.`;
 
-try {
-  await setState(phone, "MAIN");
+    try {
+      await setState(phone, "MAIN");
 
-  await sendText({
-    to: phone,
-    body: `✅ ${msgOk}\n\n${ORIENTACOES}\n\n${PORTAL_INFO}`,
-    phoneNumberIdFallback,
-  });
+      await sendText({
+        to: phone,
+        body: `✅ ${msgOk}\n\n${ORIENTACOES}\n\n${PORTAL_INFO}`,
+        phoneNumberIdFallback,
+      });
 
-  if (PORTAL_URL) {
-    await sendText({
-      to: phone,
-      body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
-      phoneNumberIdFallback,
-    });
+      if (PORTAL_URL) {
+        await sendText({
+          to: phone,
+          body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
+          phoneNumberIdFallback,
+        });
+      }
+
+      await sendText({
+        to: phone,
+        body:
+          `🔐 Senha / Acesso\n` +
+          `A senha é enviada por e-mail (conforme cadastro no Portal).\n` +
+          `Se precisar, posso reenviar agora por aqui.`,
+        phoneNumberIdFallback,
+      });
+
+      await sendButtons({
+        to: phone,
+        body: "Senha do Portal do Paciente:",
+        buttons: [
+          { id: "PWD_CRIAR", title: "Criar senha" },
+          { id: "PWD_MUDAR", title: "Mudar senha" },
+          { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
+        ],
+        phoneNumberIdFallback,
+      });
+    } catch (e) {
+      console.log("[POST-CONFIRM] falhou ao enviar mensagens", { err: String(e?.message || e) });
+
+      await sendText({
+        to: phone,
+        body: "✅ Agendamento confirmado. Se precisar, digite MENU para voltar.",
+        phoneNumberIdFallback,
+      });
+    }
+
+    return;
   }
 
-  await sendText({
-    to: phone,
-    body:
-      `🔐 Senha / Acesso\n` +
-      `A senha é enviada por e-mail (conforme cadastro no Portal).\n` +
-      `Se precisar, posso reenviar agora por aqui.`,
-    phoneNumberIdFallback,
-  });
-
-  await sendButtons({
-    to: phone,
-    body: "Senha do Portal do Paciente:",
-    buttons: [
-      { id: "PWD_CRIAR", title: "Criar senha" },
-      { id: "PWD_MUDAR", title: "Mudar senha" },
-      { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
-    ],
-    phoneNumberIdFallback,
-  });
-
-} catch (e) {
-  console.log("[POST-CONFIRM] falhou ao enviar mensagens", { err: String(e?.message || e) });
-
-  await sendText({
-    to: phone,
-    body: "✅ Agendamento confirmado. Se precisar, digite MENU para voltar.",
-    phoneNumberIdFallback,
-  });
-}
-
-return;
-
-  // Se mandou qualquer coisa diferente
   await sendButtons({
     to: phone,
     body: "Use os botões abaixo:",
