@@ -494,21 +494,11 @@ async function versaSolicitarSenha({ login, dtNascISO }) {
     return { ok: false, stage: "missing_login_or_dtnasc" };
   }
 
-  // ✅ Primeiro tenta o que o log mostrou que existe: dtNasc (DateTime)
-  const attempts = [
-    // dtNasc precisa ser parseável pelo ASP.NET → ISO é o mais seguro
-    { param: "dtNasc", value: dataISO },
-    { param: "dtNasc", value: `${dataISO}T00:00:00` },
-    { param: "dtNasc", value: `${dataISO}T00:00:00-03:00` },
-
-    // (mantém as variações antigas, mas elas são 404 nesse tenant)
-    { param: "dataNascimento", value: dataBR },
-    { param: "dtNascimento", value: dataBR },
-    { param: "dataNasc", value: dataBR },
-
-    // dtnasc cai na mesma action (case-insensitive) → também tem que ser ISO
-    { param: "dtnasc", value: dataISO },
-  ];
+// ✅ Regra confirmada pela Versatilis:
+// parâmetro dtNasc no formato YYYY-MM-DD
+const attempts = [
+  { param: "dtNasc", value: dataISO },
+];
 
   for (const a of attempts) {
     const path =
@@ -2383,10 +2373,29 @@ try {
     });
   }
 
+  await sendText({
+    to: phone,
+    body:
+      `🔐 Senha / Acesso\n` +
+      `A senha é enviada por e-mail (conforme cadastro no Portal).\n` +
+      `Se precisar, posso reenviar agora por aqui.`,
+    phoneNumberIdFallback,
+  });
+
+  await sendButtons({
+    to: phone,
+    body: "Senha do Portal do Paciente:",
+    buttons: [
+      { id: "PWD_CRIAR", title: "Criar senha" },
+      { id: "PWD_MUDAR", title: "Mudar senha" },
+      { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
+    ],
+    phoneNumberIdFallback,
+  });
+
 } catch (e) {
   console.log("[POST-CONFIRM] falhou ao enviar mensagens", { err: String(e?.message || e) });
 
-  // fallback mínimo: tenta ao menos avisar o paciente
   await sendText({
     to: phone,
     body: "✅ Agendamento confirmado. Se precisar, digite MENU para voltar.",
@@ -2395,7 +2404,6 @@ try {
 }
 
 return;
-  }
 
   // Se mandou qualquer coisa diferente
   await sendButtons({
