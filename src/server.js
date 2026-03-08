@@ -1,10 +1,55 @@
 import express from "express";
 import crypto from "crypto";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { getRedisClient } from "./redis.js";
+
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: "too many requests" },
+});
+
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: "too many webhook requests" },
+});
+
+const debugLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: "too many debug requests" },
+});
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(express.json({ limit: "256kb" }));
+app.use(globalLimiter);
+app.use("/webhook", webhookLimiter);
+app.use("/debug", debugLimiter);
+
+app.use(helmet({
+  contentSecurityPolicy: false, // API backend, sem necessidade de CSP rígida aqui
+  crossOriginEmbedderPolicy: false,
+}));
+
+app.disable("x-powered-by");
+
+app.use(express.json({
+  limit: "256kb",
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
+}));
+
+app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
 function md5Hex(s) {
   return crypto.createHash("md5").update(String(s), "utf8").digest("hex");
@@ -17,8 +62,6 @@ function generateTempPassword(len = 10) {
   for (let i = 0; i < len; i++) out += alphabet[bytes[i] % alphabet.length];
   return out;
 }
-
-import { getRedisClient } from "./redis.js";
 
 // ✅ Redis singleton (uma conexão por processo)
 const redis = getRedisClient();
@@ -245,11 +288,11 @@ async function versatilisGetToken() {
     grant_type: "password",
   });
 
-  const r = await fetch(`${VERSA_BASE}/Token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
+   const r = await fetchWithTimeout(`${VERSA_BASE}/Token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    }, 15000);
 
   const json = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -341,7 +384,7 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, t
 
   const safeQuery = sanitizeQueryForLog(query);
 
-  const r = await fetch(url, {
+  const r = await fetchWithTimeout(url, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -350,8 +393,8 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, t
       ...(extraHeaders ? extraHeaders : {}),
     },
     body: jsonBody ? JSON.stringify(jsonBody) : undefined,
-  });
-
+    }, 15000);
+  
   const ms = Date.now() - t0;
   const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
   const contentType = r.headers.get("content-type") || null;
@@ -420,13 +463,13 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, t
 
   if (r.status === 405 && canLog("DEBUG")) {
     try {
-      const ro = await fetch(url, {
+     const ro = await fetchWithTimeout(url, {
         method: "OPTIONS",
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
         },
-      });
+      }, 10000);
       const allow2 = ro.headers.get("allow") || ro.headers.get("Allow") || null;
 
       log("DEBUG", "VERSATILIS_OPTIONS", {
@@ -1134,6 +1177,23 @@ function pickPhoneNumberId(fallbackFromWebhook) {
   );
 }
 
+function requireEnv(name) {
+  const value = String(process.env[name] || "").trim();
+  if (!value) {
+    throw new Error(`ENV obrigatória ausente: ${name}`);
+  }
+  return value;
+}
+
+requireEnv("VERIFY_TOKEN");
+requireEnv("WHATSAPP_TOKEN");
+requireEnv("VERSATILIS_BASE");
+requireEnv("VERSATILIS_USER");
+requireEnv("VERSATILIS_PASS");
+requireEnv("UPSTASH_REDIS_REST_URL");
+requireEnv("UPSTASH_REDIS_REST_TOKEN");
+requireEnv("APP_SECRET");
+
 opLog("ENV_CHECK", {
   hasToken: !!pickToken(),
   hasVerifyToken: !!process.env.VERIFY_TOKEN,
@@ -1669,6 +1729,25 @@ function bookingConfirmKey(phone, codHorario) {
 
 const inboundLocks = new Map();
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") {
+      throw new Error(`Fetch timeout after ${timeoutMs}ms`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function withPhoneLock(phone, fn) {
   const key = String(phone || "").replace(/\D+/g, "");
   const prev = inboundLocks.get(key) || Promise.resolve();
@@ -1814,7 +1893,7 @@ async function getDtNascISOAuto(phone) {
 
   // salva em sessão para próximas chamadas
     if (dt3) {
-    await updateSession(phone, (sess) => {
+    
       sess.portal = sess.portal || {};
       sess.portal.profile = sess.portal.profile || {};
       sess.portal.profile.DtNasc = prof.data?.DtNasc || sess.portal.profile.DtNasc;
@@ -2035,7 +2114,7 @@ async function sendText({ to, body, phoneNumberIdFallback }) {
   const config = getSendConfig(phoneNumberIdFallback);
   if (!config) return false;
 
-  const resp = await fetch(config.url, {
+  const resp = await fetchWithTimeout(config.url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.token}`,
@@ -2046,7 +2125,7 @@ async function sendText({ to, body, phoneNumberIdFallback }) {
       to,
       text: { body },
     }),
-  });
+  }, 15000);
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
@@ -2069,7 +2148,7 @@ async function sendButtons({ to, body, buttons, phoneNumberIdFallback }) {
   const config = getSendConfig(phoneNumberIdFallback);
   if (!config) return false;
 
-  const resp = await fetch(config.url, {
+  const resp = await fetchWithTimeout(config.url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.token}`,
@@ -2093,7 +2172,7 @@ async function sendButtons({ to, body, buttons, phoneNumberIdFallback }) {
         },
       },
     }),
-  });
+  }, 15000);
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
@@ -2467,7 +2546,7 @@ ${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
 
 const chosenKey = (upper === "PL_USE_MED") ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
 
-const s = await updateSession(phone, (sess) => {
+const s = 
   sess.booking = sess.booking || {};
   sess.booking.planoKey = chosenKey;
 
@@ -2523,7 +2602,7 @@ if (upper.startsWith("D_")) {
   const out = await fetchSlotsDoDia({ codColaborador, codUsuario, isoDate });
   const slots = out.ok ? out.slots : [];
 
-  await updateSession(phone, (sess) => {
+  
     sess.booking = {
       ...(sess.booking || {}),
       codColaborador,
@@ -2567,7 +2646,7 @@ if (ctx === "SLOTS") {
   // Ver mais (PAGE_n)
   if (upper.startsWith("PAGE_")) {
     const n = Number(raw.split("_")[1]);
-    const s = await updateSession(phone, (sess) => {
+    const s = 
       sess.booking = sess.booking || {};
       sess.booking.pageIndex = Number.isFinite(n) && n >= 0 ? n : 0;
     });
@@ -2590,7 +2669,7 @@ if (ctx === "SLOTS") {
     const codColaborador = s?.booking?.codColaborador ?? COD_COLABORADOR;
     const codUsuario = s?.booking?.codUsuario;
 
-    await updateSession(phone, (sess) => {
+    
       if (sess?.booking) {
         sess.booking.isoDate = null;
         sess.booking.slots = [];
@@ -2657,7 +2736,7 @@ if (ctx === "WAIT_CONFIRM") {
   const s = await ensureSession(phone);
   const slots = s?.booking?.slots || [];
 
-  await updateSession(phone, (sess) => {
+  
     delete sess.pending;
     sess.state = "SLOTS";
   });
@@ -2695,7 +2774,7 @@ if (upper === "CONFIRMAR") {
  if (!codHorario || Number.isNaN(codHorario)) {
   const slots = s?.booking?.slots || [];
 
-  await updateSession(phone, (sess) => {
+  
     delete sess.pending;
     sess.state = "SLOTS";
   });
@@ -2727,7 +2806,7 @@ if (upper === "CONFIRMAR") {
     const chosen = (s?.booking?.slots || []).find((x) => Number(x.codHorario) === codHorario);
 
     if (!isoDate || !chosen?.hhmm || !isSlotAllowed(isoDate, chosen.hhmm)) {
-      await updateSession(phone, (sess) => {
+      
         delete sess.pending;
         sess.state = "SLOTS";
       });
@@ -3106,18 +3185,24 @@ if (ctx === "WZ_CPF") {
     codUsuario: codUsuario || null,
   });
 
-  if (!codUsuario) {
-  await updateSession(phone, (sess) => {
-    sess.portal = sess.portal || {};
-    sess.portal.form = sess.portal.form || {};
-    sess.portal.form.cpf = cpf;
-    sess.portal.exists = false;
-    sess.portal.codUsuario = null;
-  });
-
-  await sendAndSetState(phone, MSG.ASK_NOME, "WZ_NOME", phoneNumberIdFallback);
-  return;
-}
+    if (!codUsuario) {
+      const prefill = `Olá! Preciso de ajuda no agendamento.
+  
+  Paciente: ${phone}
+  CPF: ${cpf}
+  Motivo: paciente sem cadastro localizável automaticamente no sistema.`;
+  
+      const link = makeWaLink(prefill);
+  
+      await sendText({
+        to: phone,
+        body: `⚠️ Não consegui localizar seu cadastro automaticamente.\n\n✅ Para prosseguir com segurança, fale com nossa equipe:\n${link}`,
+        phoneNumberIdFallback,
+      });
+  
+      await setState(phone, "MAIN");
+      return;
+    }
 
 await updateSession(phone, (sess) => {
   sess.portal = sess.portal || {};
@@ -3777,6 +3862,14 @@ app.get("/webhook", (req, res) => {
 // =======================
 app.post("/webhook", async (req, res) => {
   try {
+    if (!isValidMetaSignature(req)) {
+      audit("WEBHOOK_INVALID_SIGNATURE", {
+        ip: req.ip || null,
+        hasSignatureHeader: !!req.headers["x-hub-signature-256"],
+      });
+      return res.sendStatus(403);
+    }
+
     res.sendStatus(200);
 
     const body = req.body;
@@ -3797,6 +3890,14 @@ app.post("/webhook", async (req, res) => {
       msg.interactive?.button_reply?.id ||
       ""
     ).trim();
+    
+    if (!text) {
+      audit("WEBHOOK_IGNORED_EMPTY_MESSAGE", {
+        traceId,
+        phoneMasked: maskPhone(from),
+      });
+      return;
+    }
 
     const phoneNumberIdFallback = value?.metadata?.phone_number_id || "";
     const currentState = (await getState(from)) || "(none)";
@@ -3830,7 +3931,9 @@ app.post("/webhook", async (req, res) => {
 function isDebugEnabled() {
   const enabled = String(process.env.ENABLE_DEBUG || "").trim() === "1";
   const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
-  return enabled && nodeEnv !== "production";
+
+  // debug só fora de produção e explicitamente habilitado
+  return enabled && (nodeEnv === "development" || nodeEnv === "test");
 }
 
 function requireDebugEnabled(req, res, next) {
@@ -3838,12 +3941,36 @@ function requireDebugEnabled(req, res, next) {
   next();
 }
 
+function safeEqual(a, b) {
+  const aa = Buffer.from(String(a || ""), "utf8");
+  const bb = Buffer.from(String(b || ""), "utf8");
+
+  if (aa.length !== bb.length) return false;
+  return crypto.timingSafeEqual(aa, bb);
+}
+
+function isValidMetaSignature(req) {
+  const appSecret = String(process.env.APP_SECRET || "").trim();
+  const signatureHeader = req.headers["x-hub-signature-256"];
+
+  if (!appSecret || !signatureHeader || !req.rawBody) return false;
+
+  const expected =
+    "sha256=" +
+    crypto
+      .createHmac("sha256", appSecret)
+      .update(req.rawBody)
+      .digest("hex");
+
+  return safeEqual(signatureHeader, expected);
+}
+
 function requireDebugKey(req, res, next) {
   const DEBUG_KEY = process.env.DEBUG_KEY;
   const providedRaw = req.query.k ?? req.headers["x-debug-key"];
   const provided = Array.isArray(providedRaw) ? providedRaw[0] : providedRaw;
 
-  if (!DEBUG_KEY || String(provided || "") !== String(DEBUG_KEY)) {
+  if (!DEBUG_KEY || !safeEqual(provided, DEBUG_KEY)) {
     return res.status(403).json({ ok: false, error: "forbidden (missing/invalid debug key)" });
   }
 
@@ -3861,9 +3988,17 @@ function handleDebugRouteError(routeName, e, res, req) {
   return res.status(500).json({
     ok: false,
     routeName,
-    error: String(e?.message || e),
+    error: "internal debug route error",
   });
 }
+
+app.use("/debug", (req, res, next) => {
+  const allowed = new Set(["GET", "POST"]);
+  if (!allowed.has(req.method)) {
+    return res.status(405).json({ ok: false, error: "method not allowed" });
+  }
+  next();
+});
 
 // Aplica proteção em TODAS as rotas que começam com /debug
 app.use("/debug", requireDebugEnabled, requireDebugKey);
@@ -3957,6 +4092,10 @@ if (!payload.CodHorario || Number.isNaN(payload.CodHorario)) {
   return res.status(400).json({ ok: false, error: "CodHorario é obrigatório (number)" });
 }
 
+if (!payload.CodUsuario || Number.isNaN(payload.CodUsuario)) {
+  return res.status(400).json({ ok: false, error: "CodUsuario é obrigatório (number)" });
+}
+
     // Opcionais (só envia se vierem)
     if (p.NumCarteirinha) payload.NumCarteirinha = String(p.NumCarteirinha);
     if (p.CodProcedimento != null && p.CodProcedimento !== "") payload.CodProcedimento = Number(p.CodProcedimento);
@@ -4037,7 +4176,13 @@ app.get("/debug/versatilis/codusuario", async (req, res) => {
     const out = await (async () => {
       const token = await versatilisGetToken();
       const url = `${VERSA_BASE}${path}`;
-      const r = await fetch(url, { method: "OPTIONS", headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      const r = await fetchWithTimeout(url, {
+        method: "OPTIONS",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      }, 10000);
       return { ok: r.ok, status: r.status, allow: r.headers.get("allow") || r.headers.get("Allow") || null };
     })();
     return res.json(out);
