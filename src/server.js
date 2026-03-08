@@ -552,13 +552,24 @@ async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
     email = prof.ok ? cleanStr(prof.data?.Email) : "";
   }
 
-  // 3) ordem de tentativas de login (mantendo dtNasc ISO)
-  const logins = [
-    isValidEmail(email) ? email : null,              // ✅ melhor tentativa
-    codUsuario ? String(codUsuario) : null,          // ✅ muito aceito em Login endpoints
-    cpf,                                             // cpf sem máscara
-    cpfMask || null,                                 // cpf com máscara
-  ].filter(Boolean);
+// 3) ordem de tentativas de login (mantendo dtNasc ISO)
+
+let codUsuarioPad = null;
+
+if (codUsuario) {
+  const codStr = String(codUsuario);
+
+  // gera versão com zeros à esquerda (mesmo padrão do portal)
+  codUsuarioPad = codStr.padStart(10, "0");
+}
+
+const logins = [
+  isValidEmail(email) ? email : null,   // email
+  codUsuarioPad,                        // codUsuario com zeros (ex: 0000000019)
+  codUsuario ? String(codUsuario) : null, // codUsuario puro
+  cpf,                                  // cpf sem máscara
+  cpfMask || null,                      // cpf com máscara
+].filter(Boolean);
 
   for (const lg of logins) {
     const out = await versaSolicitarSenha({ login: lg, dtNascISO });
