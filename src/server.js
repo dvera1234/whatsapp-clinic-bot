@@ -52,6 +52,10 @@ function safeJson(obj) {
   }
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
 // rate limit de logs repetidos (em memória) — bom p/ 404 de agenda
 // key -> { lastMs, count }
 const _logRL = new Map();
@@ -202,12 +206,68 @@ async function versatilisGetToken() {
   return versaToken;
 }
 
-async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } = {}) {
+function maskLoginValue(v) {
+  const s = String(v || "").trim();
+  if (!s) return "";
+
+  if (s.includes("@")) {
+    const [user, domain] = s.split("@");
+    const u = user.length <= 2 ? "***" : `${user.slice(0, 2)}***`;
+    return `${u}@${domain || "***"}`;
+  }
+
+  const digits = s.replace(/\D+/g, "");
+  if (digits.length >= 6) {
+    return `${digits.slice(0, 2)}***${digits.slice(-2)}`;
+  }
+
+  return "***";
+}
+
+function sanitizeQueryForLog(queryObj) {
+  if (!queryObj || typeof queryObj !== "object") return null;
+
+  const out = {};
+  for (const [k, v] of Object.entries(queryObj)) {
+    const key = String(k || "").toLowerCase();
+
+    if (key === "login") {
+      out[k] = maskLoginValue(v);
+      continue;
+    }
+
+    if (key === "dtnasc" || key === "datanascimento" || key === "usercpf" || key === "cpf") {
+      out[k] = "***";
+      continue;
+    }
+
+    out[k] = v;
+  }
+
+  return out;
+}
+
+function mergeTraceMeta(base, extra) {
+  return {
+    ...(base || {}),
+    ...(extra || {}),
+  };
+}
+
+async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, traceMeta } = {}) {
   const token = await versatilisGetToken();
 
   const rid = crypto.randomUUID();
   const url = `${VERSA_BASE}${path}`;
   const t0 = Date.now();
+
+  let query = null;
+  try {
+    const u = new URL(url);
+    query = Object.fromEntries(u.searchParams.entries());
+  } catch {}
+
+  const safeQuery = sanitizeQueryForLog(query);
 
   const r = await fetch(url, {
     method,
@@ -222,50 +282,63 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders } 
 
   const ms = Date.now() - t0;
   const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
-
   const contentType = r.headers.get("content-type") || null;
 
-const text = await r.text().catch(() => "");
-const textLen = text ? text.length : 0;
+  const text = await r.text().catch(() => "");
+  const textLen = text ? text.length : 0;
 
-let data;
-try {
-  data = text ? JSON.parse(text) : null;
-} catch {
-  data = text; // pode ser HTML ou texto puro
-}
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
 
-const isNoDates404 =
-  r.status === 404 &&
-  typeof data === "string" &&
-  data.toLowerCase().includes("não foram encontradas datas disponiveis");
+  const isNoDates404 =
+    r.status === 404 &&
+    typeof data === "string" &&
+    data.toLowerCase().includes("não foram encontradas datas disponiveis");
 
-const baseLog = { rid, method, path, status: r.status, ms };
-
-if (r.ok) {
-  log("INFO", "VERSATILIS", baseLog);
-} else if (isNoDates404) {
-  logRateLimited("DEBUG", `nodates:${path}`, "VERSATILIS_NO_DATES", baseLog, 60_000);
-} else {
-  log("WARN", "VERSATILIS_FAIL", { ...baseLog, allow, contentType, textLen });
-}
-
-if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
-  const preview =
-    typeof data === "string"
-      ? data.slice(0, 500)
-      : data == null
-      ? null
-      : JSON.stringify(data).slice(0, 500);
-
-  log("DEBUG", "VERSATILIS_BODY", {
+  const baseLog = {
+    ts: nowIso(),
     rid,
+    method,
+    path,
     status: r.status,
-    contentType,
-    textLen,
-    preview: preview || "[empty-body]",
-  });
-}
+    ms,
+    query: safeQuery,
+    hasBody: !!jsonBody,
+    ...(traceMeta ? traceMeta : {}),
+  };
+
+  if (r.ok) {
+    log("INFO", "VERSATILIS", baseLog);
+  } else if (isNoDates404) {
+    logRateLimited("DEBUG", `nodates:${path}`, "VERSATILIS_NO_DATES", baseLog, 60_000);
+  } else {
+    log("WARN", "VERSATILIS_FAIL", {
+      ...baseLog,
+      allow,
+      contentType,
+      textLen,
+    });
+  }
+
+  if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
+    const preview =
+      typeof data === "string"
+        ? data.slice(0, 500)
+        : data == null
+        ? null
+        : JSON.stringify(data).slice(0, 500);
+
+    log("DEBUG", "VERSATILIS_BODY", {
+      ...baseLog,
+      contentType,
+      textLen,
+      preview: preview || "[empty-body]",
+    });
+  }
 
   if (r.status === 405 && canLog("DEBUG")) {
     try {
@@ -277,9 +350,17 @@ if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
         },
       });
       const allow2 = ro.headers.get("allow") || ro.headers.get("Allow") || null;
-      log("DEBUG", "VERSATILIS_OPTIONS", { rid, path, status: ro.status, allow: allow2 });
+
+      log("DEBUG", "VERSATILIS_OPTIONS", {
+        ...baseLog,
+        optionsStatus: ro.status,
+        allow: allow2,
+      });
     } catch (e) {
-      log("DEBUG", "VERSATILIS_OPTIONS", { rid, path, error: String(e?.message || e) });
+      log("DEBUG", "VERSATILIS_OPTIONS", {
+        ...baseLog,
+        error: String(e?.message || e),
+      });
     }
   }
 
@@ -436,7 +517,15 @@ async function versaGetDadosUsuarioPorCodigo(codUsuario) {
   const id = Number(codUsuario);
   if (!Number.isFinite(id) || id <= 0) return { ok: false, data: null };
 
-  const out = await versatilisFetch(`/api/Login/DadosUsuarioPorCodigo?CodUsuario=${encodeURIComponent(id)}`);
+  const out = await versatilisFetch(
+  `/api/Login/DadosUsuarioPorCodigo?CodUsuario=${encodeURIComponent(id)}`,
+  {
+    traceMeta: {
+      flow: "DADOS_USUARIO_CODIGO",
+      codUsuario: id
+    }
+  }
+);
   if (!out.ok || !out.data) return { ok: false, data: null };
 
   return { ok: true, data: out.data };
@@ -484,41 +573,59 @@ function previewOutData(out) {
 
 // ✅ FUNÇÃO QUE ESTAVA FALTANDO (ou foi quebrada)
 // Tudo que estava “solto” agora fica aqui dentro.
-async function versaSolicitarSenha({ login, dtNascISO }) {
+async function versaSolicitarSenha({ login, dtNascISO, traceMeta = {} }) {
   const lg = String(login || "").trim();
 
-  const dataBR = formatBRDateFromISO(dtNascISO); // DD/MM/AAAA
-  const dataISO = String(dtNascISO || "").trim(); // YYYY-MM-DD
+  const dataBR = formatBRDateFromISO(dtNascISO);
+  const dataISO = String(dtNascISO || "").trim();
 
   if (!lg || !dataBR || !dataISO) {
     return { ok: false, stage: "missing_login_or_dtnasc" };
   }
 
-// ✅ Regra confirmada pela Versatilis:
-// parâmetro dtNasc no formato YYYY-MM-DD
-const attempts = [
-  { param: "dtNasc", value: dataISO },
-];
+  const attempts = [
+    { param: "dtNasc", value: dataISO },
+  ];
 
   for (const a of attempts) {
     const path =
       `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
       `&${a.param}=${encodeURIComponent(a.value)}`;
 
-    const out = await versatilisFetch(path, { method: "GET" });
+    const out = await versatilisFetch(path, {
+      method: "GET",
+      traceMeta: mergeTraceMeta(traceMeta, {
+        flow: "SOLICITAR_SENHA",
+        loginMasked: maskLoginValue(lg),
+        dtNascMasked: "***",
+      }),
+    });
 
-console.log("[VERSA] solicitar senha try", {
-  method: "GET",
-  path: "/api/Login/SolicitarSenha",
-  param: a.param,
-  ok: out.ok,
-  status: out.status,
-  rid: out.rid,
-  preview: out.ok ? null : (previewOutData(out) || "[empty-or-nonjson-body]"),
-  allow: out.allow || null,
-});
+    console.log("[VERSA] solicitar senha try", {
+      ts: nowIso(),
+      method: "GET",
+      path: "/api/Login/SolicitarSenha",
+      param: a.param,
+      loginMasked: maskLoginValue(lg),
+      ok: out.ok,
+      status: out.status,
+      rid: out.rid,
+      preview: out.ok ? null : (previewOutData(out) || "[empty-or-nonjson-body]"),
+      allow: out.allow || null,
+      ...(traceMeta || {}),
+    });
 
-    if (out.ok) return { ok: true, out, usedParam: a.param, usedValue: a.value };
+    if (out.ok) {
+  return {
+    ok: true,
+    out,
+    usedParam: a.param,
+    usedValue: a.value,
+    traceMeta: mergeTraceMeta(traceMeta, {
+      loginMasked: maskLoginValue(lg),
+    }),
+  };
+}
 
     if (![404, 400, 422].includes(out.status)) {
       return { ok: false, stage: "http_error", out, usedParam: a.param, usedValue: a.value };
@@ -534,58 +641,87 @@ console.log("[VERSA] solicitar senha try", {
   };
 }
 
-async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO) {
+function detectLoginKind(login, cpfDigits, cpfMask, codUsuario, codUsuarioPad, email) {
+  const lg = String(login || "");
+
+  if (isValidEmail(lg)) return "email";
+  if (codUsuarioPad && lg === String(codUsuarioPad)) return "codUsuarioPad";
+  if (codUsuario && lg === String(codUsuario)) return "codUsuario";
+  if (cpfDigits && lg === String(cpfDigits)) return "cpf";
+  if (cpfMask && lg === String(cpfMask)) return "cpfMask";
+
+  return "unknown";
+}
+
+async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO, traceMeta = {}) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return { ok: false, stage: "cpf_invalid" };
 
   const cpfMask = formatCPFMask(cpf);
 
-  // 1) tenta descobrir CodUsuario (mais “aceito” em muitos tenants)
   const codUsuario =
     (await versaFindCodUsuarioByCPF(cpf)) ||
     (await versaFindCodUsuarioByDadosCPF(cpf));
 
-  // 2) se achar CodUsuario, tenta pegar e-mail do cadastro
   let email = "";
   if (codUsuario) {
     const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
     email = prof.ok ? cleanStr(prof.data?.Email) : "";
   }
 
-// 3) ordem de tentativas de login (mantendo dtNasc ISO)
+  let codUsuarioPad = null;
+  if (codUsuario) {
+    const codStr = String(codUsuario);
+    codUsuarioPad = codStr.padStart(10, "0");
+  }
 
-let codUsuarioPad = null;
+  const localTraceMeta = mergeTraceMeta(traceMeta, {
+    cpfMasked: "***",
+    codUsuario: codUsuario || null,
+    codUsuarioPad: codUsuarioPad || null,
+  });
 
-if (codUsuario) {
-  const codStr = String(codUsuario);
-
-  // gera versão com zeros à esquerda (mesmo padrão do portal)
-  codUsuarioPad = codStr.padStart(10, "0");
-}
-
-const logins = [
-  codUsuarioPad,                          // login real do portal (ex: 0000000019)
-  codUsuario ? String(codUsuario) : null, // codUsuario puro
-  isValidEmail(email) ? email : null,     // email
-  cpf,                                    // cpf sem máscara
-  cpfMask || null,                        // cpf com máscara
-].filter(Boolean);
+  const logins = [
+    codUsuarioPad,
+    codUsuario ? String(codUsuario) : null,
+    isValidEmail(email) ? email : null,
+    cpf,
+    cpfMask || null,
+  ].filter(Boolean);
 
   for (const lg of logins) {
-    const out = await versaSolicitarSenha({ login: lg, dtNascISO });
+    const loginKind = detectLoginKind(lg, cpf, cpfMask, codUsuario, codUsuarioPad, email);
 
-    console.log("[VERSA] solicitar senha login try", {
-      loginKind: isValidEmail(lg) ? "email" : (String(lg).length <= 6 ? "codUsuario" : "cpf"),
-      ok: out.ok,
-      stage: out.stage,
-      usedLogin: isValidEmail(lg) ? "email" : "masked",
-      status: out?.out?.status,
-      rid: out?.out?.rid,
+    const out = await versaSolicitarSenha({
+      login: lg,
+      dtNascISO,
+      traceMeta: mergeTraceMeta(localTraceMeta, {
+        loginKind,
+      }),
     });
 
-    if (out.ok) return out;
+    console.log("[VERSA] solicitar senha login try", {
+      ts: nowIso(),
+      loginKind,
+      loginMasked: maskLoginValue(lg),
+      ok: out.ok,
+      stage: out.stage,
+      status: out?.out?.status,
+      rid: out?.out?.rid,
+      ...(traceMeta || {}),
+    });
 
-    // se vier algo diferente de 400/404/422/500, para e devolve
+    if (out.ok) {
+  return {
+    ...out,
+    loginKind,
+    traceMeta: mergeTraceMeta(out.traceMeta, {
+      loginKind,
+      loginMasked: maskLoginValue(lg),
+    }),
+  };
+}
+
     if (out?.out?.status && ![400, 404, 422, 500].includes(out.out.status)) {
       return out;
     }
@@ -1816,12 +1952,21 @@ async function resetToMain(phone, phoneNumberIdFallback) {
 // ROTEADOR COM ESTADO MÍNIMO
 // =======================
 async function handleInbound(phone, inboundText, phoneNumberIdFallback) {
-  // marca atividade do usuário (isso é o que conta como "silêncio")
   await touchUser(phone, phoneNumberIdFallback);
+
+  const traceId = crypto.randomUUID();
 
   const raw = normalizeSpaces(inboundText);
   let upper = raw.toUpperCase();
   const digits = onlyDigits(raw);
+
+  console.log("[FLOW]", {
+    ts: nowIso(),
+    traceId,
+    phone: maskPhone(phone),
+    state: (await getState(phone)) || "MAIN",
+    inboundKind: digits ? "digits-or-button" : "text",
+  });
 
  // =======================
 // RESET GLOBAL (funciona em qualquer etapa) — robusto
@@ -1948,8 +2093,39 @@ Motivo: não consegui obter a data de nascimento automaticamente para disparar o
   }
 
   // ✅ chama versão robusta (corrige o 400)
-  const out = await versaSolicitarSenhaPorCPF(cpf, dtNascISO);
+ const out = await versaSolicitarSenhaPorCPF(cpf, dtNascISO, {
+  traceId,
+  tracePhone: maskPhone(phone),
+  entryPoint: upper,
+  currentState: ctx,
+});
 
+console.log("[AUDIT_RESET_FLOW]", {
+  ts: nowIso(),
+  traceId,
+  tracePhone: maskPhone(phone),
+  entryPoint: upper,
+  currentState: ctx,
+  cpfMasked: "***",
+  dtNascMasked: "***",
+  apiOk: !!out?.ok,
+  apiStage: out?.stage || null,
+  httpStatus: out?.out?.status || null,
+  rid: out?.out?.rid || null,
+  usedParam: out?.usedParam || null,
+  loginKindWinner:
+    out?.traceMeta?.loginKind ||
+    out?.loginKind ||
+    null,
+  loginValueMasked:
+    out?.traceMeta?.loginMasked ||
+    null,
+  note:
+    out?.ok
+      ? "HTTP 200/OK da API nao comprova envio real do email nem reset funcional."
+      : "Fluxo de reset nao concluiu com sucesso tecnico.",
+});
+  
   if (!out.ok) {
     const prefill = `Olá! Não estou recebendo o e-mail de redefinição de senha do Portal do Paciente.
 
@@ -2344,6 +2520,20 @@ if (ctx === "WAIT_CONFIRM") {
       jsonBody: payload,
     });
 
+    audit("AUDIT_BOOKING_CONFIRM", {
+  traceId,
+  tracePhone: maskPhone(phone),
+  codUsuario: payload.CodUsuario || null,
+  codHorario: payload.CodHorario || null,
+  codPlano: payload.CodPlano || null,
+  codColaborador: payload.CodColaborador || null,
+  apiOk: !!out?.ok,
+  httpStatus: out?.status || null,
+  rid: out?.rid || null,
+  isoDate: s?.booking?.isoDate || null,
+  hhmm: chosen?.hhmm || null,
+});
+    
     if (s) delete s.pending;
     await saveSession(phone, s);
 
@@ -3180,9 +3370,12 @@ app.post("/webhook", async (req, res) => {
 
     const phoneNumberIdFallback = value?.metadata?.phone_number_id || "";
 
-console.log("MSG FROM:", maskPhone(from));
-console.log("MSG RECEIVED: [hidden]");
-console.log("STATE:", (await getState(from)) || "(none)");
+console.log("[WEBHOOK_IN]", {
+  ts: nowIso(),
+  from: maskPhone(from),
+  state: (await getState(from)) || "(none)",
+  messageHidden: true,
+});
 
     await handleInbound(from, text, phoneNumberIdFallback);
   } catch (err) {
