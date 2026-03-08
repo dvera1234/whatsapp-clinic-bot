@@ -67,7 +67,7 @@ function audit(event, payload = {}) {
 }
 
 function techLog(event, payload = {}) {
-  if (!canLog("INFO")) return;
+  if (!canLog("WARN")) return;
   console.log(`[TECH] ${safeJson(baseAuditPayload(event, payload))}`);
 }
 
@@ -289,6 +289,7 @@ function mergeTraceMeta(base, extra) {
 
 function auditOutcome(payload = {}) {
   return {
+    ...payload,
     traceId: payload.traceId || null,
     tracePhone: payload.tracePhone || null,
     rid: payload.rid || null,
@@ -297,7 +298,6 @@ function auditOutcome(payload = {}) {
     functionalResult: payload.functionalResult || null,
     patientFacingMessage: payload.patientFacingMessage || null,
     escalationRequired: !!payload.escalationRequired,
-    ...payload,
   };
 }
 
@@ -799,20 +799,30 @@ async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO, traceMeta = {}) {
 // =======================
 // REGRA 30 DIAS (RETORNO)
 // =======================
-async function versaHadAppointmentLast30Days(codUsuario) {
+async function versaHadAppointmentLast30Days(codUsuario, traceMeta = {}) {
   if (!codUsuario) return false;
 
   const out = await versatilisFetch(
-    `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(codUsuario)}`
+    `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(codUsuario)}`,
+    {
+      traceMeta: mergeTraceMeta(traceMeta, {
+        flow: "RETURN_CHECK_LAST_30_DAYS",
+        codUsuario: Number(codUsuario) || null,
+      }),
+    }
   );
 
   if (!out.ok || !Array.isArray(out.data)) {
-    audit("RETURN_CHECK_HISTORY_UNAVAILABLE", {
+    audit("RETURN_CHECK_HISTORY_UNAVAILABLE", auditOutcome({
+      ...traceMeta,
       codUsuario: Number(codUsuario) || null,
       technicalAccepted: !!out?.ok,
       httpStatus: out?.status || null,
       rid: out?.rid || null,
-    });
+      functionalResult: "RETURN_CHECK_UNAVAILABLE",
+      patientFacingMessage: null,
+      escalationRequired: false,
+    }));
     return false;
   }
 
@@ -822,7 +832,6 @@ async function versaHadAppointmentLast30Days(codUsuario) {
   for (const ag of out.data) {
     if (!ag?.Data) continue;
 
-    // Data vem no formato DD/MM/YYYY
     const parts = ag.Data.split("/");
     if (parts.length !== 3) continue;
 
@@ -832,18 +841,27 @@ async function versaHadAppointmentLast30Days(codUsuario) {
     if (!Number.isFinite(dateMs)) continue;
 
     if (now - dateMs <= THIRTY_DAYS_MS) {
-      audit("RETURN_CHECK_POSITIVE_LAST_30_DAYS", {
+      audit("RETURN_CHECK_POSITIVE_LAST_30_DAYS", auditOutcome({
+        ...traceMeta,
         codUsuario: Number(codUsuario) || null,
-      });
+        technicalAccepted: true,
+        functionalResult: "RETURN_CHECK_POSITIVE",
+        patientFacingMessage: null,
+        escalationRequired: false,
+      }));
       return true;
     }
   }
 
-  audit("RETURN_CHECK_NEGATIVE_LAST_30_DAYS", {
+  audit("RETURN_CHECK_NEGATIVE_LAST_30_DAYS", auditOutcome({
+    ...traceMeta,
     codUsuario: Number(codUsuario) || null,
     technicalAccepted: true,
+    functionalResult: "RETURN_CHECK_NEGATIVE",
+    patientFacingMessage: null,
+    escalationRequired: false,
     historyCount: out.data.length,
-  });
+  }));
 
   return false;
 }
@@ -895,7 +913,7 @@ function mergeComplementoWithUF(complementoUser, uf) {
   return `${base} | ${c}`;
 }
 
-async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
+async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {} }) {
   // form: { nome, cpf, dtNascISO, sexoOpt, celular, email, cep, endereco, numero, complemento, bairro, cidade, uf, planoKey }
   const planoKey = form.planoKey;
   const codPlano = resolveCodPlano(planoKey);
@@ -970,7 +988,12 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
 
   // 🔒 Bloqueio: não chama Versatilis com payload inválido
   if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.trim().length < 8) {
-    audit("PORTAL_UPSERT_BLOCKED_INVALID_PAYLOAD", {
+    audit("PORTAL_UPSERT_BLOCKED_INVALID_PAYLOAD", auditOutcome({
+      ...traceMeta,
+      technicalAccepted: false,
+      functionalResult: "PORTAL_UPSERT_BLOCKED_INVALID_PAYLOAD",
+      patientFacingMessage: null,
+      escalationRequired: true,
       hasForm: !!form,
       formKeys: form ? Object.keys(form).sort() : [],
       formShape: form
@@ -986,7 +1009,7 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
           )
         : {},
       missingFields: empties,
-    });
+    }));
 
     return {
       ok: false,
@@ -1019,6 +1042,11 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
     out = await versatilisFetch(route.path, {
       method: route.method,
       jsonBody: payload,
+      traceMeta: mergeTraceMeta(traceMeta, {
+        flow: "PORTAL_USER_UPDATE",
+        codUsuario: Number(existsCodUsuario),
+        cpfMasked: "***",
+      }),
     });
 
     if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
@@ -1028,14 +1056,25 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form }) {
   }
 
   // ======= CADASTRO NOVO =======
-  out = await versatilisFetch("/api/Login/CadastrarUsuario", { method: "POST", jsonBody: payload });
+  out = await versatilisFetch("/api/Login/CadastrarUsuario", {
+  method: "POST",
+  jsonBody: payload,
+  traceMeta: mergeTraceMeta(traceMeta, {
+    flow: "PORTAL_USER_CREATE",
+    cpfMasked: "***",
+  }),
+});
 
-  audit("PORTAL_USER_CREATE_ATTEMPT", {
-    technicalAccepted: out.ok,
-    httpStatus: out.status,
-    rid: out.rid,
-    dataType: typeof out.data,
-  });
+ audit("PORTAL_USER_CREATE_ATTEMPT", auditOutcome({
+  ...traceMeta,
+  technicalAccepted: out.ok,
+  httpStatus: out.status,
+  rid: out.rid,
+  functionalResult: out.ok ? "PORTAL_USER_CREATED" : "PORTAL_USER_CREATE_FAILED",
+  patientFacingMessage: null,
+  escalationRequired: !out.ok,
+  dataType: typeof out.data,
+}));
 
   if (!out.ok) return { ok: false, stage: "cadastrar", out };
 
@@ -1545,6 +1584,7 @@ if (forcedPath && forcedMethod) {
     escalationRequired: true,
   });
   return null;
+}
 
 async function versaAttachPlanIfMissing({ codUsuario, profile, planKeyToEnsure }) {
   const plans = normalizePlanListFromProfile(profile);
@@ -2389,11 +2429,12 @@ await saveSession(phone, s);
     return;
   }
 
-  await finishWizardAndGoToDates({
+   await finishWizardAndGoToDates({
     phone,
     phoneNumberIdFallback,
     codUsuario,
     planoKeyFromWizard: chosenKey,
+    traceId,
   });
 
   return;
@@ -2773,16 +2814,16 @@ As instruções para redefinição serão enviadas automaticamente para o e-mail
         escalationRequired: false,
       }));
     } catch (e) {
-      errLog("POST_CONFIRM_MESSAGE_FAILURE", {
+      audit("BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE", auditOutcome({
         traceId,
         tracePhone: maskPhone(phone),
         rid: out?.rid || null,
         httpStatus: out?.status || null,
-        codUsuario: payload?.CodUsuario || null,
-        codHorario: payload?.CodHorario || null,
-        error: String(e?.message || e),
-        stackPreview: e?.stack ? String(e.stack).slice(0, 500) : null,
-      });
+        technicalAccepted: true,
+        functionalResult: "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
+        patientFacingMessage: "BOOKING_SUCCESS_FALLBACK_MESSAGE",
+        escalationRequired: false,
+      }));
 
       const fallbackSent = await sendText({
         to: phone,
@@ -2891,10 +2932,13 @@ function nextWizardStateFromMissing(missingList) {
   return "WZ_NOME";
 }
 
-async function finishWizardAndGoToDates({ phone, phoneNumberIdFallback, codUsuario, planoKeyFromWizard }) {
+async function finishWizardAndGoToDates({ phone, phoneNumberIdFallback, codUsuario, planoKeyFromWizard, traceId = null }) {
   const s2 = await ensureSession(phone);
 
-  const isRetorno = await versaHadAppointmentLast30Days(codUsuario);
+  const isRetorno = await versaHadAppointmentLast30Days(codUsuario, {
+    traceId,
+    tracePhone: maskPhone(phone),
+  });
 
   s2.booking = s2.booking || {};
   s2.booking.codUsuario = codUsuario;
@@ -3074,11 +3118,12 @@ if (ctx === "WZ_CPF") {
     }
 
     if (hasFlowPlan) {
-      await finishWizardAndGoToDates({
+     await finishWizardAndGoToDates({
         phone,
         phoneNumberIdFallback,
         codUsuario,
         planoKeyFromWizard: flowPlanKey,
+        traceId,
       });
       return;
     }
@@ -3315,6 +3360,11 @@ if (ctx === "WZ_CPF") {
     const up = await versaUpsertPortalCompleto({
       existsCodUsuario,
       form: s.portal.form,
+      traceMeta: {
+        traceId,
+        tracePhone: maskPhone(phone),
+        flow: "PORTAL_WIZARD_CREATE",
+      },
     });
 
     if (!up.ok || !up.codUsuario) {
@@ -3335,12 +3385,18 @@ if (ctx === "WZ_CPF") {
         reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
       }
 
-      audit("PORTAL_NEW_USER_RESET_ATTEMPT", {
+      audit("PORTAL_NEW_USER_RESET_ATTEMPT", auditOutcome({
+        traceId,
+        tracePhone: maskPhone(phone),
         technicalAccepted: !!reset?.ok,
         httpStatus: reset?.out?.status || null,
         rid: reset?.out?.rid || null,
         functionalResult: !!reset?.ok ? "UNCONFIRMED_EMAIL_DELIVERY" : "NOT_COMPLETED",
-      });
+        patientFacingMessage: !!reset?.ok
+          ? "RESET_EMAIL_REPORTED_AS_SENT"
+          : "RESET_FAILED_NO_PATIENT_MESSAGE_HERE",
+        escalationRequired: !reset?.ok,
+      }));
     }
 
     // revalida
@@ -3358,11 +3414,12 @@ if (ctx === "WZ_CPF") {
 
     await saveSession(phone, s);
 
-    await finishWizardAndGoToDates({
+   await finishWizardAndGoToDates({
       phone,
       phoneNumberIdFallback,
       codUsuario: up.codUsuario,
       planoKeyFromWizard: s.portal.form.planoKey,
+      traceId,
     });
 
     return;
@@ -3588,7 +3645,9 @@ app.post("/webhook", async (req, res) => {
 // - e ainda exige DEBUG_KEY
 // =======================
 function isDebugEnabled() {
-  return String(process.env.ENABLE_DEBUG || "").trim() === "1";
+  const enabled = String(process.env.ENABLE_DEBUG || "").trim() === "1";
+  const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
+  return enabled && nodeEnv !== "production";
 }
 
 function requireDebugEnabled(req, res, next) {
@@ -3787,7 +3846,7 @@ app.get("/debug/versatilis/codusuario", async (req, res) => {
     if (cpf.length !== 11) return res.status(400).json({ ok: false, error: "cpf inválido (11 dígitos)" });
 
     const codUsuario = await versaFindCodUsuarioByCPF(cpf);
-    return res.json({ ok: true, cpf, codUsuario });
+    return res.json({ ok: true, cpfMasked: "***", codUsuario });
   } catch (e) {
     return handleDebugRouteError("/debug/versatilis/codusuario", e, res, req);
   }
