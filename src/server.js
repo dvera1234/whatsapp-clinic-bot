@@ -564,11 +564,11 @@ if (codUsuario) {
 }
 
 const logins = [
-  isValidEmail(email) ? email : null,   // email
-  codUsuarioPad,                        // codUsuario com zeros (ex: 0000000019)
+  codUsuarioPad,                          // login real do portal (ex: 0000000019)
   codUsuario ? String(codUsuario) : null, // codUsuario puro
-  cpf,                                  // cpf sem máscara
-  cpfMask || null,                      // cpf com máscara
+  isValidEmail(email) ? email : null,     // email
+  cpf,                                    // cpf sem máscara
+  cpfMask || null,                        // cpf com máscara
 ].filter(Boolean);
 
   for (const lg of logins) {
