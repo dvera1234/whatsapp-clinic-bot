@@ -206,13 +206,6 @@ function normalizePlanListFromProfile(profile) {
   return Array.from(new Set(list));
 }
 
-function planKeyFromCodPlano(codPlano) {
-  const n = Number(codPlano);
-  if (n === COD_PLANO_MEDSENIOR_SP) return PLAN_KEYS.MEDSENIOR_SP;
-  if (n === COD_PLANO_PARTICULAR) return PLAN_KEYS.PARTICULAR;
-  return null; // desconhecido
-}
-
 function codPlanoFromPlanKey(planKey) {
   return resolveCodPlano(planKey);
 }
@@ -981,7 +974,6 @@ function mergeComplementoWithUF(complementoUser, uf) {
 }
 
 async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {} }) {
-  // form: { nome, cpf, dtNascISO, sexoOpt, celular, email, cep, endereco, numero, complemento, bairro, cidade, uf, planoKey }
   const planoKey = form.planoKey;
   const codPlano = resolveCodPlano(planoKey);
 
@@ -990,7 +982,6 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {
 
   const dtNascBR = formatBRDateFromISO(form.dtNascISO); // DD/MM/AAAA
 
-  // payload base
   const payload = {
     Nome: form.nome,
     CPF: form.cpf,
@@ -1006,26 +997,13 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {
     Cidade: form.cidade,
     CodPlano: String(codPlano),
     CodPlanos: [codPlano],
+    Senha: senhaMD5,
   };
 
   if (form.sexoOpt === "M" || form.sexoOpt === "F") {
     payload.Sexo = form.sexoOpt;
   }
 
-  // ✅ Só define senha quando for CADASTRO novo
-  if (!existsCodUsuario) {
-    payload.Senha = senhaMD5;
-  }
-
-  // ✅ Para ALTERAR, inclua CodUsuario no body
-  if (existsCodUsuario) {
-    payload.CodUsuario = Number(existsCodUsuario);
-  }
-
-  // ============================
-  // 🔎 DEBUG SEGURO: mostra quais campos estão vazios
-  // (não imprime valores!)
-  // ============================
   function isEmpty(v) {
     if (v == null) return true;
     if (typeof v === "string") return v.trim().length === 0;
@@ -1047,18 +1025,17 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {
     })
   );
 
-  debugLog("PORTAL_UPSERT_PAYLOAD_SHAPE", {
-    hasCodUsuario: !!payload.CodUsuario,
+  debugLog("PORTAL_CREATE_PAYLOAD_SHAPE", {
+    existsCodUsuarioIgnored: !!existsCodUsuario,
     empties,
     shape,
   });
 
-  // 🔒 Bloqueio: não chama Versatilis com payload inválido
   if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.trim().length < 8) {
-    audit("PORTAL_UPSERT_BLOCKED_INVALID_PAYLOAD", auditOutcome({
+    audit("PORTAL_CREATE_BLOCKED_INVALID_PAYLOAD", auditOutcome({
       ...traceMeta,
       technicalAccepted: false,
-      functionalResult: "PORTAL_UPSERT_BLOCKED_INVALID_PAYLOAD",
+      functionalResult: "PORTAL_CREATE_BLOCKED_INVALID_PAYLOAD",
       patientFacingMessage: null,
       escalationRequired: true,
       hasForm: !!form,
@@ -1086,62 +1063,25 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {
     };
   }
 
-    let out;
+  const out = await versatilisFetch("/api/Login/CadastrarUsuario", {
+    method: "POST",
+    jsonBody: payload,
+    traceMeta: mergeTraceMeta(traceMeta, {
+      flow: "PORTAL_USER_CREATE",
+      cpfMasked: "***",
+    }),
+  });
 
-  // ======= TENTA ALTERAR (se existir) =======
-  if (existsCodUsuario) {
-    const route = await resolveVersaUpdateRoute(payload);
-
-    if (!route) {
-      return {
-        ok: false,
-        stage: "alterar_sem_rota",
-        out: {
-          ok: false,
-          status: 0,
-          rid: null,
-          allow: null,
-          data: "Não foi possível resolver endpoint/método de atualização (probe falhou).",
-        },
-      };
-    }
-
-    out = await versatilisFetch(route.path, {
-      method: route.method,
-      jsonBody: payload,
-      traceMeta: mergeTraceMeta(traceMeta, {
-        flow: "PORTAL_USER_UPDATE",
-        codUsuario: Number(existsCodUsuario),
-        cpfMasked: "***",
-      }),
-    });
-
-    if (out.ok) return { ok: true, codUsuario: Number(existsCodUsuario) };
-
-    // se falhou, não faz fallback de cadastro (você já confirmou que dá 400 "já existe")
-    return { ok: false, stage: "alterar_falhou", out, resolved: route };
-  }
-
-  // ======= CADASTRO NOVO =======
-  out = await versatilisFetch("/api/Login/CadastrarUsuario", {
-  method: "POST",
-  jsonBody: payload,
-  traceMeta: mergeTraceMeta(traceMeta, {
-    flow: "PORTAL_USER_CREATE",
-    cpfMasked: "***",
-  }),
-});
-
- audit("PORTAL_USER_CREATE_ATTEMPT", auditOutcome({
-  ...traceMeta,
-  technicalAccepted: out.ok,
-  httpStatus: out.status,
-  rid: out.rid,
-  functionalResult: out.ok ? "PORTAL_USER_CREATED" : "PORTAL_USER_CREATE_FAILED",
-  patientFacingMessage: null,
-  escalationRequired: !out.ok,
-  dataType: typeof out.data,
-}));
+  audit("PORTAL_USER_CREATE_ATTEMPT", auditOutcome({
+    ...traceMeta,
+    technicalAccepted: out.ok,
+    httpStatus: out.status,
+    rid: out.rid,
+    functionalResult: out.ok ? "PORTAL_USER_CREATED" : "PORTAL_USER_CREATE_FAILED",
+    patientFacingMessage: null,
+    escalationRequired: !out.ok,
+    dataType: typeof out.data,
+  }));
 
   if (!out.ok) return { ok: false, stage: "cadastrar", out };
 
@@ -1149,7 +1089,10 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {
     parseCodUsuarioFromAny(out.data) ||
     Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
 
-  return { ok: true, codUsuario: Number.isFinite(Number(codUsuario)) ? Number(codUsuario) : null };
+  return {
+    ok: true,
+    codUsuario: Number.isFinite(Number(codUsuario)) ? Number(codUsuario) : null,
+  };
 }
 
 // =======================
@@ -1204,7 +1147,8 @@ opLog("ENV_CHECK", {
 // =======================
 // CONFIG
 // =======================
-const INACTIVITY_MS = 10 * 60 * 1000; // mantemos por enquanto (será revisado)
+const INACTIVITY_MS = 15 * 60 * 1000; // 15 minutos
+const INACTIVITY_WARN_MS = (14 * 60 * 1000) + (50 * 1000); // 14m50s
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900); // 15 min (900s)
 
   // =======================
@@ -1311,10 +1255,13 @@ async function updateSession(phone, updater) {
 }
 
 async function touchUser(phone, phoneNumberIdFallback) {
-  return await updateSession(phone, (s) => {
-    s.lastUserTs = Date.now();
-    if (phoneNumberIdFallback) s.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+  const s = await updateSession(phone, (sess) => {
+    sess.lastUserTs = Date.now();
+    if (phoneNumberIdFallback) sess.lastPhoneNumberIdFallback = phoneNumberIdFallback;
   });
+
+  scheduleInactivityWarning(phone, phoneNumberIdFallback);
+  return s;
 }
 
 async function setState(phone, state) {
@@ -1329,7 +1276,73 @@ async function getState(phone) {
 }
 
 async function clearSession(phone) {
+  clearInactivityTimer(phone);
   await deleteSession(phone);
+}
+
+function clearInactivityTimer(phone) {
+  const key = String(phone || "").replace(/\D+/g, "");
+  const timer = inactivityTimers.get(key);
+
+  if (timer) {
+    clearTimeout(timer);
+    inactivityTimers.delete(key);
+  }
+}
+
+function scheduleInactivityWarning(phone, phoneNumberIdFallback) {
+  const key = String(phone || "").replace(/\D+/g, "");
+  if (!key) return;
+
+  clearInactivityTimer(key);
+
+  const timer = setTimeout(async () => {
+    try {
+      const s = await loadSession(key);
+
+      // Se a sessão já expirou no Redis, não faz nada
+      if (!s) {
+        inactivityTimers.delete(key);
+        return;
+      }
+
+      const idleMs = Date.now() - Number(s.lastUserTs || 0);
+
+      // Só envia se realmente ainda estiver inativo próximo do TTL
+      if (idleMs < INACTIVITY_WARN_MS - 2000) {
+        inactivityTimers.delete(key);
+        return;
+      }
+
+      await sendText({
+        to: key,
+        body: MSG.ENCERRAMENTO,
+        phoneNumberIdFallback: s.lastPhoneNumberIdFallback || phoneNumberIdFallback || "",
+      });
+
+      await clearSession(key);
+      inactivityTimers.delete(key);
+
+      audit("FLOW_INACTIVITY_TIMEOUT", {
+        tracePhone: maskPhone(key),
+        inactivityMs: idleMs,
+        ttlSeconds: SESSION_TTL_SECONDS,
+        warningMs: INACTIVITY_WARN_MS,
+        functionalResult: "SESSION_CLEARED_AFTER_INACTIVITY",
+        patientFacingMessage: "INACTIVITY_CLOSURE_MESSAGE_SENT",
+        escalationRequired: false,
+      });
+    } catch (e) {
+      inactivityTimers.delete(key);
+
+      errLog("FLOW_INACTIVITY_TIMEOUT_ERROR", {
+        tracePhone: maskPhone(key),
+        error: String(e?.message || e),
+      });
+    }
+  }, INACTIVITY_WARN_MS);
+
+  inactivityTimers.set(key, timer);
 }
 
 // =======================
@@ -1358,8 +1371,6 @@ BTN_PLAN_PART: "Particular",
 BTN_PLAN_MED: "MedSênior SP",
   
 PORTAL_NEED_DATA: (faltas) => `Para prosseguir, preciso completar seu cadastro do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
-PORTAL_NEED_DATA_EXISTING: (faltas) =>
-  `Encontrei seu cadastro ✅, mas precisamos completar algumas informações do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
 
 // ✅ NOVO: Bloqueio formal para paciente EXISTENTE com cadastro incompleto
 PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO: (faltas) =>
@@ -1371,7 +1382,6 @@ BTN_FALAR_ATENDENTE: `Falar com atendente`,
 ASK_NOME: `Informe seu nome completo:`,
 ASK_DTNASC: `Informe sua data de nascimento (DD/MM/AAAA):`,
 ASK_SEXO: `Selecione seu sexo:`,
-ASK_CONVENIO: `Selecione o convênio para este agendamento:`,
 ASK_EMAIL: `Informe seu e-mail:`,
 ASK_CEP: `Informe seu CEP (somente números):`,
 ASK_ENDERECO: `Informe seu endereço (logradouro):`,
@@ -1380,8 +1390,7 @@ ASK_COMPLEMENTO: `Complemento (se não tiver, envie apenas 0):`,
 ASK_BAIRRO: `Bairro:`,
 ASK_CIDADE: `Cidade:`,
 ASK_UF: `Estado (UF), ex.: SP:`,
-PORTAL_OK_RESET: `✅ Cadastro do Portal atualizado.\n📩 Se você ainda não tem senha, enviamos um e-mail para redefinição.\n(Se não chegar, verifique o spam.)`,
-  
+
   ENCERRAMENTO: `✅ Atendimento encerrado por inatividade.
 
 🤝 Caso precise de algo mais, ficamos à disposição!
@@ -1548,178 +1557,6 @@ Descreva abaixo como podemos te ajudar.
 };
 
 // =======================
-// PROBE: descobrir endpoint de UPDATE que funcione (sem PUT)
-// =======================
-const UPDATE_PROBE_CANDIDATES = [
-  // Login/*
-  "/api/Login/AlterarUsuario",
-  "/api/Login/AtualizarUsuario",
-  "/api/Login/SalvarUsuario",
-  "/api/Login/EditarUsuario",
-  "/api/Login/AtualizarDadosUsuario",
-  "/api/Login/AtualizarCadastro",
-  "/api/Login/AtualizarPortal",
-  // Usuario/*
-  "/api/Usuario/AlterarUsuario",
-  "/api/Usuario/AtualizarUsuario",
-  "/api/Usuario/SalvarUsuario",
-];
-
-function isProbablyIisBlock405(out) {
-  if (out?.status !== 405) return false;
-  if (typeof out?.data !== "string") return false;
-  // IIS costuma devolver HTML com esse title
-  return out.data.includes("HTTP verb used to access this page is not allowed");
-}
-
-function pickSafeProbePayload(payload) {
-  // manda o mínimo, mas suficiente pra API “entender” que é update
-  // IMPORTANTe: mantém no body, não em querystring
-  return {
-    CodUsuario: payload.CodUsuario,
-    CPF: payload.CPF,
-    Nome: payload.Nome,
-  };
-}
-
-let versaUpdateResolved = null; // cache em memória: { path, method }
-
-async function resolveVersaUpdateRoute(samplePayload) {
-  if (versaUpdateResolved) return versaUpdateResolved;
-
-  const forcedPath = String(process.env.VERSA_UPDATE_PATH || "").trim();
-  const forcedMethod = String(process.env.VERSA_UPDATE_METHOD || "").trim().toUpperCase();
-
-if (forcedPath && forcedMethod) {
-  versaUpdateResolved = { path: forcedPath, method: forcedMethod };
-  opLog("VERSA_UPDATE_ROUTE_FORCED_BY_ENV", {
-    path: forcedPath,
-    method: forcedMethod,
-  });
-  return versaUpdateResolved;
-}
-
-  const probeBody = pickSafeProbePayload(samplePayload);
-
-  // 🔎 Nova estratégia:
-  // 1) POST + override (simula PUT sem usar verbo PUT)
-  // 2) POST puro
-  // 3) PUT direto (por último)
-
-  const variants = [
-    {
-      method: "POST",
-      extraHeaders: {
-        "X-HTTP-Method-Override": "PUT",
-        "X-Method-Override": "PUT",
-        "X-HTTP-Method": "PUT",
-      },
-      label: "POST+OVERRIDE",
-    },
-    {
-      method: "POST",
-      extraHeaders: null,
-      label: "POST",
-    },
-    {
-      method: "PUT",
-      extraHeaders: null,
-      label: "PUT",
-    },
-  ];
-
-  for (const path of UPDATE_PROBE_CANDIDATES) {
-    for (const v of variants) {
-      const out = await versatilisFetch(path, {
-        method: v.method,
-        jsonBody: probeBody,
-        ...(v.extraHeaders ? { extraHeaders: v.extraHeaders } : {}),
-      });
-
-    debugLog("VERSA_UPDATE_PROBE_ATTEMPT", {
-      path,
-      variant: v.label,
-      method: v.method,
-      httpStatus: out.status,
-      technicalAccepted: out.ok,
-      allow: out.allow || null,
-      iis405: isProbablyIisBlock405(out),
-    });
-
-      const isHtml = typeof out?.data === "string" && out.data.trim().startsWith("<!DOCTYPE");
-      const iis405 = isProbablyIisBlock405(out);
-
-      const statusLooksApi =
-        out.ok ||
-        [400, 401, 403, 409, 422].includes(out.status);
-
-      if (statusLooksApi && out.status !== 405 && !isHtml && !iis405) {
-        versaUpdateResolved = {
-          path,
-          method: v.method,
-          ...(v.extraHeaders ? { extraHeaders: v.extraHeaders } : {}),
-        };
-
-        opLog("VERSA_UPDATE_PROBE_RESOLVED", versaUpdateResolved);
-        return versaUpdateResolved;
-      }
-    }
-  }
-
-  versaUpdateResolved = null;
-  audit("VERSA_UPDATE_PROBE_NOT_RESOLVED", {
-    functionalResult: "UPDATE_ROUTE_UNRESOLVED",
-    escalationRequired: true,
-  });
-  return null;
-}
-
-async function versaAttachPlanIfMissing({ codUsuario, profile, planKeyToEnsure }) {
-  const plans = normalizePlanListFromProfile(profile);
-  const wantCod = codPlanoFromPlanKey(planKeyToEnsure);
-
-  // já tem -> nada a fazer
-  if (plans.some((p) => Number(p) === Number(wantCod))) {
-    return { ok: true, changed: false, plansAfter: plans };
-  }
-
-  // tenta anexar
-  const route = await resolveVersaUpdateRoute({
-    CodUsuario: codUsuario,
-    CPF: cleanStr(profile?.CPF),
-    Nome: cleanStr(profile?.Nome),
-  });
-
-  if (!route) {
-    return { ok: false, stage: "no_update_route" };
-  }
-
-  const mergedPlans = Array.from(new Set([...(plans || []), wantCod]));
-
-  // Payload mínimo (evita depender de endereço etc.)
-  // IMPORTANT: mantém CPF/Nome para ajudar a API a aceitar update.
-  const payload = {
-    CodUsuario: Number(codUsuario),
-    CPF: cleanStr(profile?.CPF),
-    Nome: cleanStr(profile?.Nome),
-    CodPlano: String(wantCod),
-    CodPlanos: mergedPlans,
-  };
-
-  const out = await versatilisFetch(route.path, {
-    method: route.method,
-    jsonBody: payload,
-    ...(route.extraHeaders ? { extraHeaders: route.extraHeaders } : {}),
-  });
-
-  if (!out.ok) {
-    return { ok: false, stage: "update_failed", out };
-  }
-
-  return { ok: true, changed: true, plansAfter: mergedPlans };
-}
-
-// =======================
 // HELPERS
 // =======================
 function bookingConfirmKey(phone, codHorario) {
@@ -1728,6 +1565,8 @@ function bookingConfirmKey(phone, codHorario) {
 }
 
 const inboundLocks = new Map();
+const inboundLocks = new Map();
+const inactivityTimers = new Map();
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
@@ -1789,10 +1628,6 @@ async function setSession(phone, s) {
   return s;
 }
 
-function resolveCodPlanoFromSession(s) {
-  return resolveCodPlano(s?.booking?.planoKey);
-}
-
 function onlyCpfDigits(s) {
   const d = String(s || "").replace(/\D+/g, "");
   return d.length === 11 ? d : null;
@@ -1832,16 +1667,6 @@ function normalizeSpaces(s) {
 function makeWaLink(prefillText) {
   const encoded = encodeURIComponent(prefillText);
   return `https://wa.me/${SUPPORT_WA}?text=${encoded}`;
-}
-
-function parseDateBR(ddmmyyyy) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((ddmmyyyy || "").trim());
-  if (!m) return null;
-  const dd = Number(m[1]);
-  const mm = Number(m[2]);
-  const yyyy = Number(m[3]);
-  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-  return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
 }
 
 function toHHMM(hora) {
@@ -1892,8 +1717,8 @@ async function getDtNascISOAuto(phone) {
     })();
 
   // salva em sessão para próximas chamadas
-    if (dt3) {
-    
+  if (dt3) {
+    await updateSession(phone, (sess) => {
       sess.portal = sess.portal || {};
       sess.portal.profile = sess.portal.profile || {};
       sess.portal.profile.DtNasc = prof.data?.DtNasc || sess.portal.profile.DtNasc;
@@ -1904,17 +1729,7 @@ async function getDtNascISOAuto(phone) {
 
   return dt3 || null;
 }
-
-function pickLoginForSolicitarSenha(session) {
-  const email = cleanStr(session?.portal?.form?.email || session?.portal?.profile?.Email);
-  const cpf = cleanStr(session?.portal?.form?.cpf || session?.portal?.profile?.CPF).replace(/\D+/g, "");
-
-  if (isValidEmail(email)) return { login: email, kind: "email" };
-  if (cpf.length === 11) return { login: cpf, kind: "cpf" };
-
-  return { login: "", kind: "none" };
-}
-  
+ 
 // =======================
 // REGRAS DE TEMPO (segurança)
 // =======================
@@ -2226,13 +2041,10 @@ async function resetToMain(phone, phoneNumberIdFallback) {
   await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
 }
 
-// =======================
-// AUTO-ENCERRAMENTO (10 min silêncio)
-// - envia mensagem
-// - limpa estado
-// =======================
-// setInterval de auto-encerramento desativado temporariamente
-// (com Redis não listamos sessões por segurança; vamos tratar isso no próximo passo)
+// Inatividade:
+// - Redis TTL (15 min) é a regra oficial de expiração da sessão.
+// - Um timer local envia MSG.ENCERRAMENTO em 14m50s como best effort.
+// - Se o timer falhar (restart/deploy/etc.), o Redis continua encerrando a sessão corretamente.
 
 // =======================
 // ROTEADOR COM ESTADO MÍNIMO
@@ -2546,7 +2358,7 @@ ${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
 
 const chosenKey = (upper === "PL_USE_MED") ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
 
-const s = 
+await updateSession(phone, (sess) => {
   sess.booking = sess.booking || {};
   sess.booking.planoKey = chosenKey;
 
@@ -2601,8 +2413,8 @@ if (upper.startsWith("D_")) {
 
   const out = await fetchSlotsDoDia({ codColaborador, codUsuario, isoDate });
   const slots = out.ok ? out.slots : [];
-
   
+  await updateSession(phone, (sess) => {
     sess.booking = {
       ...(sess.booking || {}),
       codColaborador,
@@ -2646,10 +2458,12 @@ if (ctx === "SLOTS") {
   // Ver mais (PAGE_n)
   if (upper.startsWith("PAGE_")) {
     const n = Number(raw.split("_")[1]);
-    const s = 
+  
+    await updateSession(phone, (sess) => {
       sess.booking = sess.booking || {};
       sess.booking.pageIndex = Number.isFinite(n) && n >= 0 ? n : 0;
     });
+  }
     
     const slots = s?.booking?.slots || [];
     const page = Number(s?.booking?.pageIndex ?? 0) || 0;
@@ -2670,6 +2484,7 @@ if (ctx === "SLOTS") {
     const codUsuario = s?.booking?.codUsuario;
 
     
+      await updateSession(phone, (sess) => {
       if (sess?.booking) {
         sess.booking.isoDate = null;
         sess.booking.slots = [];
@@ -2737,6 +2552,7 @@ if (ctx === "WAIT_CONFIRM") {
   const slots = s?.booking?.slots || [];
 
   
+    await updateSession(phone, (sess) => {
     delete sess.pending;
     sess.state = "SLOTS";
   });
@@ -2775,9 +2591,10 @@ if (upper === "CONFIRMAR") {
   const slots = s?.booking?.slots || [];
 
   
-    delete sess.pending;
-    sess.state = "SLOTS";
-  });
+    await updateSession(phone, (sess) => {
+      delete sess.pending;
+      sess.state = "SLOTS";
+    });
 
   await sendText({
     to: phone,
@@ -2807,9 +2624,10 @@ if (upper === "CONFIRMAR") {
 
     if (!isoDate || !chosen?.hhmm || !isSlotAllowed(isoDate, chosen.hhmm)) {
       
-        delete sess.pending;
-        sess.state = "SLOTS";
-      });
+        await updateSession(phone, (sess) => {
+          delete sess.pending;
+          sess.state = "SLOTS";
+        });
 
       await sendText({
         to: phone,
