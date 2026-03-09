@@ -141,7 +141,7 @@ function debugLog(event, payload = {}) {
   writeLog("DEBUG", event, payload);
 }
 
-opLog("BUILD_INFO", { build: "2026-02-21T20:05 ALTERARUSUARIO-POST" });
+opLog("BUILD_INFO", { build: "2026-02-21T20:05 PORTAL-CREATE-ONLY" });
 
 // rate limit de logs repetidos (em memória) — bom p/ 404 de agenda
 // key -> { lastMs, count }
@@ -973,14 +973,12 @@ function mergeComplementoWithUF(complementoUser, uf) {
   return `${base} | ${c}`;
 }
 
-async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {} }) {
+async function versaUpsertPortalCompleto({ form, traceMeta = {} }) {
   const planoKey = form.planoKey;
   const codPlano = resolveCodPlano(planoKey);
 
-  const tempPass = generateTempPassword(10);
-  const senhaMD5 = md5Hex(tempPass);
-
-  const dtNascBR = formatBRDateFromISO(form.dtNascISO); // DD/MM/AAAA
+  const senhaMD5 = md5Hex(generateTempPassword(10));
+  const dtNascBR = formatBRDateFromISO(form.dtNascISO);
 
   const payload = {
     Nome: form.nome,
@@ -1026,7 +1024,6 @@ async function versaUpsertPortalCompleto({ existsCodUsuario, form, traceMeta = {
   );
 
   debugLog("PORTAL_CREATE_PAYLOAD_SHAPE", {
-    existsCodUsuarioIgnored: !!existsCodUsuario,
     empties,
     shape,
   });
@@ -1147,7 +1144,6 @@ opLog("ENV_CHECK", {
 // =======================
 // CONFIG
 // =======================
-const INACTIVITY_MS = 15 * 60 * 1000; // 15 minutos
 const INACTIVITY_WARN_MS = (14 * 60 * 1000) + (50 * 1000); // 14m50s
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900); // 15 min (900s)
 
@@ -1565,7 +1561,6 @@ function bookingConfirmKey(phone, codHorario) {
 }
 
 const inboundLocks = new Map();
-const inboundLocks = new Map();
 const inactivityTimers = new Map();
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
@@ -1621,11 +1616,6 @@ async function setBookingPlan(phone, planoKey) {
 
 async function getSession(phone) {
   return await ensureSession(phone);
-}
-
-async function setSession(phone, s) {
-  await saveSession(phone, s);
-  return s;
 }
 
 function onlyCpfDigits(s) {
@@ -2367,7 +2357,9 @@ await updateSession(phone, (sess) => {
   }
 });
 
+const s = await ensureSession(phone);
 const codUsuario = Number(s?.booking?.codUsuario || s?.portal?.codUsuario);
+
 if (!codUsuario) {
   await sendText({
     to: phone,
@@ -2458,13 +2450,13 @@ if (ctx === "SLOTS") {
   // Ver mais (PAGE_n)
   if (upper.startsWith("PAGE_")) {
     const n = Number(raw.split("_")[1]);
-  
+
     await updateSession(phone, (sess) => {
       sess.booking = sess.booking || {};
       sess.booking.pageIndex = Number.isFinite(n) && n >= 0 ? n : 0;
     });
-  }
-    
+
+    const s = await ensureSession(phone);
     const slots = s?.booking?.slots || [];
     const page = Number(s?.booking?.pageIndex ?? 0) || 0;
 
@@ -3096,8 +3088,6 @@ if (prof.ok && prof.data) {
     return;
   }
 
-  const sFresh = await ensureSession(phone);
-
   const v = validatePortalCompleteness(prof.data);
   
   if (v.ok) {
@@ -3431,9 +3421,8 @@ if (prof.ok && prof.data) {
     });
     
     const existsCodUsuario = s.portal.exists ? s.portal.codUsuario : null;
-    
+
     const up = await versaUpsertPortalCompleto({
-      existsCodUsuario,
       form: s.portal.form,
       traceMeta: {
         traceId,
@@ -3921,11 +3910,6 @@ if (!payload.CodUsuario || Number.isNaN(payload.CodUsuario)) {
     if (p.CodigoVenda != null && p.CodigoVenda !== "") payload.CodigoVenda = Number(p.CodigoVenda);
     if (p.Data) payload.Data = String(p.Data); // use apenas se for testar CodHorario=0 (não recomendo agora)
 
-    // Validação mínima
-    if (!payload.CodHorario || Number.isNaN(payload.CodHorario)) {
-      return res.status(400).json({ ok: false, error: "CodHorario é obrigatório (number)" });
-    }
-
     // Chamada real
     const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
       method: "POST",
@@ -3985,27 +3969,6 @@ app.get("/debug/versatilis/codusuario", async (req, res) => {
     return res.json({ ok: true, cpfMasked: "***", codUsuario });
   } catch (e) {
     return handleDebugRouteError("/debug/versatilis/codusuario", e, res, req);
-  }
-});
-
-  app.get("/debug/versatilis/options", async (req, res) => {
-  try {
-    const path = String(req.query.path || "/api/Login/AlterarUsuario");
-    const out = await (async () => {
-      const token = await versatilisGetToken();
-      const url = `${VERSA_BASE}${path}`;
-      const r = await fetchWithTimeout(url, {
-        method: "OPTIONS",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      }, 10000);
-      return { ok: r.ok, status: r.status, allow: r.headers.get("allow") || r.headers.get("Allow") || null };
-    })();
-    return res.json(out);
-  } catch (e) {
-    return handleDebugRouteError("/debug/versatilis/options", e, res, req);
   }
 });
   
