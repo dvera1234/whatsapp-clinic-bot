@@ -568,7 +568,6 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
   for (const path of candidates) {
     const out = await versatilisFetch(path);
 
-        // DEBUG de estrutura (não imprime valores)
 if (process.env.DEBUG_VERSA_SHAPE === "1" && out.ok && out.data && typeof out.data === "object") {
   const keys = Object.keys(out.data || {}).slice(0, 30);
   debugLog("VERSA_CODUSUARIO_SHAPE", { path, keys, isArray: Array.isArray(out.data) });
@@ -676,186 +675,6 @@ function parseBRDateToISO(br) {
   return `${yyyy}-${String(mm).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
 }
 
-function formatBRDateFromISO(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
-  if (!m) return null;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-}
-
-// =======================
-// RESET SENHA (manual-first + divergência)
-// Manual: GET /api/Login/SolicitarSenha?login={login}&dtNasc={dataNascimento}
-// Observado no tenant: POST => 405 Allow: GET (então manter somente GET)
-// Divergência registrada se o tenant rejeitar o manual (400/404) mesmo com dataNascimento
-// =======================
-function previewOutData(out) {
-  const d = out?.data;
-  if (d == null) return null;
-  if (typeof d === "string") return d.slice(0, 240);
-  try {
-    return JSON.stringify(d).slice(0, 240);
-  } catch {
-    return "[unstringifiable]";
-  }
-}
-
-// ✅ FUNÇÃO QUE ESTAVA FALTANDO (ou foi quebrada)
-// Tudo que estava “solto” agora fica aqui dentro.
-async function versaSolicitarSenha({ login, dtNascISO, traceMeta = {} }) {
-  const lg = String(login || "").trim();
-
-  const dataBR = formatBRDateFromISO(dtNascISO);
-  const dataISO = String(dtNascISO || "").trim();
-
-  if (!lg || !dataBR || !dataISO) {
-    return { ok: false, stage: "missing_login_or_dtnasc" };
-  }
-
-  const attempts = [
-    { param: "dtNasc", value: dataISO },
-  ];
-
-  for (const a of attempts) {
-    const path =
-      `/api/Login/SolicitarSenha?login=${encodeURIComponent(lg)}` +
-      `&${a.param}=${encodeURIComponent(a.value)}`;
-
-    const out = await versatilisFetch(path, {
-      method: "GET",
-      traceMeta: mergeTraceMeta(traceMeta, {
-        flow: "SOLICITAR_SENHA",
-        loginMasked: maskLoginValue(lg),
-        dtNascMasked: "***",
-      }),
-    });
-
-  debugLog("RESET_PASSWORD_API_ATTEMPT", {
-    method: "GET",
-    path: "/api/Login/SolicitarSenha",
-    param: a.param,
-    loginMasked: maskLoginValue(lg),
-    technicalAccepted: out.ok,
-    httpStatus: out.status,
-    rid: out.rid,
-    preview: out.ok ? null : (previewOutData(out) || "[empty-or-nonjson-body]"),
-    allow: out.allow || null,
-    ...(traceMeta || {}),
-  });
-
-    if (out.ok) {
-  return {
-    ok: true,
-    out,
-    usedParam: a.param,
-    usedValue: a.value,
-    traceMeta: mergeTraceMeta(traceMeta, {
-      loginMasked: maskLoginValue(lg),
-    }),
-  };
-}
-
-    if (![404, 400, 422].includes(out.status)) {
-      return { ok: false, stage: "http_error", out, usedParam: a.param, usedValue: a.value };
-    }
-  }
-
-  return {
-    ok: false,
-    stage: "no_matching_action_or_bad_date_format",
-    hint:
-      "A action existe para dtNasc (DateTime), mas o servidor não aceitou o formato. " +
-      "Mantivemos tentativas ISO; se persistir 400, precisamos confirmar o formato exato exigido pelo tenant.",
-  };
-}
-
-function detectLoginKind(login, cpfDigits, cpfMask, codUsuario, codUsuarioPad, email) {
-  const lg = String(login || "");
-
-  if (isValidEmail(lg)) return "email";
-  if (codUsuarioPad && lg === String(codUsuarioPad)) return "codUsuarioPad";
-  if (codUsuario && lg === String(codUsuario)) return "codUsuario";
-  if (cpfDigits && lg === String(cpfDigits)) return "cpf";
-  if (cpfMask && lg === String(cpfMask)) return "cpfMask";
-
-  return "unknown";
-}
-
-async function versaSolicitarSenhaPorCPF(cpfDigits, dtNascISO, traceMeta = {}) {
-  const cpf = String(cpfDigits || "").replace(/\D+/g, "");
-  if (cpf.length !== 11) return { ok: false, stage: "cpf_invalid" };
-
-  const cpfMask = formatCPFMask(cpf);
-
-  const codUsuario =
-    (await versaFindCodUsuarioByCPF(cpf)) ||
-    (await versaFindCodUsuarioByDadosCPF(cpf));
-
-  let email = "";
-  if (codUsuario) {
-    const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
-    email = prof.ok ? cleanStr(prof.data?.Email) : "";
-  }
-
-  let codUsuarioPad = null;
-  if (codUsuario) {
-    const codStr = String(codUsuario);
-    codUsuarioPad = codStr.padStart(10, "0");
-  }
-
-  const localTraceMeta = mergeTraceMeta(traceMeta, {
-    cpfMasked: "***",
-    codUsuario: codUsuario || null,
-    codUsuarioPad: codUsuarioPad || null,
-  });
-
-  const logins = [
-    codUsuarioPad,
-    codUsuario ? String(codUsuario) : null,
-    isValidEmail(email) ? email : null,
-    cpf,
-    cpfMask || null,
-  ].filter(Boolean);
-
-   for (const lg of logins) {
-    const loginKind = detectLoginKind(lg, cpf, cpfMask, codUsuario, codUsuarioPad, email);
-
-    const out = await versaSolicitarSenha({
-      login: lg,
-      dtNascISO,
-      traceMeta: mergeTraceMeta(localTraceMeta, {
-        loginKind,
-      }),
-    });
-
-  debugLog("RESET_PASSWORD_LOGIN_VARIANT_ATTEMPT", {
-    loginKind,
-    loginMasked: maskLoginValue(lg),
-    technicalAccepted: out.ok,
-    technicalStage: out.stage,
-    httpStatus: out?.out?.status,
-    rid: out?.out?.rid,
-    ...(traceMeta || {}),
-  });
-
-    if (out.ok) {
-  return {
-    ...out,
-    loginKind,
-    traceMeta: mergeTraceMeta(out.traceMeta, {
-      loginKind,
-      loginMasked: maskLoginValue(lg),
-    }),
-  };
-}
-
-    if (out?.out?.status && ![400, 404, 422, 500].includes(out.out.status)) {
-      return out;
-    }
-  }
-
-  return { ok: false, stage: "all_login_variants_failed" };
-}
-
 // =======================
 // REGRA 30 DIAS (RETORNO)
 // =======================
@@ -931,7 +750,6 @@ function cleanStr(s) { return String(s ?? "").trim(); }
 function validatePortalCompleteness(profile) {
   const missing = [];
 
-  const Nome = cleanStr(profile?.Nome);
   const CPF = cleanStr(profile?.CPF).replace(/\D+/g, "");
   const Email = cleanStr(profile?.Email);
   const Celular = cleanStr(profile?.Celular).replace(/\D+/g, "");
@@ -945,7 +763,7 @@ function validatePortalCompleteness(profile) {
   // DtNasc às vezes vem ISO com hora; se vier vazio, cobra no wizard
   const DtNasc = cleanStr(profile?.DtNasc);
 
-  if (!Nome) missing.push("nome completo");
+  if (!cleanStr(profile?.Nome)) missing.push("nome completo");
   if (CPF.length !== 11) missing.push("CPF");
   if (!isValidEmail(Email)) missing.push("e-mail");
   if (Celular.length < 10) missing.push("celular");
@@ -973,7 +791,7 @@ function mergeComplementoWithUF(complementoUser, uf) {
   return `${base} | ${c}`;
 }
 
-async function versaUpsertPortalCompleto({ form, traceMeta = {} }) {
+async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
   const planoKey = form.planoKey;
   const codPlano = resolveCodPlano(planoKey);
 
@@ -1296,7 +1114,6 @@ function scheduleInactivityWarning(phone, phoneNumberIdFallback) {
     try {
       const s = await loadSession(key);
 
-      // Se a sessão já expirou no Redis, não faz nada
       if (!s) {
         inactivityTimers.delete(key);
         return;
@@ -1555,6 +1372,22 @@ Descreva abaixo como podemos te ajudar.
 // =======================
 // HELPERS
 // =======================
+function getPromptByWizardState(state) {
+  switch (state) {
+    case "WZ_NOME": return MSG.ASK_NOME;
+    case "WZ_DTNASC": return MSG.ASK_DTNASC;
+    case "WZ_EMAIL": return MSG.ASK_EMAIL;
+    case "WZ_CEP": return MSG.ASK_CEP;
+    case "WZ_ENDERECO": return MSG.ASK_ENDERECO;
+    case "WZ_NUMERO": return MSG.ASK_NUMERO;
+    case "WZ_COMPLEMENTO": return MSG.ASK_COMPLEMENTO;
+    case "WZ_BAIRRO": return MSG.ASK_BAIRRO;
+    case "WZ_CIDADE": return MSG.ASK_CIDADE;
+    case "WZ_UF": return MSG.ASK_UF;
+    default: return MSG.ASK_NOME;
+  }
+}
+
 function bookingConfirmKey(phone, codHorario) {
   const p = String(phone || "").replace(/\D+/g, "");
   return `booking:confirm:${p}:${codHorario}`;
@@ -1659,65 +1492,54 @@ function makeWaLink(prefillText) {
   return `https://wa.me/${SUPPORT_WA}?text=${encoded}`;
 }
 
+async function sendSupportLink({ phone, phoneNumberIdFallback, prefill, nextState = "MAIN" }) {
+  const link = makeWaLink(prefill);
+
+  await sendText({
+    to: phone,
+    body: `✅ Para falar com nossa equipe, clique no link abaixo e envie a mensagem:\n\n${link}`,
+    phoneNumberIdFallback,
+  });
+
+  if (nextState) {
+    await setState(phone, nextState);
+  }
+}
+
+function buildSupportPrefillFromSession(phone, s) {
+  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+  const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+  const issue = s?.portal?.issue || null;
+
+  const motivo =
+    issue?.type === "CONVENIO_NAO_HABILITADO"
+      ? `Convênio não habilitado no cadastro (precisa atualizar plano no Versatilis). Desejado: ${issue.wantedPlan}.`
+      : "";
+
+  const detalhesPlano =
+    issue?.type === "CONVENIO_NAO_HABILITADO"
+      ? `CodUsuario: ${issue.codUsuario || "(não identificado)"} | Planos detectados: ${
+          Array.isArray(issue.plansDetected) && issue.plansDetected.length
+            ? issue.plansDetected.join(", ")
+            : "(nenhum)"
+        }`
+      : "";
+
+  return `Olá! Preciso de ajuda no agendamento.
+
+Paciente: ${phone}
+CPF: ${cpf || "(não informado)"}
+${motivo ? `Motivo: ${motivo}` : ""}
+${detalhesPlano ? `Detalhes: ${detalhesPlano}` : ""}
+${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
+}
+
 function toHHMM(hora) {
   const s = String(hora || "").trim();
   const m = /^(\d{1,2}):(\d{2})/.exec(s);
   if (!m) return null;
   const hh = String(Number(m[1])).padStart(2, "0");
   return `${hh}:${m[2]}`;
-}
-
-// =======================
-// dtNasc automático (SEM COLETA)
-// - Busca em: portal.form -> portal.profile -> Versatilis por CodUsuario
-// - Se não achar: não pede ao paciente; encaminha suporte
-// =======================
-async function getDtNascISOAuto(phone) {
-  const s = await ensureSession(phone);
-
-  // 1) Já na sessão (wizard)
-  const dt1 = cleanStr(s?.portal?.form?.dtNascISO);
-  if (dt1) return dt1;
-
-  // 2) Do profile em cache na sessão
-  const dtRaw = cleanStr(s?.portal?.profile?.DtNasc);
-  const dt2 = parseBRDateToISO(dtRaw) || (function () {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dtRaw);
-    return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
-  })();
-  if (dt2) return dt2;
-
-  // 3) Busca por codUsuario (preferência: booking.codUsuario)
-  const cod =
-    Number(s?.booking?.codUsuario) ||
-    Number(s?.portal?.codUsuario) ||
-    null;
-
-  if (!cod || !Number.isFinite(cod) || cod <= 0) return null;
-
-  const prof = await versaGetDadosUsuarioPorCodigo(cod);
-  if (!prof.ok || !prof.data) return null;
-
-  const dtApiRaw = cleanStr(prof.data?.DtNasc);
-  const dt3 =
-    parseBRDateToISO(dtApiRaw) ||
-    (function () {
-      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dtApiRaw);
-      return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
-    })();
-
-  // salva em sessão para próximas chamadas
-  if (dt3) {
-    await updateSession(phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.profile = sess.portal.profile || {};
-      sess.portal.profile.DtNasc = prof.data?.DtNasc || sess.portal.profile.DtNasc;
-      sess.portal.form = sess.portal.form || {};
-      sess.portal.form.dtNascISO = dt3;
-    });
-  }
-
-  return dt3 || null;
 }
  
 // =======================
@@ -1753,7 +1575,6 @@ async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
 
   const out = await versatilisFetch(path);
 
-// 404 do Versatilis pode significar "sem datas disponíveis"
 if (out.status === 404) {
   return { ok: true, slots: [] };
 }
@@ -2056,13 +1877,6 @@ debugLog("FLOW_INBOUND_RECEIVED", {
   inboundKind: digits ? "digits-or-button" : "text",
 });
 
- // =======================
-// RESET GLOBAL (funciona em qualquer etapa) — robusto
-// Aceita:
-// - "#menu123" exatamente
-// - variação de maiúsc/minúsc
-// - se ENV estiver sem "#", aceita com ou sem "#"
-// =======================
 {
   const code = String(FLOW_RESET_CODE || "").trim();
   if (code) {
@@ -2097,176 +1911,24 @@ debugLog("FLOW_INBOUND_RECEIVED", {
 // =======================
 if (upper === "FALAR_ATENDENTE") {
   const s = await ensureSession(phone);
+  const prefill = buildSupportPrefillFromSession(phone, s);
 
- const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
-const issue = s?.portal?.issue || null;
-
-const motivo =
-  issue?.type === "CONVENIO_NAO_HABILITADO"
-    ? `Convênio não habilitado no cadastro (precisa atualizar plano no Versatilis). Desejado: ${issue.wantedPlan}.`
-    : "";
-
-const detalhesPlano =
-  issue?.type === "CONVENIO_NAO_HABILITADO"
-    ? `CodUsuario: ${issue.codUsuario || "(não identificado)"} | Planos detectados: ${
-        Array.isArray(issue.plansDetected) && issue.plansDetected.length ? issue.plansDetected.join(", ") : "(nenhum)"
-      }`
-    : "";
-
-const prefill = `Olá! Preciso de ajuda no agendamento.
-
-Paciente: ${phone}
-CPF: ${cpf || "(não informado)"}
-${motivo ? `Motivo: ${motivo}` : ""}
-${detalhesPlano ? `Detalhes: ${detalhesPlano}` : ""}
-${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
-  ;
-
-  const link = makeWaLink(prefill);
-
-  await sendAndSetState(
+  await sendSupportLink({
     phone,
-    `✅ Para falar com nossa equipe, clique no link abaixo e envie a mensagem:\n\n${link}`,
-    "MAIN",
-    phoneNumberIdFallback
-  );
+    phoneNumberIdFallback,
+    prefill,
+    nextState: "MAIN",
+  });
   return;
 }
   
   const ctx = (await getState(phone)) || "MAIN";
-
-// Compatibilidade: se vier botão antigo, redireciona
-if (upper === "REENVIAR_SENHA" || upper === "SENHA" || upper === "ESQUECI_SENHA") {
-  upper = "PWD_MUDAR";
-}
-
-// =======================
-// BOTÕES GLOBAIS: CRIAR SENHA / MUDAR SENHA (qualquer momento)
-// - NÃO pede data de nascimento
-// - dtNasc vem automaticamente via Versatilis (CodUsuario -> DadosUsuarioPorCodigo)
-// - se falhar, encaminha suporte
-// =======================
-if (upper === "PWD_CRIAR" || upper === "PWD_MUDAR") {
-  const s = await ensureSession(phone);
-
-  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-
-  // Se por algum motivo não houver CPF na sessão, volta pro CPF do wizard
-  if (cpf.length !== 11) {
-    await sendAndSetState(
-      phone,
-      "Para enviar o e-mail de senha do Portal, envie seu CPF (somente números).",
-      "WZ_CPF",
-      phoneNumberIdFallback
-    );
-    return;
-  }
-
-  // ✅ dtNasc automático (sem coletar)
-  const dtNascISO = await getDtNascISOAuto(phone);
-
-  if (!dtNascISO) {
-    const prefill = `Olá! Preciso de ajuda para receber a senha do Portal do Paciente.
-
-Paciente: ${phone}
-CPF: ${cpf}
-Motivo: não consegui obter a data de nascimento automaticamente para disparar o reset.`;
-    const link = makeWaLink(prefill);
-
-    await sendText({
-      to: phone,
-      body: `⚠️ Não consegui disparar o e-mail automaticamente.\n\n✅ Para suporte, clique:\n${link}`,
-      phoneNumberIdFallback,
-    });
-
-    await setState(phone, "MAIN");
-    return;
-  }
-
-  // ✅ chama versão robusta (corrige o 400)
- const out = await versaSolicitarSenhaPorCPF(cpf, dtNascISO, {
-  traceId,
-  tracePhone: maskPhone(phone),
-  entryPoint: upper,
-  currentState: ctx,
-});
-
-audit("RESET_PASSWORD_FLOW", auditOutcome({
-  traceId,
-  tracePhone: maskPhone(phone),
-  entryPoint: upper,
-  currentState: ctx,
-  cpfMasked: "***",
-  dtNascMasked: "***",
-  technicalAccepted: !!out?.ok,
-  technicalStage: out?.stage || null,
-  httpStatus: out?.out?.status || null,
-  rid: out?.out?.rid || null,
-  usedParam: out?.usedParam || null,
-  loginKindWinner:
-    out?.traceMeta?.loginKind ||
-    out?.loginKind ||
-    null,
-  loginValueMasked:
-    out?.traceMeta?.loginMasked ||
-    null,
-  functionalResult: out?.ok ? "UNCONFIRMED_EMAIL_DELIVERY" : "NOT_COMPLETED",
-  patientFacingMessage:
-    out?.ok
-      ? "RESET_EMAIL_REPORTED_AS_SENT"
-      : "RESET_FAILED_SUPPORT_REQUIRED",
-  escalationRequired: !out?.ok,
-  note:
-    out?.ok
-      ? "HTTP 200/OK da API nao comprova envio real do email nem reset funcional."
-      : "Fluxo de reset nao concluiu com sucesso tecnico.",
-}));
-  
-  if (!out.ok) {
-    const prefill = `Olá! Não estou recebendo o e-mail de redefinição de senha do Portal do Paciente.
-
-Paciente: ${phone}
-CPF: ${cpf}
-Motivo: SolicitarSenha falhou (integração retornou erro).`;
-    const link = makeWaLink(prefill);
-
-    await sendText({
-      to: phone,
-      body: `⚠️ Não consegui enviar o e-mail agora.\n\n✅ Para suporte, clique:\n${link}`,
-      phoneNumberIdFallback,
-    });
-
-    await setState(phone, "MAIN");
-    return;
-  }
-
-  await sendText({
-    to: phone,
-    body:
-      "✅ Pronto! Enviamos o e-mail para redefinição de senha do Portal.\n" +
-      "Se não chegar, verifique também o Spam/Lixo Eletrônico.",
-    phoneNumberIdFallback,
-  });
-
-  if (PORTAL_URL) {
-    await sendText({
-      to: phone,
-      body: `🔗 Portal do Paciente:\n${PORTAL_URL}`,
-      phoneNumberIdFallback,
-    });
-  }
-
-  await setState(phone, "MAIN");
-  return;
-}
   
 // =======================
 // BLOQUEIO FORMAL: PACIENTE EXISTENTE COM CADASTRO INCOMPLETO
 // ÚNICA OPÇÃO = HUMANO
 // =======================
 if (ctx === "BLOCK_EXISTING_INCOMPLETE") {
-  // Sempre gera link para humano com prefill (sem depender do que o usuário digitar)
   const s = await ensureSession(phone);
 
   const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
@@ -2278,64 +1940,18 @@ Paciente: ${phone}
 CPF: ${cpf || "(não informado)"}
 Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
 
-  const link = makeWaLink(prefill);
-
-  await sendText({
-    to: phone,
-    body: `✅ Para regularizar seu cadastro, clique no link abaixo e envie a mensagem:\n\n${link}`,
+  await sendSupportLink({
+    phone,
     phoneNumberIdFallback,
+    prefill,
+    nextState: "MAIN",
   });
-
-  // Mantém estado em MAIN depois de encaminhar
-  await setState(phone, "MAIN");
   return;
 }
 
 // =======================
 // PLANO DIVERGENTE: escolher qual usar neste agendamento
 // =======================
-if (ctx === "PLAN_PICK") {
-  // ✅ permite encaminhar ao atendente aqui também
-  if (upper === "FALAR_ATENDENTE") {
-    // reutiliza seu handler global (ele já existe acima),
-    // mas como aqui estamos dentro do PLAN_PICK, chamamos o mesmo comportamento:
-    const s = await ensureSession(phone);
-
-    const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
-const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
-const issue = s?.portal?.issue || null;
-
-const motivo =
-  issue?.type === "CONVENIO_NAO_HABILITADO"
-    ? `Convênio não habilitado no cadastro (precisa atualizar plano no Versatilis). Desejado: ${issue.wantedPlan}.`
-    : "";
-
-const detalhesPlano =
-  issue?.type === "CONVENIO_NAO_HABILITADO"
-    ? `CodUsuario: ${issue.codUsuario || "(não identificado)"} | Planos detectados: ${
-        Array.isArray(issue.plansDetected) && issue.plansDetected.length ? issue.plansDetected.join(", ") : "(nenhum)"
-      }`
-    : "";
-
-const prefill = `Olá! Preciso de ajuda no agendamento.
-
-Paciente: ${phone}
-CPF: ${cpf || "(não informado)"}
-${motivo ? `Motivo: ${motivo}` : ""}
-${detalhesPlano ? `Detalhes: ${detalhesPlano}` : ""}
-${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
-
-    const link = makeWaLink(prefill);
-
-    await sendAndSetState(
-      phone,
-      `✅ Para falar com nossa equipe, clique no link abaixo e envie a mensagem:\n\n${link}`,
-      "MAIN",
-      phoneNumberIdFallback
-    );
-    return;
-  }
-
   if (upper !== "PL_USE_PART" && upper !== "PL_USE_MED") {
     // não força mostrar PL_USE_MED se ele não estiver disponível no contexto atual
     await sendText({
@@ -2730,18 +2346,16 @@ Há estacionamento com valet no prédio.
 
 Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
 
-    const PORTAL_INFO = `📲 Portal do Paciente
+    const PORTAL_INFO = `📲 Conheça o Portal do Paciente
 
 No Portal, você pode:
-• Consultar e atualizar seus dados cadastrais  
-• Acompanhar seus agendamentos  
-• Acessar informações e serviços disponíveis  
+• Consultar e atualizar seus dados cadastrais
+• Acompanhar seus agendamentos
+• Acessar informações e serviços disponíveis
 
-🔑 Acesso ao Portal  
-Caso ainda não tenha senha ou não se recorde dela,  
-acesse o Portal e selecione a opção **“Esqueci minha senha”**.  
-
-As instruções para redefinição serão enviadas automaticamente para o e-mail cadastrado.`;
+🔑 Acesso ao Portal
+Se você ainda não tiver senha ou não se lembrar dela,
+acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
     try {
       await setState(phone, "MAIN");
@@ -2761,27 +2375,7 @@ As instruções para redefinição serão enviadas automaticamente para o e-mail
         });
       }
 
-      const sentPasswordInfo = await sendText({
-        to: phone,
-        body:
-          `🔐 Senha / Acesso\n` +
-          `A senha é enviada por e-mail (conforme cadastro no Portal).\n` +
-          `Se precisar, posso reenviar agora por aqui.`,
-        phoneNumberIdFallback,
-      });
-
-      const sentPasswordButtons = await sendButtons({
-        to: phone,
-        body: "Senha do Portal do Paciente:",
-        buttons: [
-          { id: "PWD_CRIAR", title: "Criar senha" },
-          { id: "PWD_MUDAR", title: "Mudar senha" },
-          { id: "FALAR_ATENDENTE", title: "Falar com atendente" },
-        ],
-        phoneNumberIdFallback,
-      });
-
-      audit("BOOKING_CONFIRM_PATIENT_RESPONSE", auditOutcome({
+        audit("BOOKING_CONFIRM_PATIENT_RESPONSE", auditOutcome({
         traceId,
         tracePhone: maskPhone(phone),
         rid: out?.rid || null,
@@ -2791,10 +2385,9 @@ As instruções para redefinição serão enviadas automaticamente para o e-mail
         patientFacingMessage: "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE",
         patientMessageMainSent: !!sentMainSuccess,
         patientMessagePortalLinkSent: !!sentPortalLink,
-        patientMessagePasswordInfoSent: !!sentPasswordInfo,
-        patientMessagePasswordButtonsSent: !!sentPasswordButtons,
         escalationRequired: false,
       }));
+      
     } catch (e) {
       audit("BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE", auditOutcome({
         traceId,
@@ -2852,43 +2445,37 @@ As instruções para redefinição serão enviadas automaticamente para o e-mail
 
   // Captura motivo da AJUDA e devolve link clicável com texto preenchido
   if (ctx === "WAIT_AJUDA_MOTIVO") {
-    const prefill = `Olá! Preciso de ajuda no agendamento.
+  const prefill = `Olá! Preciso de ajuda no agendamento.
 
 Paciente: ${phone}
 Motivo: ${raw}`;
-    const link = makeWaLink(prefill);
 
-    await sendAndSetState(
-      phone,
-      `Perfeito ✅ Para falar com nossa equipe, clique no link abaixo e envie a mensagem:
-
-${link}`,
-      "MAIN",
-      phoneNumberIdFallback
-    );
-    return;
-  }
+  await sendSupportLink({
+    phone,
+    phoneNumberIdFallback,
+    prefill,
+    nextState: "MAIN",
+  });
+  return;
+}
 
  // Texto livre: se estiver em ATENDENTE, gera link com a mensagem
 // ⚠️ NÃO aplicar fallback enquanto estiver em wizard WZ_*
 if (!digits && !String(ctx || "").startsWith("WZ_")) {
   if (ctx === "ATENDENTE") {
-    const prefill = `Olá! Preciso falar com um atendente.
+  const prefill = `Olá! Preciso falar com um atendente.
 
 Paciente: ${phone}
 Mensagem: ${raw}`;
-    const link = makeWaLink(prefill);
 
-    await sendAndSetState(
-      phone,
-      `Certo ✅ Clique no link abaixo para falar com nossa equipe e envie a mensagem:
-
-${link}`,
-      "MAIN",
-      phoneNumberIdFallback
-    );
-    return;
-  }
+  await sendSupportLink({
+    phone,
+    phoneNumberIdFallback,
+    prefill,
+    nextState: "MAIN",
+  });
+  return;
+}
 
 // padrão: volta ao menu (limpando pendências antigas)
 await resetToMain(phone, phoneNumberIdFallback);
@@ -3089,9 +2676,10 @@ if (prof.ok && prof.data) {
   }
 
   const v = validatePortalCompleteness(prof.data);
-  
+
   if (v.ok) {
-    const flowPlanKey = sFresh?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
+    const sCurrent = await ensureSession(phone);
+    const flowPlanKey = sCurrent?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
     const plansCod = normalizePlanListFromProfile(prof.data);
     const hasFlowPlan = hasPlanKey(plansCod, flowPlanKey);
     const hasMed = hasPlanKey(plansCod, PLAN_KEYS.MEDSENIOR_SP);
@@ -3405,9 +2993,9 @@ if (prof.ok && prof.data) {
     return;
   }
 
-  // =======================
-  // WZ_UF  -> UPSERT + RESET (se novo) + VALIDAR + IR PRA DATAS
-  // =======================
+// =======================
+// WZ_UF  -> CREATE + VALIDAR + IR PRA DATAS
+// =======================
   if (ctx === "WZ_UF") {
     const uf = cleanStr(raw).toUpperCase();
     if (!/^[A-Z]{2}$/.test(uf)) {
@@ -3420,47 +3008,23 @@ if (prof.ok && prof.data) {
       sess.portal.form.uf = uf;
     });
     
-    const existsCodUsuario = s.portal.exists ? s.portal.codUsuario : null;
-
-    const up = await versaUpsertPortalCompleto({
-      form: s.portal.form,
-      traceMeta: {
-        traceId,
-        tracePhone: maskPhone(phone),
-        flow: "PORTAL_WIZARD_CREATE",
-      },
-    });
+    const up = await versaCreatePortalCompleto({
+  form: s.portal.form,
+  traceMeta: {
+    traceId,
+    tracePhone: maskPhone(phone),
+    flow: "PORTAL_WIZARD_CREATE",
+  },
+});
 
     if (!up.ok || !up.codUsuario) {
       await sendText({
         to: phone,
-        body: "⚠️ Não consegui atualizar seu cadastro agora. Digite AJUDA para falar com nossa equipe.",
+        body: "⚠️ Não consegui concluir seu cadastro agora. Digite AJUDA para falar com nossa equipe.",
         phoneNumberIdFallback
       });
       await setState(phone, "MAIN");
       return;
-    }
-
-    // reset SOMENTE se novo
-    if (!existsCodUsuario) {
-      let reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
-      if (!reset?.ok) {
-        await new Promise(r => setTimeout(r, 1200));
-        reset = await versaSolicitarSenhaPorCPF(s.portal.form.cpf, s.portal.form.dtNascISO);
-      }
-
-      audit("PORTAL_NEW_USER_RESET_ATTEMPT", auditOutcome({
-        traceId,
-        tracePhone: maskPhone(phone),
-        technicalAccepted: !!reset?.ok,
-        httpStatus: reset?.out?.status || null,
-        rid: reset?.out?.rid || null,
-        functionalResult: !!reset?.ok ? "UNCONFIRMED_EMAIL_DELIVERY" : "NOT_COMPLETED",
-        patientFacingMessage: !!reset?.ok
-          ? "RESET_EMAIL_REPORTED_AS_SENT"
-          : "RESET_FAILED_NO_PATIENT_MESSAGE_HERE",
-        escalationRequired: !reset?.ok,
-      }));
     }
 
     // revalida
@@ -3468,11 +3032,20 @@ if (prof.ok && prof.data) {
     const v2 = prof2.ok ? validatePortalCompleteness(prof2.data) : { ok: false, missing: ["dados do cadastro"] };
 
     if (!v2.ok) {
-      await sendText({ to: phone, body: MSG.PORTAL_NEED_DATA(formatMissing(v2.missing)), phoneNumberIdFallback });
-
+      await sendText({
+        to: phone,
+        body: MSG.PORTAL_NEED_DATA(formatMissing(v2.missing)),
+        phoneNumberIdFallback,
+      });
+    
       const next = nextWizardStateFromMissing(v2.missing);
       await setState(phone, next);
-      await sendText({ to: phone, body: MSG.ASK_EMAIL, phoneNumberIdFallback }); // fallback simples
+    
+      await sendText({
+        to: phone,
+        body: getPromptByWizardState(next),
+        phoneNumberIdFallback,
+      });
       return;
     }
 
