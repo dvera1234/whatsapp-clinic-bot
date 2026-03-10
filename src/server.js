@@ -51,7 +51,13 @@ app.use(express.json({
 
 app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
-function md5Hex(s) {
+app.set("trust proxy", 1);
+
+// COMPATIBILIDADE LEGADA EXCLUSIVA DO VERSATILIS:
+// o endpoint /api/Login/CadastrarUsuario exige "Senha" em hash MD5,
+// conforme manual do fornecedor.
+// NÃO reutilizar este helper fora dessa integração específica.
+function md5HexLegacyVersatilisOnly(s) {
   return crypto.createHash("md5").update(String(s), "utf8").digest("hex");
 }
 
@@ -84,10 +90,67 @@ function log(level, tag, obj) {
   safeConsoleWrite(`[${nowIso()}] [${level}] ${tag}${payload}`);
 }
 
+function deepSanitizeForLog(value, depth = 0) {
+  if (depth > 6) return "[max-depth]";
+
+  if (value == null) return value;
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((v) => deepSanitizeForLog(v, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    const out = {};
+
+    for (const [k, v] of Object.entries(value)) {
+      const key = String(k || "").toLowerCase();
+
+      if (
+        key.includes("cpf") ||
+        key.includes("dtnasc") ||
+        key.includes("datanascimento") ||
+        key.includes("senha") ||
+        key.includes("password") ||
+        key.includes("token") ||
+        key.includes("authorization") ||
+        key.includes("secret") ||
+        key.includes("email")
+      ) {
+        out[k] = "***";
+        continue;
+      }
+
+      if (
+        key.includes("phone") ||
+        key.includes("telefone") ||
+        key.includes("celular")
+      ) {
+        out[k] = typeof v === "string" ? maskPhone(v) : "***";
+        continue;
+      }
+
+      if (key.includes("ip")) {
+        out[k] = typeof v === "string" ? maskIp(v) : "***";
+        continue;
+      }
+
+      out[k] = deepSanitizeForLog(v, depth + 1);
+    }
+
+    return out;
+  }
+
+  return value;
+}
+
 // JSON seguro (sem quebrar log por circular)
 function safeJson(obj) {
   try {
-    return JSON.stringify(obj);
+    return JSON.stringify(deepSanitizeForLog(obj));
   } catch {
     return JSON.stringify({ note: "unstringifiable" });
   }
@@ -265,6 +328,24 @@ let versaTokenExpMs = 0;
 function maskToken(t) {
   if (!t || typeof t !== "string") return "***";
   return t.length > 16 ? `${t.slice(0, 6)}...${t.slice(-4)}` : "***";
+}
+
+function maskIp(ip) {
+  const s = String(ip || "").trim();
+  if (!s) return null;
+
+  if (s.includes(":")) {
+    const parts = s.split(":").filter(Boolean);
+    if (!parts.length) return "***";
+    return `${parts.slice(0, 3).join(":")}:***`;
+  }
+
+  const parts = s.split(".");
+  if (parts.length === 4) {
+    return `${parts[0]}.${parts[1]}.***.***`;
+  }
+
+  return "***";
 }
 
 async function versatilisGetToken() {
@@ -675,6 +756,12 @@ function parseBRDateToISO(br) {
   return `${yyyy}-${String(mm).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
 }
 
+function formatBRDateFromISO(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || "").trim());
+  if (!m) return null;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
 // =======================
 // REGRA 30 DIAS (RETORNO)
 // =======================
@@ -795,7 +882,7 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
   const planoKey = form.planoKey;
   const codPlano = resolveCodPlano(planoKey);
 
-  const senhaMD5 = md5Hex(generateTempPassword(10));
+  const senhaMD5 = md5HexLegacyVersatilisOnly(generateTempPassword(10));
   const dtNascBR = formatBRDateFromISO(form.dtNascISO);
 
   const payload = {
@@ -1034,11 +1121,11 @@ async function loadSession(phone) {
 
 async function saveSession(phone, sessionObj) {
   const key = sessionKey(phone);
-  const val = JSON.stringify(sessionObj);
+  const safeSession = sanitizeSessionForSave(sessionObj);
+  const val = JSON.stringify(safeSession);
 
   logRedis("REDIS_SET", { phone: maskPhone(phone), key: maskKey(key), len: val.length });
 
-  // Upstash: options object
   await redis.set(key, val, { ex: SESSION_TTL_SECONDS });
   return true;
 }
@@ -1437,7 +1524,47 @@ async function withPhoneLock(phone, fn) {
     }
   }
 }
-  
+
+function sanitizeSessionForSave(s) {
+  return {
+    state: s?.state ?? null,
+    lastUserTs: Number(s?.lastUserTs || 0),
+    lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
+    booking: s?.booking
+      ? {
+          planoKey: s.booking?.planoKey ?? null,
+          codColaborador: Number(s.booking?.codColaborador || 0) || null,
+          codUsuario: Number(s.booking?.codUsuario || 0) || null,
+          isoDate: s.booking?.isoDate ?? null,
+          pageIndex: Number(s.booking?.pageIndex || 0) || 0,
+          slots: Array.isArray(s.booking?.slots)
+            ? s.booking.slots.map((x) => ({
+                codHorario: Number(x?.codHorario || 0) || null,
+                hhmm: x?.hhmm ?? null,
+              })).filter((x) => x.codHorario && x.hhmm)
+            : [],
+          isRetorno: !!s.booking?.isRetorno,
+        }
+      : null,
+    portal: s?.portal
+      ? {
+          step: s.portal?.step ?? null,
+          codUsuario: Number(s.portal?.codUsuario || 0) || null,
+          exists: !!s.portal?.exists,
+          profile: s.portal?.profile ?? null,
+          form: s.portal?.form ?? {},
+          missing: Array.isArray(s.portal?.missing) ? s.portal.missing : [],
+          issue: s.portal?.issue ?? null,
+        }
+      : null,
+    pending: s?.pending
+      ? {
+          codHorario: Number(s.pending?.codHorario || 0) || null,
+        }
+      : null,
+  };
+}
+
 // Sessão do paciente fica no Redis.
 // Maps em memória são usados apenas para utilidades locais do processo
 // (ex.: supressão de logs e lock por telefone), sem persistência clínica.
@@ -1825,6 +1952,15 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
     phoneNumberIdFallback,
   });
 
+  if (!sent) {
+    errLog("FLOW_STATE_TRANSITION_ABORTED_SEND_FAIL", {
+      phoneMasked: maskPhone(phone),
+      targetState: state || null,
+      outboundMessageLength: String(body || "").length,
+    });
+    return false;
+  }
+
   if (state) {
     await setState(phone, state);
 
@@ -1833,10 +1969,12 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
       phoneMasked: maskPhone(phone),
       targetState: state,
       readbackState: back || "(none)",
-      outboundMessageSent: !!sent,
+      outboundMessageSent: true,
       outboundMessageLength: String(body || "").length,
     });
   }
+
+  return true;
 }
 
 // =======================
@@ -1949,6 +2087,65 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
   return;
 }
 
+if (ctx === "PLAN_PICK") {
+  if (upper === "FALAR_ATENDENTE") {
+    const s = await ensureSession(phone);
+    const prefill = buildSupportPrefillFromSession(phone, s);
+
+    await sendSupportLink({
+      phone,
+      phoneNumberIdFallback,
+      prefill,
+      nextState: "MAIN",
+    });
+    return;
+  }
+
+  if (upper !== "PL_USE_PART" && upper !== "PL_USE_MED") {
+    await sendText({
+      to: phone,
+      body: "Use os botões apresentados para prosseguir.",
+      phoneNumberIdFallback,
+    });
+    return;
+  }
+
+  const chosenKey =
+    upper === "PL_USE_MED" ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
+
+  await updateSession(phone, (sess) => {
+    sess.booking = sess.booking || {};
+    sess.booking.planoKey = chosenKey;
+
+    if (sess.portal && sess.portal.issue) {
+      delete sess.portal.issue;
+    }
+  });
+
+  const s = await ensureSession(phone);
+  const codUsuario = Number(s?.booking?.codUsuario || s?.portal?.codUsuario);
+
+  if (!codUsuario) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
+      phoneNumberIdFallback,
+    });
+    await setState(phone, "MAIN");
+    return;
+  }
+
+  await finishWizardAndGoToDates({
+    phone,
+    phoneNumberIdFallback,
+    codUsuario,
+    planoKeyFromWizard: chosenKey,
+    traceId,
+  });
+
+  return;
+}
+  
 // =======================
 // PLANO DIVERGENTE: escolher qual usar neste agendamento
 // =======================
@@ -3244,7 +3441,7 @@ app.post("/webhook", async (req, res) => {
   try {
     if (!isValidMetaSignature(req)) {
       audit("WEBHOOK_INVALID_SIGNATURE", {
-        ip: req.ip || null,
+        ipMasked: maskIp(req.ip),
         hasSignatureHeader: !!req.headers["x-hub-signature-256"],
       });
       return res.sendStatus(403);
@@ -3347,14 +3544,24 @@ function isValidMetaSignature(req) {
 
 function requireDebugKey(req, res, next) {
   const DEBUG_KEY = process.env.DEBUG_KEY;
-  const providedRaw = req.query.k ?? req.headers["x-debug-key"];
+  const providedRaw = req.headers["x-debug-key"];
   const provided = Array.isArray(providedRaw) ? providedRaw[0] : providedRaw;
 
   if (!DEBUG_KEY || !safeEqual(provided, DEBUG_KEY)) {
-    return res.status(403).json({ ok: false, error: "forbidden (missing/invalid debug key)" });
+    return res.status(403).json({ ok: false, error: "forbidden" });
   }
 
   next();
+}
+
+function normalizeDigits(s) {
+  return String(s || "").replace(/\D+/g, "");
+}
+
+function isAllowedDebugPhone(phone) {
+  const allowed = normalizeDigits(process.env.DEBUG_ALLOWED_PHONE || "");
+  const got = normalizeDigits(phone || "");
+  return !!allowed && got === allowed;
 }
 
 function handleDebugRouteError(routeName, e, res, req) {
@@ -3500,6 +3707,10 @@ app.get("/debug/test-botoes", async (req, res) => {
     const to = req.query.to; // numero com DDI, ex: 5519XXXXXXXXX
     if (!to) {
       return res.status(400).json({ ok: false, error: "Informe ?to=5519..." });
+    }
+    
+    if (!isAllowedDebugPhone(to)) {
+      return res.status(403).json({ ok: false, error: "debug target not allowed" });
     }
 
     await sendButtons({
