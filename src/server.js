@@ -798,12 +798,6 @@ function parseBRDateToISO(br) {
   return `${yyyy}-${String(mm).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
 }
 
-function formatBRDateFromISO(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || "").trim());
-  if (!m) return null;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-}
-
 // =======================
 // REGRA 30 DIAS (RETORNO)
 // =======================
@@ -3600,7 +3594,7 @@ if (isDebugEnabled()) {
   });
 
   // Aplica proteção em TODAS as rotas que começam com /debug
-  app.use("/debug", requireDebugEnabled, requireDebugKey);
+  app.use("/debug", requireDebugKey);
 
   app.get("/debug/versatilis/especialidades", async (req, res) => {
     try {
@@ -3828,6 +3822,7 @@ if (isDebugEnabled()) {
       return handleDebugRouteError("/debug/versatilis/codusuario", e, res, req);
     }
   });
+}
   
 // =======================
 app.use((err, req, res, next) => {
@@ -3836,6 +3831,7 @@ app.use((err, req, res, next) => {
     method: req.method || null,
     ipMasked: maskIp(req.ip),
     error: String(err?.message || err),
+    stackPreview: err?.stack ? String(err.stack).slice(0, 500) : null,
   });
 
   return res.sendStatus(500);
