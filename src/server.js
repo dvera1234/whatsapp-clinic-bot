@@ -33,7 +33,6 @@ const port = process.env.PORT || 3000;
 
 app.use(globalLimiter);
 app.use("/webhook", webhookLimiter);
-app.use("/debug", debugLimiter);
 
 app.use(helmet({
   contentSecurityPolicy: false, // API backend, sem necessidade de CSP rígida aqui
@@ -43,13 +42,13 @@ app.use(helmet({
 app.disable("x-powered-by");
 
 app.use(express.json({
-  limit: "256kb",
+  limit: "128kb",
   verify: (req, res, buf) => {
     req.rawBody = buf;
   },
 }));
 
-app.use(express.urlencoded({ extended: false, limit: "256kb" }));
+app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
 app.set("trust proxy", 1);
 
@@ -90,63 +89,6 @@ function log(level, tag, obj) {
   safeConsoleWrite(`[${nowIso()}] [${level}] ${tag}${payload}`);
 }
 
-function deepSanitizeForLog(value, depth = 0) {
-  if (depth > 6) return "[max-depth]";
-
-  if (value == null) return value;
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((v) => deepSanitizeForLog(v, depth + 1));
-  }
-
-  if (typeof value === "object") {
-    const out = {};
-
-    for (const [k, v] of Object.entries(value)) {
-      const key = String(k || "").toLowerCase();
-
-      if (
-        key.includes("cpf") ||
-        key.includes("dtnasc") ||
-        key.includes("datanascimento") ||
-        key.includes("senha") ||
-        key.includes("password") ||
-        key.includes("token") ||
-        key.includes("authorization") ||
-        key.includes("secret") ||
-        key.includes("email")
-      ) {
-        out[k] = "***";
-        continue;
-      }
-
-      if (
-        key.includes("phone") ||
-        key.includes("telefone") ||
-        key.includes("celular")
-      ) {
-        out[k] = typeof v === "string" ? maskPhone(v) : "***";
-        continue;
-      }
-
-      if (key.includes("ip")) {
-        out[k] = typeof v === "string" ? maskIp(v) : "***";
-        continue;
-      }
-
-      out[k] = deepSanitizeForLog(v, depth + 1);
-    }
-
-    return out;
-  }
-
-  return value;
-}
-
 function maskIp(ip) {
   const s = String(ip || "").trim();
   if (!s) return null;
@@ -167,12 +109,9 @@ function maskIp(ip) {
 
 function deepSanitizeForLog(value, depth = 0) {
   if (depth > 6) return "[max-depth]";
-
   if (value == null) return value;
 
-  if (typeof value === "string") {
-    return value;
-  }
+  if (typeof value === "string") return value;
 
   if (Array.isArray(value)) {
     return value.map((v) => deepSanitizeForLog(v, depth + 1));
@@ -220,6 +159,47 @@ function deepSanitizeForLog(value, depth = 0) {
   }
 
   return value;
+}
+
+function sanitizeSessionForSave(s) {
+  return {
+    state: s?.state ?? null,
+    lastUserTs: Number(s?.lastUserTs || 0),
+    lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
+    booking: s?.booking
+      ? {
+          planoKey: s.booking?.planoKey ?? null,
+          codColaborador: Number(s.booking?.codColaborador || 0) || null,
+          codUsuario: Number(s.booking?.codUsuario || 0) || null,
+          isoDate: s.booking?.isoDate ?? null,
+          pageIndex: Number(s.booking?.pageIndex || 0) || 0,
+          slots: Array.isArray(s.booking?.slots)
+            ? s.booking.slots
+                .map((x) => ({
+                  codHorario: Number(x?.codHorario || 0) || null,
+                  hhmm: x?.hhmm ?? null,
+                }))
+                .filter((x) => x.codHorario && x.hhmm)
+            : [],
+          isRetorno: !!s.booking?.isRetorno,
+        }
+      : null,
+    portal: s?.portal
+      ? {
+          step: s.portal?.step ?? null,
+          codUsuario: Number(s.portal?.codUsuario || 0) || null,
+          exists: !!s.portal?.exists,
+          form: s.portal?.form ?? {},
+          missing: Array.isArray(s.portal?.missing) ? s.portal.missing : [],
+          issue: s.portal?.issue ?? null,
+        }
+      : null,
+    pending: s?.pending
+      ? {
+          codHorario: Number(s.pending?.codHorario || 0) || null,
+        }
+      : null,
+  };
 }
 
 function safeJson(obj) {
@@ -309,8 +289,14 @@ function logRateLimited(level, key, tag, obj, minIntervalMs = 60_000) {
 // =====================================
 // PLANOS FIXOS 
 // =====================================
-const COD_PLANO_PARTICULAR = 2;
-const COD_PLANO_MEDSENIOR_SP = 3;
+const COD_PLANO_PARTICULAR = readPositiveIntEnv("COD_PLANO_PARTICULAR", 0);
+const COD_PLANO_MEDSENIOR_SP = readPositiveIntEnv("COD_PLANO_MEDSENIOR_SP", 0);
+
+if (!COD_PLANO_PARTICULAR || !COD_PLANO_MEDSENIOR_SP) {
+  throw new Error(
+    "ENV obrigatória ausente ou inválida: COD_PLANO_PARTICULAR / COD_PLANO_MEDSENIOR_SP"
+  );
+}
 
 const PLAN_KEYS = {
   PARTICULAR: "PARTICULAR",
@@ -402,24 +388,6 @@ let versaTokenExpMs = 0;
 function maskToken(t) {
   if (!t || typeof t !== "string") return "***";
   return t.length > 16 ? `${t.slice(0, 6)}...${t.slice(-4)}` : "***";
-}
-
-function maskIp(ip) {
-  const s = String(ip || "").trim();
-  if (!s) return null;
-
-  if (s.includes(":")) {
-    const parts = s.split(":").filter(Boolean);
-    if (!parts.length) return "***";
-    return `${parts.slice(0, 3).join(":")}:***`;
-  }
-
-  const parts = s.split(".");
-  if (parts.length === 4) {
-    return `${parts[0]}.${parts[1]}.***.***`;
-  }
-
-  return "***";
 }
 
 async function versatilisGetToken() {
@@ -957,13 +925,13 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
   const codPlano = resolveCodPlano(planoKey);
 
   const senhaMD5 = md5HexLegacyVersatilisOnly(generateTempPassword(10));
-  const dtNascBR = formatBRDateFromISO(form.dtNascISO);
+  const dtNascISO = cleanStr(form.dtNascISO);
 
   const payload = {
     Nome: form.nome,
     CPF: form.cpf,
     Email: form.email,
-    DtNasc: dtNascBR,
+    DtNasc: dtNascISO,
     Celular: form.celular,
     Telefone: form.telefone || form.celular || "",
     CEP: form.cep,
@@ -989,8 +957,22 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
   }
 
   const empties = Object.entries(payload)
-    .filter(([k, v]) => isEmpty(v))
+    .filter(([_, v]) => isEmpty(v))
     .map(([k]) => k);
+
+  const validationErrors = [];
+
+  if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5) validationErrors.push("Nome");
+  if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, ""))) validationErrors.push("CPF");
+  if (!isValidEmail(payload.Email)) validationErrors.push("Email");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || ""))) validationErrors.push("DtNasc");
+  if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, ""))) validationErrors.push("CEP");
+  if (!cleanStr(payload.Endereco)) validationErrors.push("Endereco");
+  if (!cleanStr(payload.Numero)) validationErrors.push("Numero");
+  if (!cleanStr(payload.Bairro)) validationErrors.push("Bairro");
+  if (!cleanStr(payload.Cidade)) validationErrors.push("Cidade");
+  if (!cleanStr(payload.Celular)) validationErrors.push("Celular");
+  if (!cleanStr(payload.Senha)) validationErrors.push("Senha");
 
   const shape = Object.fromEntries(
     Object.entries(payload).map(([k, v]) => {
@@ -1004,10 +986,11 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
 
   debugLog("PORTAL_CREATE_PAYLOAD_SHAPE", {
     empties,
+    validationErrors,
     shape,
   });
 
-  if (empties.length > 0 || typeof payload.DtNasc !== "string" || payload.DtNasc.trim().length < 8) {
+  if (empties.length > 0 || validationErrors.length > 0) {
     audit("PORTAL_CREATE_BLOCKED_INVALID_PAYLOAD", auditOutcome({
       ...traceMeta,
       technicalAccepted: false,
@@ -1029,12 +1012,14 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
           )
         : {},
       missingFields: empties,
+      validationErrors,
     }));
 
     return {
       ok: false,
       stage: "blocked_missing_fields",
       missing: empties,
+      validationErrors,
       hint: "Wizard não preencheu dados obrigatórios. Corrigir fluxo WZ_*.",
     };
   }
@@ -1111,7 +1096,7 @@ requireEnv("VERSATILIS_USER");
 requireEnv("VERSATILIS_PASS");
 requireEnv("UPSTASH_REDIS_REST_URL");
 requireEnv("UPSTASH_REDIS_REST_TOKEN");
-requireEnv("APP_SECRET");
+const APP_SECRET = requireEnv("APP_SECRET");
 
 opLog("ENV_CHECK", {
   hasToken: !!pickToken(),
@@ -1133,7 +1118,7 @@ const DEBUG_REDIS = String(process.env.DEBUG_REDIS || "0").trim() === "1";
 
 function logRedis(tag, obj) {
   if (!DEBUG_REDIS) return;
-  console.log(`[${tag}]`, obj);
+  safeConsoleWrite(`[${tag}] ${safeJson(obj)}`);
 }
   
 // =======================
@@ -1147,9 +1132,15 @@ function readPositiveIntEnv(name, fallback) {
 }
 
 // mover configs para ENV (como regra)
-const COD_UNIDADE = readPositiveIntEnv("COD_UNIDADE", 2);
-const COD_ESPECIALIDADE = readPositiveIntEnv("COD_ESPECIALIDADE", 1003);
-const COD_COLABORADOR = readPositiveIntEnv("COD_COLABORADOR", 3);
+const COD_UNIDADE = readPositiveIntEnv("COD_UNIDADE", 0);
+const COD_ESPECIALIDADE = readPositiveIntEnv("COD_ESPECIALIDADE", 0);
+const COD_COLABORADOR = readPositiveIntEnv("COD_COLABORADOR", 0);
+
+if (!COD_UNIDADE || !COD_ESPECIALIDADE || !COD_COLABORADOR) {
+  throw new Error(
+    "ENV obrigatória ausente ou inválida: COD_UNIDADE / COD_ESPECIALIDADE / COD_COLABORADOR"
+  );
+}
 
 // =======================
 // RESET DE FLUXO (código secreto de teste)
@@ -1191,48 +1182,6 @@ async function loadSession(phone) {
 
   // fallback seguro
   return null;
-}
-
-function sanitizeSessionForSave(s) {
-  return {
-    state: s?.state ?? null,
-    lastUserTs: Number(s?.lastUserTs || 0),
-    lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
-    booking: s?.booking
-      ? {
-          planoKey: s.booking?.planoKey ?? null,
-          codColaborador: Number(s.booking?.codColaborador || 0) || null,
-          codUsuario: Number(s.booking?.codUsuario || 0) || null,
-          isoDate: s.booking?.isoDate ?? null,
-          pageIndex: Number(s.booking?.pageIndex || 0) || 0,
-          slots: Array.isArray(s.booking?.slots)
-            ? s.booking.slots
-                .map((x) => ({
-                  codHorario: Number(x?.codHorario || 0) || null,
-                  hhmm: x?.hhmm ?? null,
-                }))
-                .filter((x) => x.codHorario && x.hhmm)
-            : [],
-          isRetorno: !!s.booking?.isRetorno,
-        }
-      : null,
-    portal: s?.portal
-      ? {
-          step: s.portal?.step ?? null,
-          codUsuario: Number(s.portal?.codUsuario || 0) || null,
-          exists: !!s.portal?.exists,
-          profile: s.portal?.profile ?? null,
-          form: s.portal?.form ?? {},
-          missing: Array.isArray(s.portal?.missing) ? s.portal.missing : [],
-          issue: s.portal?.issue ?? null,
-        }
-      : null,
-    pending: s?.pending
-      ? {
-          codHorario: Number(s.pending?.codHorario || 0) || null,
-        }
-      : null,
-  };
 }
 
 async function saveSession(phone, sessionObj) {
@@ -1369,7 +1318,19 @@ const SUPPORT_WA = "5519933005596";
 // =======================
 // PORTAL DO PACIENTE (ENV) — GLOBAL
 // =======================
-const PORTAL_URL = String(process.env.PORTAL_URL || "").trim();
+function normalizeHttpsUrlOrEmpty(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "https:") return "";
+    return u.toString();
+  } catch {
+    return "";
+  }
+}
+
+const PORTAL_URL = normalizeHttpsUrlOrEmpty(process.env.PORTAL_URL);
 
 // =======================
 // TEXTOS
@@ -1575,6 +1536,12 @@ Descreva abaixo como podemos te ajudar.
 // =======================
 // HELPERS
 // =======================
+function auditVersaDivergence(payload = {}) {
+  audit("VERSATILIS_MANUAL_TENANT_DIVERGENCE", {
+    ...payload,
+  });
+}
+
 function getPromptByWizardState(state) {
   switch (state) {
     case "WZ_NOME": return MSG.ASK_NOME;
@@ -1639,46 +1606,6 @@ async function withPhoneLock(phone, fn) {
       inboundLocks.delete(key);
     }
   }
-}
-
-function sanitizeSessionForSave(s) {
-  return {
-    state: s?.state ?? null,
-    lastUserTs: Number(s?.lastUserTs || 0),
-    lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
-    booking: s?.booking
-      ? {
-          planoKey: s.booking?.planoKey ?? null,
-          codColaborador: Number(s.booking?.codColaborador || 0) || null,
-          codUsuario: Number(s.booking?.codUsuario || 0) || null,
-          isoDate: s.booking?.isoDate ?? null,
-          pageIndex: Number(s.booking?.pageIndex || 0) || 0,
-          slots: Array.isArray(s.booking?.slots)
-            ? s.booking.slots.map((x) => ({
-                codHorario: Number(x?.codHorario || 0) || null,
-                hhmm: x?.hhmm ?? null,
-              })).filter((x) => x.codHorario && x.hhmm)
-            : [],
-          isRetorno: !!s.booking?.isRetorno,
-        }
-      : null,
-    portal: s?.portal
-      ? {
-          step: s.portal?.step ?? null,
-          codUsuario: Number(s.portal?.codUsuario || 0) || null,
-          exists: !!s.portal?.exists,
-          profile: s.portal?.profile ?? null,
-          form: s.portal?.form ?? {},
-          missing: Array.isArray(s.portal?.missing) ? s.portal.missing : [],
-          issue: s.portal?.issue ?? null,
-        }
-      : null,
-    pending: s?.pending
-      ? {
-          codHorario: Number(s.pending?.codHorario || 0) || null,
-        }
-      : null,
-  };
 }
 
 // Sessão do paciente fica no Redis.
@@ -1771,7 +1698,7 @@ function buildSupportPrefillFromSession(phone, s) {
   return `Olá! Preciso de ajuda no agendamento.
 
 Paciente: ${phone}
-CPF: ${cpf || "(não informado)"}
+CPF: ${formatCPFMask(cpf) || "(não informado)"}
 ${motivo ? `Motivo: ${motivo}` : ""}
 ${detalhesPlano ? `Detalhes: ${detalhesPlano}` : ""}
 ${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
@@ -2191,7 +2118,7 @@ if (ctx === "BLOCK_EXISTING_INCOMPLETE") {
   const prefill = `Olá! Preciso de ajuda para completar meu cadastro no Portal do Paciente.
 
 Paciente: ${phone}
-CPF: ${cpf || "(não informado)"}
+CPF: ${formatCPFMask(cpf) || "(não informado)"}
 Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
 
   await sendSupportLink({
@@ -2805,7 +2732,7 @@ if (String(ctx || "").startsWith("WZ_")) {
   let s = await ensureSession(phone);
   if (!s.portal) {
     await updateSession(phone, (sess) => {
-      sess.portal = { codUsuario: null, exists: false, profile: null, form: {} };
+      sess.portal = { codUsuario: null, exists: false, form: {} };
     });
     s = await ensureSession(phone);
   }
@@ -2849,11 +2776,11 @@ if (ctx === "WZ_CPF") {
 
     if (!codUsuario) {
       const prefill = `Olá! Preciso de ajuda no agendamento.
-  
-  Paciente: ${phone}
-  CPF: ${cpf}
-  Motivo: paciente sem cadastro localizável automaticamente no sistema.`;
-  
+
+      Paciente: ${phone}
+      CPF: ${formatCPFMask(cpf) || "***"}
+      Motivo: paciente sem cadastro localizável automaticamente no sistema.`;
+        
       const link = makeWaLink(prefill);
   
       await sendText({
@@ -2875,11 +2802,6 @@ await updateSession(phone, (sess) => {
 });
 
 const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
-
-await updateSession(phone, (sess) => {
-  sess.portal = sess.portal || {};
-  sess.portal.profile = prof.ok ? prof.data : null;
-});
 
 if (prof.ok && prof.data) {
   const p = prof.data;
@@ -3367,7 +3289,6 @@ if (ctx === "PARTICULAR") {
         step: "CPF",
         codUsuario: null,
         exists: false,
-        profile: null,
         form: {},
       };
     });
@@ -3430,7 +3351,6 @@ if (ctx === "MEDSENIOR") {
         step: "CPF",
         codUsuario: null,
         exists: false,
-        profile: null,
         form: {},
       };
     });
@@ -3518,23 +3438,42 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(200);
 
     const body = req.body;
-    if (body.object !== "whatsapp_business_account") return;
 
+    if (!body || body.object !== "whatsapp_business_account") return;
+    
     const entry = body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-
+    if (!entry || !Array.isArray(entry.changes) || entry.changes.length === 0) {
+      audit("WEBHOOK_INVALID_SHAPE", {
+        ipMasked: maskIp(req.ip),
+        hasBody: !!body,
+      });
+      return;
+    }
+    
+    const change = entry.changes[0];
+    if (!change || change.field !== "messages" || !change.value || typeof change.value !== "object") {
+      audit("WEBHOOK_INVALID_CHANGE_SHAPE", {
+        ipMasked: maskIp(req.ip),
+      });
+      return;
+    }
+    
+    const value = change.value;
     const msg = value?.messages?.[0];
     if (!msg) return;
 
     const from = msg.from;
     const traceId = crypto.randomUUID();
 
-    const text = (
+    let text = (
       msg.text?.body ||
       msg.interactive?.button_reply?.id ||
       ""
     ).trim();
+    
+    if (text.length > 500) {
+      text = text.slice(0, 500);
+    }
     
     if (!text) {
       audit("WEBHOOK_IGNORED_EMPTY_MESSAGE", {
@@ -3577,37 +3516,39 @@ function isDebugEnabled() {
   const enabled = String(process.env.ENABLE_DEBUG || "").trim() === "1";
   const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
 
-  // debug só fora de produção e explicitamente habilitado
   return enabled && (nodeEnv === "development" || nodeEnv === "test");
-}
-
-function requireDebugEnabled(req, res, next) {
-  if (!isDebugEnabled()) return res.sendStatus(404);
-  next();
 }
 
 function safeEqual(a, b) {
   const aa = Buffer.from(String(a || ""), "utf8");
   const bb = Buffer.from(String(b || ""), "utf8");
 
-  if (aa.length !== bb.length) return false;
-  return crypto.timingSafeEqual(aa, bb);
+  const max = Math.max(aa.length, bb.length, 1);
+  const pa = Buffer.alloc(max);
+  const pb = Buffer.alloc(max);
+
+  aa.copy(pa);
+  bb.copy(pb);
+
+  const same = crypto.timingSafeEqual(pa, pb);
+  return same && aa.length === bb.length;
 }
 
 function isValidMetaSignature(req) {
-  const appSecret = String(process.env.APP_SECRET || "").trim();
   const signatureHeader = req.headers["x-hub-signature-256"];
 
-  if (!appSecret || !signatureHeader || !req.rawBody) return false;
+  if (!signatureHeader || !req.rawBody) {
+    return false;
+  }
 
   const expected =
     "sha256=" +
     crypto
-      .createHmac("sha256", appSecret)
+      .createHmac("sha256", APP_SECRET)
       .update(req.rawBody)
       .digest("hex");
 
-  return safeEqual(signatureHeader, expected);
+  return safeEqual(String(signatureHeader), expected);
 }
 
 function requireDebugKey(req, res, next) {
@@ -3647,182 +3588,261 @@ function handleDebugRouteError(routeName, e, res, req) {
   });
 }
 
-app.use("/debug", (req, res, next) => {
-  const allowed = new Set(["GET", "POST"]);
-  if (!allowed.has(req.method)) {
-    return res.status(405).json({ ok: false, error: "method not allowed" });
-  }
-  next();
-});
-
-// Aplica proteção em TODAS as rotas que começam com /debug
-app.use("/debug", requireDebugEnabled, requireDebugKey);
-
-app.get("/debug/versatilis/especialidades", async (req, res) => {
-  try {
-    const out = await versatilisFetch("/api/Especialidade/Especialidades");
-    return res.status(200).json(out);
-  } catch (e) {
-    return handleDebugRouteError("/debug/versatilis/especialidades", e, res, req);
-  }
-});
-
-app.get("/debug/versatilis/agenda-datas", async (req, res) => {
-  try {
-    const CodColaborador = req.query.CodColaborador || "3";
-    const CodUsuario = req.query.CodUsuario || "17";
-    const DataInicial = req.query.DataInicial || "2026-02-24";
-    const DataFinal = req.query.DataFinal || "2026-02-24";
-
-    const path =
-      `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(CodColaborador)}` +
-      `&CodUsuario=${encodeURIComponent(CodUsuario)}` +
-      `&DataInicial=${encodeURIComponent(DataInicial)}` +
-      `&DataFinal=${encodeURIComponent(DataFinal)}`;
-
-    const out = await versatilisFetch(path);
-    return res.status(200).json(out);
-  } catch (e) {
-    return handleDebugRouteError("/debug/versatilis/agenda-datas", e, res, req);
-  }
-});
-
-app.get("/debug/versatilis/agenda-consulta", async (req, res) => {
-  try {
-    const CodColaborador = req.query.CodColaborador || "3";
-    const CodUsuario = req.query.CodUsuario || "17";
-    const DataInicial = req.query.DataInicial || "2026-02-24";
-    const DataFinal = req.query.DataFinal || "2026-02-24";
-
-    const path =
-      `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(CodColaborador)}` +
-      `&CodUsuario=${encodeURIComponent(CodUsuario)}` +
-      `&DataInicial=${encodeURIComponent(DataInicial)}` +
-      `&DataFinal=${encodeURIComponent(DataFinal)}`;
-
-    const out = await versatilisFetch(path);
-
-    if (!out.ok || !Array.isArray(out.data)) {
-      return res.status(200).json(out);
+if (isDebugEnabled()) {
+  app.use("/debug", debugLimiter);
+  
+  app.use("/debug", (req, res, next) => {
+    const allowed = new Set(["GET", "POST"]);
+    if (!allowed.has(req.method)) {
+      return res.status(405).json({ ok: false, error: "method not allowed" });
     }
+    next();
+  });
 
-    const filtered = out.data
-      .filter((h) => h && h.PermiteConsulta === true)
-      .map((h) => ({
-        CodHorario: h.CodHorario,
-        Data: h.Data,
-        Hora: h.Hora,
-        CodUnidade: h.CodUnidade,
-        Unidade: h.Unidade,
-        CodEspecialidade: h.CodEspecialidade,
-        NomeEspecialidade: h.NomeEspecialidade,
-        PermiteConsulta: h.PermiteConsulta,
-      }));
+  // Aplica proteção em TODAS as rotas que começam com /debug
+  app.use("/debug", requireDebugEnabled, requireDebugKey);
 
-    return res.status(200).json({ ok: true, status: 200, data: filtered });
-  } catch (e) {
-    return handleDebugRouteError("/debug/versatilis/agenda-consulta", e, res, req);
-  }
-});
-
-app.post("/debug/versatilis/confirmar-agendamento", async (req, res) => {
-  try {
-    
-    // Payload (use defaults do seu teste real; pode sobrescrever via body)
-    const p = req.body || {};
-
-    const payload = {
-  CodUnidade: Number(p.CodUnidade ?? 2),
-  CodEspecialidade: Number(p.CodEspecialidade ?? 1003),
-  CodPlano: Number(p.CodPlano ?? 2),
-  CodHorario: Number(p.CodHorario),
-  CodUsuario: Number(p.CodUsuario),
-  CodColaborador: Number(p.CodColaborador ?? 3),
-  BitTelemedicina: Boolean(p.BitTelemedicina ?? false),
-  Confirmada: Boolean(p.Confirmada ?? true),
-};
-
-// validações obrigatórias
-if (!payload.CodHorario || Number.isNaN(payload.CodHorario)) {
-  return res.status(400).json({ ok: false, error: "CodHorario é obrigatório (number)" });
-}
-
-if (!payload.CodUsuario || Number.isNaN(payload.CodUsuario)) {
-  return res.status(400).json({ ok: false, error: "CodUsuario é obrigatório (number)" });
-}
-
-    // Opcionais (só envia se vierem)
-    if (p.NumCarteirinha) payload.NumCarteirinha = String(p.NumCarteirinha);
-    if (p.CodProcedimento != null && p.CodProcedimento !== "") payload.CodProcedimento = Number(p.CodProcedimento);
-    if (p.TUSS) payload.TUSS = String(p.TUSS);
-    if (p.CodigoVenda != null && p.CodigoVenda !== "") payload.CodigoVenda = Number(p.CodigoVenda);
-    if (p.Data) payload.Data = String(p.Data); // use apenas se for testar CodHorario=0 (não recomendo agora)
-
-    // Chamada real
-    const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
-      method: "POST",
-      jsonBody: payload,
-    });
-
-    return res.status(200).json(out);
-  } catch (e) {
-    return handleDebugRouteError("/debug/versatilis/confirmar-agendamento", e, res, req);
-  }
-});
-
-app.get("/debug/test-botoes", async (req, res) => {
-  try {
-    const to = req.query.to; // numero com DDI, ex: 5519XXXXXXXXX
-    if (!to) {
-      return res.status(400).json({ ok: false, error: "Informe ?to=5519..." });
+  app.get("/debug/versatilis/especialidades", async (req, res) => {
+    try {
+      const out = await versatilisFetch("/api/Especialidade/Especialidades");
+      return res.status(200).json({
+        ok: !!out?.ok,
+        status: out?.status ?? null,
+        rid: out?.rid ?? null,
+        allow: out?.allow ?? null,
+        dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
+        dataPreview:
+          typeof out?.data === "string"
+            ? out.data.slice(0, 300)
+            : Array.isArray(out?.data)
+            ? `array(len=${out.data.length})`
+            : out?.data && typeof out.data === "object"
+            ? Object.keys(out.data).slice(0, 20)
+            : null,
+      });
+    } catch (e) {
+      return handleDebugRouteError("/debug/versatilis/especialidades", e, res, req);
     }
-    
-    if (!isAllowedDebugPhone(to)) {
-      return res.status(403).json({ ok: false, error: "debug target not allowed" });
+  });
+
+  app.get("/debug/versatilis/agenda-datas", async (req, res) => {
+    try {
+      const CodColaborador = req.query.CodColaborador || "3";
+      const CodUsuario = req.query.CodUsuario || "17";
+      const DataInicial = req.query.DataInicial || "2026-02-24";
+      const DataFinal = req.query.DataFinal || "2026-02-24";
+  
+      const path =
+        `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(CodColaborador)}` +
+        `&CodUsuario=${encodeURIComponent(CodUsuario)}` +
+        `&DataInicial=${encodeURIComponent(DataInicial)}` +
+        `&DataFinal=${encodeURIComponent(DataFinal)}`;
+  
+      const out = await versatilisFetch(path);
+      return res.status(200).json({
+        ok: !!out?.ok,
+        status: out?.status ?? null,
+        rid: out?.rid ?? null,
+        allow: out?.allow ?? null,
+        dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
+        dataPreview:
+          typeof out?.data === "string"
+            ? out.data.slice(0, 300)
+            : Array.isArray(out?.data)
+            ? `array(len=${out.data.length})`
+            : out?.data && typeof out.data === "object"
+            ? Object.keys(out.data).slice(0, 20)
+            : null,
+      });
+    } catch (e) {
+      return handleDebugRouteError("/debug/versatilis/agenda-datas", e, res, req);
     }
+  });
 
-    await sendButtons({
-      to,
-      body: "Escolha um horário:",
-      buttons: [
-        { id: "H_2012", title: "07:30" },
-        { id: "H_2013", title: "08:00" },
-        { id: "H_2014", title: "08:30" },
-      ],
-      phoneNumberIdFallback: "",
-    });
+  app.get("/debug/versatilis/agenda-consulta", async (req, res) => {
+    try {
+      const CodColaborador = req.query.CodColaborador || "3";
+      const CodUsuario = req.query.CodUsuario || "17";
+      const DataInicial = req.query.DataInicial || "2026-02-24";
+      const DataFinal = req.query.DataFinal || "2026-02-24";
+  
+      const path =
+        `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(CodColaborador)}` +
+        `&CodUsuario=${encodeURIComponent(CodUsuario)}` +
+        `&DataInicial=${encodeURIComponent(DataInicial)}` +
+        `&DataFinal=${encodeURIComponent(DataFinal)}`;
+  
+      const out = await versatilisFetch(path);
+  
+      if (!out.ok || !Array.isArray(out.data)) {
+        return res.status(200).json({
+          ok: !!out?.ok,
+          status: out?.status ?? null,
+          rid: out?.rid ?? null,
+          allow: out?.allow ?? null,
+          dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
+          dataPreview:
+            typeof out?.data === "string"
+              ? out.data.slice(0, 300)
+              : Array.isArray(out?.data)
+              ? `array(len=${out.data.length})`
+              : out?.data && typeof out.data === "object"
+              ? Object.keys(out.data).slice(0, 20)
+              : null,
+        });
+      }
+  
+      const filtered = out.data
+        .filter((h) => h && h.PermiteConsulta === true)
+        .map((h) => ({
+          CodHorario: h.CodHorario,
+          Data: h.Data,
+          Hora: h.Hora,
+          CodUnidade: h.CodUnidade,
+          Unidade: h.Unidade,
+          CodEspecialidade: h.CodEspecialidade,
+          NomeEspecialidade: h.NomeEspecialidade,
+          PermiteConsulta: h.PermiteConsulta,
+        }));
+  
+      return res.status(200).json({ ok: true, status: 200, data: filtered });
+    } catch (e) {
+      return handleDebugRouteError("/debug/versatilis/agenda-consulta", e, res, req);
+    }
+  });
 
-    return res.json({ ok: true });
-  } catch (e) {
-    return handleDebugRouteError("/debug/test-botoes",e, res, req);
-  }
-});
+  app.post("/debug/versatilis/confirmar-agendamento", async (req, res) => {
+    try {
+      const p = req.body || {};
+  
+      const payload = {
+        CodUnidade: Number(p.CodUnidade ?? 2),
+        CodEspecialidade: Number(p.CodEspecialidade ?? 1003),
+        CodPlano: Number(p.CodPlano ?? 2),
+        CodHorario: Number(p.CodHorario),
+        CodUsuario: Number(p.CodUsuario),
+        CodColaborador: Number(p.CodColaborador ?? 3),
+        BitTelemedicina: Boolean(p.BitTelemedicina ?? false),
+        Confirmada: Boolean(p.Confirmada ?? true),
+      };
+  
+      if (!payload.CodHorario || Number.isNaN(payload.CodHorario)) {
+        return res.status(400).json({ ok: false, error: "CodHorario é obrigatório (number)" });
+      }
+  
+      if (!payload.CodUsuario || Number.isNaN(payload.CodUsuario)) {
+        return res.status(400).json({ ok: false, error: "CodUsuario é obrigatório (number)" });
+      }
+  
+      if (p.NumCarteirinha) payload.NumCarteirinha = String(p.NumCarteirinha);
+      if (p.CodProcedimento != null && p.CodProcedimento !== "") payload.CodProcedimento = Number(p.CodProcedimento);
+      if (p.TUSS) payload.TUSS = String(p.TUSS);
+      if (p.CodigoVenda != null && p.CodigoVenda !== "") payload.CodigoVenda = Number(p.CodigoVenda);
+      if (p.Data) payload.Data = String(p.Data);
+  
+      const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
+        method: "POST",
+        jsonBody: payload,
+      });
+  
+      return res.status(200).json({
+        ok: !!out?.ok,
+        status: out?.status ?? null,
+        rid: out?.rid ?? null,
+        allow: out?.allow ?? null,
+        dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
+        dataPreview:
+          typeof out?.data === "string"
+            ? out.data.slice(0, 300)
+            : Array.isArray(out?.data)
+            ? `array(len=${out.data.length})`
+            : out?.data && typeof out.data === "object"
+            ? Object.keys(out.data).slice(0, 20)
+            : null,
+      });
+    } catch (e) {
+      return handleDebugRouteError("/debug/versatilis/confirmar-agendamento", e, res, req);
+    }
+  });
 
-app.get("/debug/redis-ping", async (req, res) => {
-  try {
-    const key = "health:redis";
-    const value = `ok:${Date.now()}`;
+  app.get("/debug/test-botoes", async (req, res) => {
+    try {
+      const to = req.query.to; // numero com DDI, ex: 5519XXXXXXXXX
+      if (!to) {
+        return res.status(400).json({ ok: false, error: "Informe ?to=5519..." });
+      }
+      
+      if (!isAllowedDebugPhone(to)) {
+        return res.status(403).json({ ok: false, error: "debug target not allowed" });
+      }
+  
+      await sendButtons({
+        to,
+        body: "Escolha um horário:",
+        buttons: [
+          { id: "H_2012", title: "07:30" },
+          { id: "H_2013", title: "08:00" },
+          { id: "H_2014", title: "08:30" },
+        ],
+        phoneNumberIdFallback: "",
+      });
+  
+      return res.json({ ok: true });
+    } catch (e) {
+      return handleDebugRouteError("/debug/test-botoes",e, res, req);
+    }
+  });
 
-    await redis.set(key, value, { ex: 30 }); // expira em 30s
-    const read = await redis.get(key);
+  app.get("/debug/redis-ping", async (req, res) => {
+    try {
+      const key = "health:redis";
+      const value = `ok:${Date.now()}`;
+  
+      await redis.set(key, value, { ex: 30 });
+      const read = await redis.get(key);
+  
+      return res.status(200).json({
+        ok: true,
+        redisWriteOk: true,
+        redisReadOk: read === value,
+      });
+    } catch (e) {
+      return handleDebugRouteError("/debug/redis-ping", e, res, req);
+    }
+  });
 
-    return res.status(200).json({ ok: true, wrote: value, read });
-  } catch (e) {
-    return handleDebugRouteError("/debug/redis-ping", e, res, req);
-  }
-});
-
-app.get("/debug/versatilis/codusuario", async (req, res) => {
-  try {
-    const cpf = String(req.query.cpf || "").replace(/\D+/g, "");
-    if (cpf.length !== 11) return res.status(400).json({ ok: false, error: "cpf inválido (11 dígitos)" });
-
-    const codUsuario = await versaFindCodUsuarioByCPF(cpf);
-    return res.json({ ok: true, cpfMasked: "***", codUsuario });
-  } catch (e) {
-    return handleDebugRouteError("/debug/versatilis/codusuario", e, res, req);
-  }
-});
+  app.get("/debug/versatilis/codusuario", async (req, res) => {
+    try {
+      const cpf = String(req.query.cpf || "").replace(/\D+/g, "");
+      if (cpf.length !== 11) {
+        return res.status(400).json({ ok: false, error: "cpf inválido (11 dígitos)" });
+      }
+  
+      const codUsuario = await versaFindCodUsuarioByCPF(cpf);
+      return res.json({
+        ok: true,
+        cpfMasked: "***",
+        found: !!codUsuario,
+      });
+    } catch (e) {
+      return handleDebugRouteError("/debug/versatilis/codusuario", e, res, req);
+    }
+  });
   
 // =======================
+app.use((err, req, res, next) => {
+  errLog("UNHANDLED_SERVER_ERROR", {
+    route: req.originalUrl || req.url || null,
+    method: req.method || null,
+    ipMasked: maskIp(req.ip),
+    error: String(err?.message || err),
+  });
+
+  return res.sendStatus(500);
+});
+
+app.use((req, res) => {
+  res.sendStatus(404);
+});
+
 app.listen(port, () => opLog("SERVER_LISTENING", { port }));
