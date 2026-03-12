@@ -561,19 +561,22 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, t
     });
   }
 
-  if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
-    const preview =
-      typeof data === "string"
-        ? data.slice(0, 500)
-        : data == null
-        ? null
-        : JSON.stringify(data).slice(0, 500);
-
-    debugLog("VERSATILIS_BODY_PREVIEW", {
+ if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
+    let responseTopLevelKeys = null;
+  
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      responseTopLevelKeys = Object.keys(data).slice(0, 20);
+    }
+  
+    debugLog("VERSATILIS_BODY_METADATA", {
       ...baseLog,
       contentType,
       textLen,
-      preview: preview || "[empty-body]",
+      dataType:
+        Array.isArray(data) ? "array" :
+        data === null ? "null" :
+        typeof data,
+      responseTopLevelKeys,
     });
   }
 
@@ -691,9 +694,13 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
   for (const path of candidates) {
     const out = await versatilisFetch(path);
 
-if (process.env.DEBUG_VERSA_SHAPE === "1" && out.ok && out.data && typeof out.data === "object") {
+if (isDebugVersaShapeEnabled() && out.ok && out.data && typeof out.data === "object") {
   const keys = Object.keys(out.data || {}).slice(0, 30);
-  debugLog("VERSA_CODUSUARIO_SHAPE", { path, keys, isArray: Array.isArray(out.data) });
+  debugLog("VERSA_CODUSUARIO_SHAPE", {
+    path,
+    keys,
+    isArray: Array.isArray(out.data),
+  });
 }
     
     const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
@@ -1525,11 +1532,25 @@ Descreva abaixo como podemos te ajudar.
 0) Voltar ao menu inicial`,
 
   AJUDA_PERGUNTA: `Certo — me diga qual foi a dificuldade no agendamento (o que aconteceu).`,
+  REDIS_UNAVAILABLE: `⚠️ Ocorreu uma instabilidade temporária no atendimento.
+
+Por favor, envie novamente sua mensagem em instantes para reiniciar o fluxo com segurança.`,
 };
+
 
 // =======================
 // HELPERS
 // =======================
+async function clearTransientPortalData(phone) {
+  await updateSession(phone, (s) => {
+    if (!s?.portal) return;
+
+    s.portal.form = {};
+    delete s.portal.missing;
+    delete s.portal.issue;
+  });
+}
+
 function auditVersaDivergence(payload = {}) {
   audit("VERSATILIS_MANUAL_TENANT_DIVERGENCE", {
     ...payload,
@@ -1579,6 +1600,23 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   }
 }
 
+function isRedisError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+
+  return (
+    msg.includes("redis") ||
+    msg.includes("upstash") ||
+    msg.includes("connect") ||
+    msg.includes("connection") ||
+    msg.includes("socket") ||
+    msg.includes("timeout") ||
+    msg.includes("network") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("fetch failed")
+  );
+}
+
 async function withPhoneLock(phone, fn) {
   const key = String(phone || "").replace(/\D+/g, "");
   const prev = inboundLocks.get(key) || Promise.resolve();
@@ -1599,6 +1637,36 @@ async function withPhoneLock(phone, fn) {
     if (inboundLocks.get(key) === chain) {
       inboundLocks.delete(key);
     }
+  }
+}
+
+async function runWithSafeSession(phone, phoneNumberIdFallback, traceId, fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (!isRedisError(e)) {
+      throw e;
+    }
+
+    errLog("REDIS_SAFE_RESTART_TRIGGERED", {
+      traceId: traceId || null,
+      tracePhone: maskPhone(phone),
+      error: String(e?.message || e),
+    });
+
+    try {
+      await sendText({
+        to: phone,
+        body: MSG.REDIS_UNAVAILABLE,
+        phoneNumberIdFallback,
+      });
+    } catch {}
+
+    try {
+      await deleteSession(phone);
+    } catch {}
+
+    return null;
   }
 }
 
@@ -1670,32 +1738,21 @@ async function sendSupportLink({ phone, phoneNumberIdFallback, prefill, nextStat
   }
 }
 
-function buildSupportPrefillFromSession(phone, s) {
-  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
+function buildSupportPrefillFromSession(phone, s, traceId = null) {
   const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
   const issue = s?.portal?.issue || null;
 
   const motivo =
     issue?.type === "CONVENIO_NAO_HABILITADO"
-      ? `Convênio não habilitado no cadastro (precisa atualizar plano no Versatilis). Desejado: ${issue.wantedPlan}.`
-      : "";
+      ? "Convênio desejado não habilitado no cadastro."
+      : "Ajuda no agendamento.";
 
-  const detalhesPlano =
-    issue?.type === "CONVENIO_NAO_HABILITADO"
-      ? `CodUsuario: ${issue.codUsuario || "(não identificado)"} | Planos detectados: ${
-          Array.isArray(issue.plansDetected) && issue.plansDetected.length
-            ? issue.plansDetected.join(", ")
-            : "(nenhum)"
-        }`
-      : "";
-
-  return `Olá! Preciso de ajuda no agendamento.
-
-Paciente: ${phone}
-CPF: ${formatCPFMask(cpf) || "(não informado)"}
-${motivo ? `Motivo: ${motivo}` : ""}
-${detalhesPlano ? `Detalhes: ${detalhesPlano}` : ""}
-${faltas.length ? `Pendências de cadastro: ${faltas.join(", ")}` : ""}`.trim();
+  return buildSafeSupportPrefill({
+    traceId,
+    phone,
+    reason: motivo,
+    missing: faltas,
+  });
 }
 
 function toHHMM(hora) {
@@ -1705,7 +1762,33 @@ function toHHMM(hora) {
   const hh = String(Number(m[1])).padStart(2, "0");
   return `${hh}:${m[2]}`;
 }
- 
+
+function buildSafeSupportPrefill({
+  traceId = null,
+  phone = "",
+  reason = "",
+  details = "",
+  missing = [],
+}) {
+  const lines = [
+    "Olá! Preciso de ajuda no agendamento.",
+    "",
+    `TraceId: ${traceId || "(não informado)"}`,
+    `Paciente: ${maskPhone(phone)}`,
+    `Motivo: ${reason || "Ajuda no agendamento."}`,
+  ];
+
+  if (details) {
+    lines.push(`Detalhes: ${String(details).slice(0, 200)}`);
+  }
+
+  if (Array.isArray(missing) && missing.length) {
+    lines.push(`Pendências: ${missing.join(", ")}`);
+  }
+
+  return lines.join("\n").trim();
+}
+
 // =======================
 // REGRAS DE TEMPO (segurança)
 // =======================
@@ -1922,7 +2005,8 @@ async function sendText({ to, body, phoneNumberIdFallback }) {
     errLog("WHATSAPP_SEND_TEXT_FAIL", {
       phoneMasked: maskPhone(to),
       httpStatus: resp.status,
-      responsePreview: txt ? String(txt).slice(0, 500) : "",
+      responseBodyPresent: !!txt,
+      responseBodyLen: txt ? String(txt).length : 0,
       bodyLength: String(body || "").length,
     });
     return false;
@@ -1969,7 +2053,8 @@ async function sendButtons({ to, body, buttons, phoneNumberIdFallback }) {
     errLog("WHATSAPP_SEND_BUTTONS_FAIL", {
       phoneMasked: maskPhone(to),
       httpStatus: resp.status,
-      responsePreview: txt ? String(txt).slice(0, 500) : "",
+      responseBodyPresent: !!txt,
+      responseBodyLen: txt ? String(txt).length : 0,
       buttonCount: Array.isArray(buttons) ? buttons.length : 0,
       bodyLength: String(body || "").length,
     });
@@ -2019,8 +2104,11 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
 // =======================
 async function resetToMain(phone, phoneNumberIdFallback) {
   await updateSession(phone, (s) => {
-    if (s?.portal?.issue) delete s.portal.issue;
-    if (s?.portal?.missing) delete s.portal.missing;
+    if (s?.portal) {
+      s.portal.form = {};
+      delete s.portal.issue;
+      delete s.portal.missing;
+    }
     if (s?.pending) delete s.pending;
   });
 
@@ -2086,7 +2174,7 @@ debugLog("FLOW_INBOUND_RECEIVED", {
 // =======================
 if (upper === "FALAR_ATENDENTE") {
   const s = await ensureSession(phone);
-  const prefill = buildSupportPrefillFromSession(phone, s);
+  const prefill = buildSupportPrefillFromSession(phone, s, traceId);
 
   await sendSupportLink({
     phone,
@@ -2094,8 +2182,10 @@ if (upper === "FALAR_ATENDENTE") {
     prefill,
     nextState: "MAIN",
   });
+  
+  await clearTransientPortalData(phone);
   return;
-}
+  }
   
   const ctx = (await getState(phone)) || "MAIN";
   
@@ -2105,15 +2195,14 @@ if (upper === "FALAR_ATENDENTE") {
 // =======================
 if (ctx === "BLOCK_EXISTING_INCOMPLETE") {
   const s = await ensureSession(phone);
-
-  const cpf = String(s?.portal?.form?.cpf || "").replace(/\D+/g, "");
   const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
 
-  const prefill = `Olá! Preciso de ajuda para completar meu cadastro no Portal do Paciente.
-
-Paciente: ${phone}
-CPF: ${formatCPFMask(cpf) || "(não informado)"}
-Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
+  const prefill = buildSafeSupportPrefill({
+    traceId,
+    phone,
+    reason: "Cadastro incompleto no Portal do Paciente.",
+    missing: faltas,
+  });
 
   await sendSupportLink({
     phone,
@@ -2121,13 +2210,15 @@ Pendências: ${faltas.length ? faltas.join(", ") : "(não identificado)"}`;
     prefill,
     nextState: "MAIN",
   });
+
+  await clearTransientPortalData(phone);
   return;
 }
 
 if (ctx === "PLAN_PICK") {
   if (upper === "FALAR_ATENDENTE") {
     const s = await ensureSession(phone);
-    const prefill = buildSupportPrefillFromSession(phone, s);
+    const prefill = buildSupportPrefillFromSession(phone, s, traceId);
 
     await sendSupportLink({
       phone,
@@ -2135,6 +2226,8 @@ if (ctx === "PLAN_PICK") {
       prefill,
       nextState: "MAIN",
     });
+
+    await clearTransientPortalData(phone);
     return;
   }
 
@@ -2631,28 +2724,34 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
   // Captura motivo da AJUDA e devolve link clicável com texto preenchido
   if (ctx === "WAIT_AJUDA_MOTIVO") {
-  const prefill = `Olá! Preciso de ajuda no agendamento.
-
-Paciente: ${phone}
-Motivo: ${raw}`;
-
-  await sendSupportLink({
-    phone,
-    phoneNumberIdFallback,
-    prefill,
-    nextState: "MAIN",
-  });
-  return;
-}
+    const prefill = buildSafeSupportPrefill({
+      traceId,
+      phone,
+      reason: "Paciente relatou dificuldade no agendamento.",
+      details: raw,
+    });
+  
+    await sendSupportLink({
+      phone,
+      phoneNumberIdFallback,
+      prefill,
+      nextState: "MAIN",
+    });
+  
+    await clearTransientPortalData(phone);
+    return;
+  }
 
  // Texto livre: se estiver em ATENDENTE, gera link com a mensagem
 // ⚠️ NÃO aplicar fallback enquanto estiver em wizard WZ_*
 if (!digits && !String(ctx || "").startsWith("WZ_")) {
   if (ctx === "ATENDENTE") {
-  const prefill = `Olá! Preciso falar com um atendente.
-
-Paciente: ${phone}
-Mensagem: ${raw}`;
+  const prefill = buildSafeSupportPrefill({
+    traceId,
+    phone,
+    reason: "Paciente solicitou atendimento humano.",
+    details: raw,
+  });
 
   await sendSupportLink({
     phone,
@@ -2660,6 +2759,8 @@ Mensagem: ${raw}`;
     prefill,
     nextState: "MAIN",
   });
+
+  await clearTransientPortalData(phone);
   return;
 }
 
@@ -2768,24 +2869,25 @@ if (ctx === "WZ_CPF") {
     codUsuario: codUsuario || null,
   });
 
-    if (!codUsuario) {
-      const prefill = `Olá! Preciso de ajuda no agendamento.
-
-      Paciente: ${phone}
-      CPF: ${formatCPFMask(cpf) || "***"}
-      Motivo: paciente sem cadastro localizável automaticamente no sistema.`;
-        
-      const link = makeWaLink(prefill);
+  if (!codUsuario) {
+    const prefill = buildSafeSupportPrefill({
+      traceId,
+      phone,
+      reason: "Paciente sem cadastro localizável automaticamente no sistema.",
+    });
   
-      await sendText({
-        to: phone,
-        body: `⚠️ Não consegui localizar seu cadastro automaticamente.\n\n✅ Para prosseguir com segurança, fale com nossa equipe:\n${link}`,
-        phoneNumberIdFallback,
-      });
+    const link = makeWaLink(prefill);
   
-      await setState(phone, "MAIN");
-      return;
-    }
+    await sendText({
+      to: phone,
+      body: `⚠️ Não consegui localizar seu cadastro automaticamente.\n\n✅ Para prosseguir com segurança, fale com nossa equipe:\n${link}`,
+      phoneNumberIdFallback,
+    });
+  
+    await clearTransientPortalData(phone);
+    await setState(phone, "MAIN");
+    return;
+  }
 
 await updateSession(phone, (sess) => {
   sess.portal = sess.portal || {};
@@ -3232,11 +3334,15 @@ if (prof.ok && prof.data) {
 
     const sFinal = await ensureSession(phone);
 
+    const planoKeyFinal = sFinal?.portal?.form?.planoKey;
+
+    await clearTransientPortalData(phone);
+    
     await finishWizardAndGoToDates({
       phone,
       phoneNumberIdFallback,
       codUsuario: up.codUsuario,
-      planoKeyFromWizard: sFinal?.portal?.form?.planoKey,
+      planoKeyFromWizard: planoKeyFinal,
       traceId,
     });
 
@@ -3491,8 +3597,10 @@ app.post("/webhook", async (req, res) => {
     });
 
     await withPhoneLock(from, async () => {
-  await handleInbound(from, text, phoneNumberIdFallback, { traceId });
-});
+      await runWithSafeSession(from, phoneNumberIdFallback, traceId, async () => {
+        await handleInbound(from, text, phoneNumberIdFallback, { traceId });
+      });
+    });
   } catch (err) {
     errLog("WEBHOOK_POST_ERROR", {
       error: String(err?.message || err),
@@ -3511,6 +3619,10 @@ function isDebugEnabled() {
   const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
 
   return enabled && (nodeEnv === "development" || nodeEnv === "test");
+}
+
+function isDebugVersaShapeEnabled() {
+  return isDebugEnabled() && String(process.env.DEBUG_VERSA_SHAPE || "").trim() === "1";
 }
 
 function safeEqual(a, b) {
