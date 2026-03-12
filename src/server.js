@@ -147,7 +147,81 @@ function deepSanitizeForLog(value, depth = 0) {
   return value;
 }
 
-// JSON seguro (sem quebrar log por circular)
+function maskIp(ip) {
+  const s = String(ip || "").trim();
+  if (!s) return null;
+
+  if (s.includes(":")) {
+    const parts = s.split(":").filter(Boolean);
+    if (!parts.length) return "***";
+    return `${parts.slice(0, 3).join(":")}:***`;
+  }
+
+  const parts = s.split(".");
+  if (parts.length === 4) {
+    return `${parts[0]}.${parts[1]}.***.***`;
+  }
+
+  return "***";
+}
+
+function deepSanitizeForLog(value, depth = 0) {
+  if (depth > 6) return "[max-depth]";
+
+  if (value == null) return value;
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((v) => deepSanitizeForLog(v, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    const out = {};
+
+    for (const [k, v] of Object.entries(value)) {
+      const key = String(k || "").toLowerCase();
+
+      if (
+        key.includes("cpf") ||
+        key.includes("dtnasc") ||
+        key.includes("datanascimento") ||
+        key.includes("senha") ||
+        key.includes("password") ||
+        key.includes("token") ||
+        key.includes("authorization") ||
+        key.includes("secret") ||
+        key.includes("email")
+      ) {
+        out[k] = "***";
+        continue;
+      }
+
+      if (
+        key.includes("phone") ||
+        key.includes("telefone") ||
+        key.includes("celular")
+      ) {
+        out[k] = typeof v === "string" ? maskPhone(v) : "***";
+        continue;
+      }
+
+      if (key.includes("ip")) {
+        out[k] = typeof v === "string" ? maskIp(v) : "***";
+        continue;
+      }
+
+      out[k] = deepSanitizeForLog(v, depth + 1);
+    }
+
+    return out;
+  }
+
+  return value;
+}
+
 function safeJson(obj) {
   try {
     return JSON.stringify(deepSanitizeForLog(obj));
@@ -1117,6 +1191,48 @@ async function loadSession(phone) {
 
   // fallback seguro
   return null;
+}
+
+function sanitizeSessionForSave(s) {
+  return {
+    state: s?.state ?? null,
+    lastUserTs: Number(s?.lastUserTs || 0),
+    lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
+    booking: s?.booking
+      ? {
+          planoKey: s.booking?.planoKey ?? null,
+          codColaborador: Number(s.booking?.codColaborador || 0) || null,
+          codUsuario: Number(s.booking?.codUsuario || 0) || null,
+          isoDate: s.booking?.isoDate ?? null,
+          pageIndex: Number(s.booking?.pageIndex || 0) || 0,
+          slots: Array.isArray(s.booking?.slots)
+            ? s.booking.slots
+                .map((x) => ({
+                  codHorario: Number(x?.codHorario || 0) || null,
+                  hhmm: x?.hhmm ?? null,
+                }))
+                .filter((x) => x.codHorario && x.hhmm)
+            : [],
+          isRetorno: !!s.booking?.isRetorno,
+        }
+      : null,
+    portal: s?.portal
+      ? {
+          step: s.portal?.step ?? null,
+          codUsuario: Number(s.portal?.codUsuario || 0) || null,
+          exists: !!s.portal?.exists,
+          profile: s.portal?.profile ?? null,
+          form: s.portal?.form ?? {},
+          missing: Array.isArray(s.portal?.missing) ? s.portal.missing : [],
+          issue: s.portal?.issue ?? null,
+        }
+      : null,
+    pending: s?.pending
+      ? {
+          codHorario: Number(s.pending?.codHorario || 0) || null,
+        }
+      : null,
+  };
 }
 
 async function saveSession(phone, sessionObj) {
@@ -2145,55 +2261,7 @@ if (ctx === "PLAN_PICK") {
 
   return;
 }
-  
-// =======================
-// PLANO DIVERGENTE: escolher qual usar neste agendamento
-// =======================
-  if (upper !== "PL_USE_PART" && upper !== "PL_USE_MED") {
-    // não força mostrar PL_USE_MED se ele não estiver disponível no contexto atual
-    await sendText({
-      to: phone,
-      body: "Use os botões apresentados para prosseguir.",
-      phoneNumberIdFallback,
-    });
-    return;
-  }
-
-const chosenKey = (upper === "PL_USE_MED") ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
-
-await updateSession(phone, (sess) => {
-  sess.booking = sess.booking || {};
-  sess.booking.planoKey = chosenKey;
-
-  if (sess.portal && sess.portal.issue) {
-    delete sess.portal.issue;
-  }
-});
-
-const s = await ensureSession(phone);
-const codUsuario = Number(s?.booking?.codUsuario || s?.portal?.codUsuario);
-
-if (!codUsuario) {
-  await sendText({
-    to: phone,
-    body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
-    phoneNumberIdFallback
-  });
-  await setState(phone, "MAIN");
-  return;
-}
-
-await finishWizardAndGoToDates({
-  phone,
-  phoneNumberIdFallback,
-  codUsuario,
-  planoKeyFromWizard: chosenKey,
-  traceId,
-});
-
-return;
-}
-  
+    
 // =======================
 // AGENDAMENTO (datas + slots + confirmação)
 // =======================
