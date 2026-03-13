@@ -1413,6 +1413,25 @@ Para começar, escolha uma opção abaixo.
 3️⃣ Acompanhamento pós-operatório  
 4️⃣ Falar com um atendente`,
 
+LGPD_CONSENT: `🔒 Proteção de dados (LGPD)
+
+Para realizar o agendamento, precisamos coletar alguns dados pessoais, como CPF e informações de contato, utilizados exclusivamente para identificação do paciente e gestão do atendimento pelo Dr. David E. Vera e sua clínica.
+
+Esses dados são tratados conforme a Lei Geral de Proteção de Dados (Lei nº 13.709/2018) e poderão integrar o prontuário médico quando necessário para fins assistenciais e cumprimento de obrigações legais.
+
+Para continuar, informe se concorda com o tratamento desses dados para fins de agendamento.
+
+📌 Responda apenas com o número da opção desejada:
+
+1) Concordo e desejo continuar
+2) Não concordo`,
+
+LGPD_RECUSA: `Não é possível realizar o agendamento sem o consentimento para tratamento dos dados necessários ao atendimento.
+
+Caso deseje agendar no futuro, basta iniciar novamente o atendimento.
+
+Atenciosamente.`,
+  
   PARTICULAR: `Agendamento particular
 
 💰 Valor da consulta: R$ 350,00
@@ -1753,6 +1772,16 @@ function maskPhone(p) {
   const s = String(p || "").replace(/\D+/g, "");
   if (!s) return "***";
   return s.length > 6 ? s.slice(0, 4) + "****" + s.slice(-2) : "***";
+}
+
+function maskCpf(cpf) {
+  const s = String(cpf || "").replace(/\D+/g, "");
+  if (s.length !== 11) return "***";
+  return `***.${s.slice(3, 6)}.${s.slice(6, 9)}-**`;
+}
+
+function hashText(text) {
+  return crypto.createHash("sha256").update(String(text || ""), "utf8").digest("hex");
 }
 
 function maskKey(k) {
@@ -2224,6 +2253,54 @@ debugLog("FLOW_INBOUND_RECEIVED", {
   }
 }
 
+const ctx = (await getState(phone)) || "MAIN";
+  
+// =======================
+// LGPD CONSENTIMENTO
+// =======================
+if (ctx === "LGPD_CONSENT") {
+
+  if (digits === "1") {
+
+    audit("LGPD_CONSENT_ACCEPTED", {
+      traceId,
+      tracePhone: maskPhone(phone),
+      consent: true,
+      consentTextVersion: "LGPD_v1",
+      timestamp: new Date().toISOString()
+    });
+
+    await sendAndSetState(
+      phone,
+      MSG.ASK_CPF_PORTAL,
+      "WZ_CPF",
+      phoneNumberIdFallback
+    );
+    return;
+  }
+
+  if (digits === "2") {
+
+    audit("LGPD_CONSENT_REFUSED", {
+      traceId,
+      tracePhone: maskPhone(phone),
+      consent: false,
+      consentTextVersion: "LGPD_v1",
+      timestamp: new Date().toISOString()
+    });
+
+    await sendText({
+      to: phone,
+      body: MSG.LGPD_RECUSA,
+      phoneNumberIdFallback
+    });
+
+    await clearSession(phone);
+    return;
+  }
+
+}
+  
 // =======================
 // BOTÃO GLOBAL: FALAR COM ATENDENTE (qualquer momento)
 // =======================
@@ -2241,9 +2318,7 @@ if (upper === "FALAR_ATENDENTE") {
   await clearTransientPortalData(phone);
   return;
   }
-  
-  const ctx = (await getState(phone)) || "MAIN";
-  
+   
 // =======================
 // BLOQUEIO FORMAL: PACIENTE EXISTENTE COM CADASTRO INCOMPLETO
 // ÚNICA OPÇÃO = HUMANO
@@ -2921,6 +2996,15 @@ if (ctx === "WZ_CPF") {
     return;
   }
 
+  audit("LGPD_CONSENT_CONFIRMED_BY_IDENTIFICATION", {
+    traceId,
+    tracePhone: maskPhone(phone),
+    cpfMasked: maskCpf(cpf),
+    consentTextVersion: LGPD_TEXT_VERSION,
+    consentTextHash: LGPD_TEXT_HASH,
+    timestamp: new Date().toISOString(),
+  });
+
   debugLog("PATIENT_CPF_RECEIVED_FOR_IDENTIFICATION", {
     traceId,
     tracePhone: maskPhone(phone),
@@ -3494,15 +3578,12 @@ if (prof.ok && prof.data) {
   // CONTEXTO: MAIN
   // -------------------
   if (ctx === "MAIN") {
-    if (digits === "1") {
-  await setBookingPlan(phone, "PARTICULAR");
-  return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
+  if (digits === "1") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
+  if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
+  if (digits === "3") return sendAndSetState(phone, MSG.POS_MENU, "POS", phoneNumberIdFallback);
+  if (digits === "4") return sendAndSetState(phone, MSG.ATENDENTE, "ATENDENTE", phoneNumberIdFallback);
+  return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
 }
-    if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
-    if (digits === "3") return sendAndSetState(phone, MSG.POS_MENU, "POS", phoneNumberIdFallback);
-    if (digits === "4") return sendAndSetState(phone, MSG.ATENDENTE, "ATENDENTE", phoneNumberIdFallback);
-    return sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
-  }
 
 // -------------------
 // CONTEXTO: PARTICULAR
@@ -3529,7 +3610,15 @@ if (ctx === "PARTICULAR") {
       };
     });
 
-    await sendAndSetState(phone, MSG.ASK_CPF_PORTAL, "WZ_CPF", phoneNumberIdFallback);
+    audit("LGPD_NOTICE_PRESENTED", {
+      traceId,
+      tracePhone: maskPhone(phone),
+      consentTextVersion: LGPD_TEXT_VERSION,
+      consentTextHash: LGPD_TEXT_HASH,
+      timestamp: new Date().toISOString(),
+    });
+
+    await sendAndSetState(phone, MSG.LGPD_CONSENT, "LGPD_CONSENT", phoneNumberIdFallback);
     return;
   }
 
@@ -3571,7 +3660,6 @@ if (ctx === "PARTICULAR") {
 if (ctx === "MEDSENIOR") {
   if (digits === "1") {
     await updateSession(phone, (s) => {
-      // ✅ não apaga o plano do fluxo; garante MedSênior
       s.booking = {
         ...(s.booking || {}),
         planoKey: PLAN_KEYS.MEDSENIOR_SP,
@@ -3591,7 +3679,15 @@ if (ctx === "MEDSENIOR") {
       };
     });
 
-    await sendAndSetState(phone, MSG.ASK_CPF_PORTAL, "WZ_CPF", phoneNumberIdFallback);
+    audit("LGPD_NOTICE_PRESENTED", {
+      traceId,
+      tracePhone: maskPhone(phone),
+      consentTextVersion: LGPD_TEXT_VERSION,
+      consentTextHash: LGPD_TEXT_HASH,
+      timestamp: new Date().toISOString(),
+    });
+
+    await sendAndSetState(phone, MSG.LGPD_CONSENT, "LGPD_CONSENT", phoneNumberIdFallback);
     return;
   }
 
@@ -3696,6 +3792,8 @@ app.post("/webhook", async (req, res) => {
     
     const value = change.value;
     const msg = value?.messages?.[0];
+    const LGPD_TEXT_VERSION = "LGPD_v1";
+    const LGPD_TEXT_HASH = hashText(MSG.LGPD_CONSENT);
     if (!msg) return;
     
     const from = msg.from;
