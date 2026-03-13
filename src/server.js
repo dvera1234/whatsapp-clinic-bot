@@ -161,6 +161,19 @@ function deepSanitizeForLog(value, depth = 0) {
   return value;
 }
 
+function detectUnexpectedSessionKeys(s) {
+  const allowed = new Set([
+    "state",
+    "lastUserTs",
+    "lastPhoneNumberIdFallback",
+    "booking",
+    "portal",
+    "pending",
+  ]);
+
+  return Object.keys(s || {}).filter((k) => !allowed.has(k));
+}
+
 function sanitizeSessionForSave(s) {
   return {
     state: s?.state ?? null,
@@ -1100,10 +1113,9 @@ requireEnv("UPSTASH_REDIS_REST_TOKEN");
 const APP_SECRET = requireEnv("APP_SECRET");
 
 opLog("ENV_CHECK", {
-  hasToken: !!pickToken(),
+  hasWhatsAppToken: !!pickToken(),
   hasVerifyToken: !!process.env.VERIFY_TOKEN,
   hasFlowResetCode: !!String(process.env.FLOW_RESET_CODE || "").trim(),
-  flowResetCodeLen: String(process.env.FLOW_RESET_CODE || "").trim().length,
 });
 
 // =======================
@@ -1187,10 +1199,23 @@ async function loadSession(phone) {
 
 async function saveSession(phone, sessionObj) {
   const key = sessionKey(phone);
+
+  const unexpectedKeys = detectUnexpectedSessionKeys(sessionObj);
+  if (unexpectedKeys.length) {
+    techLog("SESSION_UNEXPECTED_KEYS_DROPPED", {
+      phoneMasked: maskPhone(phone),
+      unexpectedKeys: unexpectedKeys.slice(0, 20),
+    });
+  }
+
   const safeSession = sanitizeSessionForSave(sessionObj);
   const val = JSON.stringify(safeSession);
 
-  logRedis("REDIS_SET", { phone: maskPhone(phone), key: maskKey(key), len: val.length });
+  logRedis("REDIS_SET", {
+    phone: maskPhone(phone),
+    key: maskKey(key),
+    len: val.length
+  });
 
   await redis.set(key, val, { ex: SESSION_TTL_SECONDS });
   return true;
@@ -1541,6 +1566,27 @@ Por favor, envie novamente sua mensagem em instantes para reiniciar o fluxo com 
 // =======================
 // HELPERS
 // =======================
+function stripControlChars(s) {
+  return String(s || "").replace(/[\u0000-\u001F\u007F]/g, "").trim();
+}
+
+function normalizeHumanText(s, maxLen = 120) {
+  return stripControlChars(s).replace(/\s+/g, " ").slice(0, maxLen);
+}
+
+function isValidName(s) {
+  const v = normalizeHumanText(s, 120);
+  return (
+    v.length >= 5 &&
+    /^[A-Za-zÀ-ÿ'´`.-]+(?:\s+[A-Za-zÀ-ÿ'´`.-]+)+$/.test(v)
+  );
+}
+
+function isValidSimpleAddressField(s, min = 2, max = 120) {
+  const v = normalizeHumanText(s, max);
+  return v.length >= min;
+}
+
 async function clearTransientPortalData(phone) {
   await updateSession(phone, (s) => {
     if (!s?.portal) return;
@@ -1638,6 +1684,15 @@ async function withPhoneLock(phone, fn) {
       inboundLocks.delete(key);
     }
   }
+}
+
+async function isDuplicateWebhookMessage(messageId) {
+  const id = String(messageId || "").trim();
+  if (!id) return false;
+
+  const key = `wa:msg:${id}`;
+  const created = await redis.set(key, "1", { ex: 300, nx: true });
+  return !created;
 }
 
 async function runWithSafeSession(phone, phoneNumberIdFallback, traceId, fn) {
@@ -3062,9 +3117,14 @@ if (prof.ok && prof.data) {
   // WZ_NOME
   // =======================
   if (ctx === "WZ_NOME") {
-  const nome = cleanStr(raw);
-  if (nome.length < 5) {
-    await sendText({ to: phone, body: "⚠️ Envie seu nome completo.", phoneNumberIdFallback });
+  const nome = normalizeHumanText(raw, 120);
+
+  if (!isValidName(nome)) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Envie seu nome completo.",
+      phoneNumberIdFallback
+    });
     return;
   }
 
@@ -3195,86 +3255,117 @@ if (prof.ok && prof.data) {
   // WZ_ENDERECO
   // =======================
   if (ctx === "WZ_ENDERECO") {
-    const v = cleanStr(raw);
-    if (v.length < 3) {
-      await sendText({ to: phone, body: "⚠️ Endereço inválido.", phoneNumberIdFallback });
-      return;
-    }
-    await updateSession(phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.form = sess.portal.form || {};
-      sess.portal.form.endereco = v;
+  const v = normalizeHumanText(raw, 120);
+
+  if (!isValidSimpleAddressField(v, 3, 120)) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Endereço inválido.",
+      phoneNumberIdFallback
     });
-    await sendAndSetState(phone, MSG.ASK_NUMERO, "WZ_NUMERO", phoneNumberIdFallback);
     return;
   }
+
+  await updateSession(phone, (sess) => {
+    sess.portal = sess.portal || {};
+    sess.portal.form = sess.portal.form || {};
+    sess.portal.form.endereco = v;
+  });
+
+  await sendAndSetState(phone, MSG.ASK_NUMERO, "WZ_NUMERO", phoneNumberIdFallback);
+  return;
+}
 
   // =======================
   // WZ_NUMERO
   // =======================
   if (ctx === "WZ_NUMERO") {
-    const v = cleanStr(raw);
-    if (!v) {
-      await sendText({ to: phone, body: "⚠️ Informe o número.", phoneNumberIdFallback });
-      return;
-    }
-    await updateSession(phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.form = sess.portal.form || {};
-      sess.portal.form.numero = v;
+  const v = normalizeHumanText(raw, 20);
+
+  if (!v) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Informe o número.",
+      phoneNumberIdFallback
     });
-    await sendAndSetState(phone, MSG.ASK_COMPLEMENTO, "WZ_COMPLEMENTO", phoneNumberIdFallback);
     return;
   }
+
+  await updateSession(phone, (sess) => {
+    sess.portal = sess.portal || {};
+    sess.portal.form = sess.portal.form || {};
+    sess.portal.form.numero = v;
+  });
+
+  await sendAndSetState(phone, MSG.ASK_COMPLEMENTO, "WZ_COMPLEMENTO", phoneNumberIdFallback);
+  return;
+}
 
   // =======================
   // WZ_COMPLEMENTO
   // =======================
   if (ctx === "WZ_COMPLEMENTO") {
-    await updateSession(phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.form = sess.portal.form || {};
-      sess.portal.form.complemento = cleanStr(raw);
-    });
-    await sendAndSetState(phone, MSG.ASK_BAIRRO, "WZ_BAIRRO", phoneNumberIdFallback);
-    return;
-  }
+  const v = normalizeHumanText(raw, 80) || "0";
+
+  await updateSession(phone, (sess) => {
+    sess.portal = sess.portal || {};
+    sess.portal.form = sess.portal.form || {};
+    sess.portal.form.complemento = v;
+  });
+
+  await sendAndSetState(phone, MSG.ASK_BAIRRO, "WZ_BAIRRO", phoneNumberIdFallback);
+  return;
+}
 
   // =======================
   // WZ_BAIRRO
   // =======================
   if (ctx === "WZ_BAIRRO") {
-    const v = cleanStr(raw);
-    if (!v) {
-      await sendText({ to: phone, body: "⚠️ Informe o bairro.", phoneNumberIdFallback });
-      return;
-    }
-    await updateSession(phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.form = sess.portal.form || {};
-      sess.portal.form.bairro = v;
+  const v = normalizeHumanText(raw, 80);
+
+  if (!isValidSimpleAddressField(v, 2, 80)) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Informe o bairro.",
+      phoneNumberIdFallback
     });
-    await sendAndSetState(phone, MSG.ASK_CIDADE, "WZ_CIDADE", phoneNumberIdFallback);
     return;
   }
+
+  await updateSession(phone, (sess) => {
+    sess.portal = sess.portal || {};
+    sess.portal.form = sess.portal.form || {};
+    sess.portal.form.bairro = v;
+  });
+
+  await sendAndSetState(phone, MSG.ASK_CIDADE, "WZ_CIDADE", phoneNumberIdFallback);
+  return;
+}
 
   // =======================
   // WZ_CIDADE
   // =======================
   if (ctx === "WZ_CIDADE") {
-    const v = cleanStr(raw);
-    if (!v) {
-      await sendText({ to: phone, body: "⚠️ Informe a cidade.", phoneNumberIdFallback });
-      return;
-    }
-    await updateSession(phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.form = sess.portal.form || {};
-      sess.portal.form.cidade = v;
+  const v = normalizeHumanText(raw, 80);
+
+  if (!isValidSimpleAddressField(v, 2, 80)) {
+    await sendText({
+      to: phone,
+      body: "⚠️ Informe a cidade.",
+      phoneNumberIdFallback
     });
-    await sendAndSetState(phone, MSG.ASK_UF, "WZ_UF", phoneNumberIdFallback);
     return;
   }
+
+  await updateSession(phone, (sess) => {
+    sess.portal = sess.portal || {};
+    sess.portal.form = sess.portal.form || {};
+    sess.portal.form.cidade = v;
+  });
+
+  await sendAndSetState(phone, MSG.ASK_UF, "WZ_UF", phoneNumberIdFallback);
+  return;
+}
 
 // =======================
 // WZ_UF  -> CREATE + VALIDAR + IR PRA DATAS
@@ -3561,9 +3652,18 @@ app.post("/webhook", async (req, res) => {
     const value = change.value;
     const msg = value?.messages?.[0];
     if (!msg) return;
-
+    
     const from = msg.from;
     const traceId = crypto.randomUUID();
+    const messageId = msg.id || null;
+    
+    if (await isDuplicateWebhookMessage(messageId)) {
+      audit("WEBHOOK_DUPLICATE_IGNORED", {
+        traceId,
+        phoneMasked: maskPhone(from),
+      });
+      return;
+    }
 
     let text = (
       msg.text?.body ||
@@ -3684,7 +3784,7 @@ function handleDebugRouteError(routeName, e, res, req) {
     routeName,
     method: req?.method || null,
     error: String(e?.message || e),
-    stackPreview: e?.stack ? String(e.stack).slice(0, 500) : null,
+    stackPresent: !!e?.stack,
   });
 
   return res.status(500).json({
@@ -3692,6 +3792,27 @@ function handleDebugRouteError(routeName, e, res, req) {
     routeName,
     error: "internal debug route error",
   });
+}
+
+function buildSafeDebugVersaResponse(out) {
+  return {
+    ok: !!out?.ok,
+    status: out?.status ?? null,
+    rid: out?.rid ?? null,
+    allow: out?.allow ?? null,
+    dataType:
+      Array.isArray(out?.data) ? "array" :
+      out?.data === null ? "null" :
+      typeof out?.data,
+    isArray: Array.isArray(out?.data),
+    arrayLength: Array.isArray(out?.data) ? out.data.length : null,
+    topLevelKeys:
+      out?.data &&
+      typeof out.data === "object" &&
+      !Array.isArray(out.data)
+        ? Object.keys(out.data).slice(0, 8)
+        : null,
+  };
 }
 
 if (isDebugEnabled()) {
@@ -3711,21 +3832,7 @@ if (isDebugEnabled()) {
   app.get("/debug/versatilis/especialidades", async (req, res) => {
     try {
       const out = await versatilisFetch("/api/Especialidade/Especialidades");
-      return res.status(200).json({
-        ok: !!out?.ok,
-        status: out?.status ?? null,
-        rid: out?.rid ?? null,
-        allow: out?.allow ?? null,
-        dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
-        dataPreview:
-          typeof out?.data === "string"
-            ? out.data.slice(0, 300)
-            : Array.isArray(out?.data)
-            ? `array(len=${out.data.length})`
-            : out?.data && typeof out.data === "object"
-            ? Object.keys(out.data).slice(0, 20)
-            : null,
-      });
+      return res.status(200).json(buildSafeDebugVersaResponse(out));
     } catch (e) {
       return handleDebugRouteError("/debug/versatilis/especialidades", e, res, req);
     }
@@ -3745,21 +3852,7 @@ if (isDebugEnabled()) {
         `&DataFinal=${encodeURIComponent(DataFinal)}`;
   
       const out = await versatilisFetch(path);
-      return res.status(200).json({
-        ok: !!out?.ok,
-        status: out?.status ?? null,
-        rid: out?.rid ?? null,
-        allow: out?.allow ?? null,
-        dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
-        dataPreview:
-          typeof out?.data === "string"
-            ? out.data.slice(0, 300)
-            : Array.isArray(out?.data)
-            ? `array(len=${out.data.length})`
-            : out?.data && typeof out.data === "object"
-            ? Object.keys(out.data).slice(0, 20)
-            : null,
-      });
+      return res.status(200).json(buildSafeDebugVersaResponse(out));
     } catch (e) {
       return handleDebugRouteError("/debug/versatilis/agenda-datas", e, res, req);
     }
@@ -3781,20 +3874,7 @@ if (isDebugEnabled()) {
       const out = await versatilisFetch(path);
   
       if (!out.ok || !Array.isArray(out.data)) {
-        return res.status(200).json({
-          ok: !!out?.ok,
-          status: out?.status ?? null,
-          rid: out?.rid ?? null,
-          allow: out?.allow ?? null,
-          dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
-          dataPreview:
-            typeof out?.data === "string"
-              ? out.data.slice(0, 300)
-              : Array.isArray(out?.data)
-              ? `array(len=${out.data.length})`
-              : out?.data && typeof out.data === "object"
-              ? Object.keys(out.data).slice(0, 20)
-              : null,
+        return res.status(200).json(buildSafeDebugVersaResponse(out));
         });
       }
   
@@ -3851,21 +3931,7 @@ if (isDebugEnabled()) {
         jsonBody: payload,
       });
   
-      return res.status(200).json({
-        ok: !!out?.ok,
-        status: out?.status ?? null,
-        rid: out?.rid ?? null,
-        allow: out?.allow ?? null,
-        dataType: Array.isArray(out?.data) ? "array" : typeof out?.data,
-        dataPreview:
-          typeof out?.data === "string"
-            ? out.data.slice(0, 300)
-            : Array.isArray(out?.data)
-            ? `array(len=${out.data.length})`
-            : out?.data && typeof out.data === "object"
-            ? Object.keys(out.data).slice(0, 20)
-            : null,
-      });
+      return res.status(200).json(buildSafeDebugVersaResponse(out));
     } catch (e) {
       return handleDebugRouteError("/debug/versatilis/confirmar-agendamento", e, res, req);
     }
