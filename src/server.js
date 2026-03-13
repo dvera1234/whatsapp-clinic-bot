@@ -1646,6 +1646,16 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   }
 }
 
+async function isDuplicateWebhookMessage(messageId) {
+  const id = String(messageId || "").trim();
+  if (!id) return false;
+
+  const key = `wa:msg:${id}`;
+  const created = await redis.set(key, "1", { ex: 300, nx: true });
+
+  return !created;
+}
+
 function isRedisError(err) {
   const msg = String(err?.message || err || "").toLowerCase();
 
@@ -3664,7 +3674,7 @@ app.post("/webhook", async (req, res) => {
       });
       return;
     }
-
+    
     let text = (
       msg.text?.body ||
       msg.interactive?.button_reply?.id ||
