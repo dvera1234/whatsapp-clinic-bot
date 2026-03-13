@@ -2671,15 +2671,31 @@ if (upper === "CONFIRMAR") {
       return;
     }
 
-    const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
+const msgOk = out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
 
-    const ORIENTACOES = `Para que sua experiência seja ainda mais tranquila, recomendamos que chegue com 15 minutos de antecedência.
+const isParticularBooking = Number(payload.CodPlano) === Number(COD_PLANO_PARTICULAR);
+const isRetornoBooking = !!s?.booking?.isRetorno;
 
+const showPagamentoInfo = isParticularBooking && !isRetornoBooking;
+
+const PAGAMENTO_INFO = showPagamentoInfo
+  ? `
+
+💳 *Pagamento da consulta*
+Após realizar o check-in no totem, efetue o pagamento antes do atendimento.`
+  : "";
+
+const ORIENTACOES = `⏰ *Chegada*
+Recomendamos que chegue com 15 minutos de antecedência.
+
+🛋️ *Conforto*
 Nossa sala de espera foi pensada com carinho para seu conforto: ambiente acolhedor, água disponível, Wi-Fi gratuito e honest market com opções variadas.
 
+🚗 *Estacionamento*
 Há estacionamento com valet no prédio.
 
-Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.`;
+📍 *Ao chegar*
+Leve um documento oficial com foto para realizar seu cadastro na recepção do edifício e dirija-se ao 6º andar. Ao chegar, identifique-se no totem de atendimento.${PAGAMENTO_INFO}`;
 
     const PORTAL_INFO = `📲 Conheça o Portal do Paciente
 
