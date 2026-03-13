@@ -2969,6 +2969,8 @@ await updateSession(phone, (sess) => {
   sess.portal.codUsuario = codUsuario;
 });
 
+console.log("PLANOS PERFIL:", prof.data);
+  
 const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
 
 if (prof.ok && prof.data) {
