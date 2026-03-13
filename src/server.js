@@ -1402,13 +1402,14 @@ ASK_UF: `Estado (UF), ex.: SP:`,
 📲 Siga-nos também no Instagram:
 https://www.instagram.com/dr.david_vera/`,
 
-  MENU: `👋 Olá! Sou a Cláudia, assistente virtual do Dr. David E. Vera.
+MENU: `👋 Olá! Sou a Cláudia, assistente virtual do Dr. David E. Vera.
 
-Escolha uma opção:
-1) Agendamento particular
-2) Agendamento convênio
-3) Acompanhamento pós-operatório
-4) Falar com um atendente`,
+📌 Responda apenas com o *número* da opção desejada:
+
+1️⃣ Agendamento particular  
+2️⃣ Agendamento convênio  
+3️⃣ Acompanhamento pós-operatório  
+4️⃣ Falar com um atendente`,
 
   PARTICULAR: `Agendamento particular
 
@@ -1430,7 +1431,7 @@ Formas de pagamento
 Os pagamentos são realizados no totem de atendimento no momento da chegada, antes da consulta.
 
 Agendamento
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 1) Agendar minha consulta
 0) Voltar ao menu inicial`,
 
@@ -1455,7 +1456,7 @@ O agendamento é feito pelo paciente diretamente na Clínica Santé.
 Se preferir, você também pode realizar a consulta de forma particular,
 com agendamento rápido e direto por aqui.
 
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 9) Agendamento particular
 0) Voltar ao menu inicial`,
 
@@ -1474,7 +1475,7 @@ Clínica Pró-Consulta de Sumaré
 Se preferir, você também pode realizar a consulta de forma particular,
 com agendamento rápido e direto por aqui.
 
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 9) Agendamento particular
 0) Voltar ao menu inicial`,
 
@@ -1487,7 +1488,7 @@ O agendamento é feito pelo paciente na Clínica Matuda
 Se preferir, você também pode realizar a consulta de forma particular,
 com agendamento rápido e direto por aqui.
 
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 9) Agendamento particular
 0) Voltar ao menu inicial`,
 
@@ -1500,7 +1501,7 @@ O agendamento é feito pelo paciente no Centro Médico do CEVISA
 Se preferir, você também pode realizar a consulta de forma particular,
 com agendamento rápido e direto por aqui.
 
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 9) Agendamento particular
 0) Voltar ao menu inicial`,
 
@@ -1512,7 +1513,7 @@ Para pacientes MedSênior, o agendamento é realizado diretamente por aqui.
 Avenida Orosimbo Maia, 360
 6º andar – Vila Itapura
 
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 1) Agendar minha consulta
 0) Voltar ao menu inicial`,
 
@@ -1520,7 +1521,7 @@ Escolha uma opção:
 
 Este canal é destinado a pacientes operados pelo Dr. David E. Vera.
 
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 1) Pós-operatório recente (até 30 dias)
 2) Pós-operatório tardio (mais de 30 dias)
 0) Voltar ao menu inicial`,
@@ -1542,7 +1543,7 @@ sejam avaliadas em consulta.
 
 Solicitações administrativas (atestados, laudos, relatórios) devem ser realizadas em consulta.
 
-Escolha uma opção:
+Escolha uma opção (responda com o número):
 1) Agendamento particular
 2) Agendamento convênio
 0) Voltar ao menu inicial`,
