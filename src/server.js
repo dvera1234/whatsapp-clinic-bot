@@ -1404,7 +1404,9 @@ https://www.instagram.com/dr.david_vera/`,
 
 MENU: `👋 Olá! Sou a Cláudia, assistente virtual do Dr. David E. Vera.
 
-📌 Responda apenas com o *número* da opção desejada:
+Para começar, escolha uma opção abaixo.
+
+📌 Responda apenas com o número da opção desejada:
 
 1️⃣ Agendamento particular  
 2️⃣ Agendamento convênio  
