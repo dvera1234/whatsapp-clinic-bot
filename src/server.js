@@ -1434,12 +1434,16 @@ Escolha uma opção:
 1) Agendar minha consulta
 0) Voltar ao menu inicial`,
 
-  CONVENIOS: `Selecione o seu convênio:
+  CONVENIOS: `Selecione o seu convênio (responda com o número):
+
 1) GoCare
 2) Samaritano
 3) Salusmed
 4) Proasa
 5) MedSênior
+
+ℹ️ O atendimento por convênio é realizado apenas pelos planos de saúde listados acima.
+
 0) Voltar ao menu inicial`,
 
   CONVENIO_GOCARE: `GoCare
