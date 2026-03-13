@@ -1696,15 +1696,6 @@ async function withPhoneLock(phone, fn) {
   }
 }
 
-async function isDuplicateWebhookMessage(messageId) {
-  const id = String(messageId || "").trim();
-  if (!id) return false;
-
-  const key = `wa:msg:${id}`;
-  const created = await redis.set(key, "1", { ex: 300, nx: true });
-  return !created;
-}
-
 async function runWithSafeSession(phone, phoneNumberIdFallback, traceId, fn) {
   try {
     return await fn();
@@ -3885,7 +3876,6 @@ if (isDebugEnabled()) {
   
       if (!out.ok || !Array.isArray(out.data)) {
         return res.status(200).json(buildSafeDebugVersaResponse(out));
-        });
       }
   
       const filtered = out.data
