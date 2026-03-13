@@ -3022,163 +3022,135 @@ if (prof.ok && prof.data) {
     return;
   }
 
-  const v = validatePortalCompleteness(prof.data);
+    const v = validatePortalCompleteness(prof.data);
 
-if (v.ok) {
-  const sCurrent = await ensureSession(phone);
-  const flowPlanKey = sCurrent?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
-  const plansCod = normalizePlanListFromProfile(prof.data);
-
-  const hasParticular = hasPlanKey(plansCod, PLAN_KEYS.PARTICULAR);
-  const hasMed = hasPlanKey(plansCod, PLAN_KEYS.MEDSENIOR_SP);
-
-  await updateSession(phone, (sess) => {
-    sess.booking = sess.booking || {};
-    sess.booking.codUsuario = codUsuario;
-  });
-
-  // Regra 1:
-  // cadastro PARTICULAR + entrou por PARTICULAR => agendar
-  if (hasParticular && !hasMed && flowPlanKey === PLAN_KEYS.PARTICULAR) {
-    await finishWizardAndGoToDates({
-      phone,
-      phoneNumberIdFallback,
-      codUsuario,
-      planoKeyFromWizard: PLAN_KEYS.PARTICULAR,
-      traceId,
-    });
-    return;
-  }
-
-  // Regra 2:
-  // cadastro MEDSENIOR + entrou por MEDSENIOR => agendar
-  if (!hasParticular && hasMed && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
-    await finishWizardAndGoToDates({
-      phone,
-      phoneNumberIdFallback,
-      codUsuario,
-      planoKeyFromWizard: PLAN_KEYS.MEDSENIOR_SP,
-      traceId,
-    });
-    return;
-  }
-
-  // Regra 3:
-  // cadastro PARTICULAR + entrou por MEDSENIOR => humano
-  if (hasParticular && !hasMed && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
-    await updateSession(phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.issue = {
-        type: "CONVENIO_NAO_HABILITADO",
-        wantedPlan: "MEDSENIOR_SP",
-        note: "Paciente possui apenas PARTICULAR ativo no cadastro.",
-        codUsuario: Number(codUsuario) || null,
-        plansDetected: Array.isArray(plansCod) ? plansCod.map(Number) : [],
-      };
-    });
-
-    audit("PLAN_INCONSISTENCY_MEDSENIOR_NOT_ENABLED", {
-      traceId,
-      tracePhone: maskPhone(phone),
-      codUsuario: Number(codUsuario) || null,
-      flowPlanKey,
-      plansDetected: Array.isArray(plansCod) ? plansCod.map(Number) : [],
-      escalationRequired: true,
-    });
-
-    await sendButtons({
-      to: phone,
-      body:
-        `Notei que seu cadastro está como Particular.\n\n` +
-        `Para agendar por MedSênior, é necessário regularizar isso com nossa equipe.\n\n` +
-        `Como deseja prosseguir?`,
-      buttons: [
-        { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
-        { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
-      ],
-      phoneNumberIdFallback,
-    });
-
-    await setState(phone, "PLAN_PICK");
-    return;
-  }
-
-  // Regra 4:
-  // cadastro MEDSENIOR + entrou por PARTICULAR => perguntar qual usar
-  if (!hasParticular && hasMed && flowPlanKey === PLAN_KEYS.PARTICULAR) {
-    await sendButtons({
-      to: phone,
-      body: MSG.PLAN_DIVERGENCIA,
-      buttons: [
-        { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
-        { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
-      ],
-      phoneNumberIdFallback,
-    });
-
-    await setState(phone, "PLAN_PICK");
-    return;
-  }
-
-  // fallback de segurança
-  await sendText({
-    to: phone,
-    body: "⚠️ Não consegui validar o convênio do cadastro agora. Por favor, fale com nossa equipe.",
-    phoneNumberIdFallback,
-  });
-
-  await setState(phone, "MAIN");
-  return;
-}
-
-    if (hasFlowPlan) {
-     await finishWizardAndGoToDates({
-        phone,
-        phoneNumberIdFallback,
-        codUsuario,
-        planoKeyFromWizard: flowPlanKey,
-        traceId,
+    if (v.ok) {
+      const sCurrent = await ensureSession(phone);
+      const flowPlanKey = sCurrent?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
+      const plansCod = normalizePlanListFromProfile(prof.data);
+  
+      const hasParticular = hasPlanKey(plansCod, PLAN_KEYS.PARTICULAR);
+      const hasMed = hasPlanKey(plansCod, PLAN_KEYS.MEDSENIOR_SP);
+  
+      await updateSession(phone, (sess) => {
+        sess.booking = sess.booking || {};
+        sess.booking.codUsuario = codUsuario;
       });
+  
+      // cadastro PARTICULAR + entrou por PARTICULAR => agendar
+      if (hasParticular && !hasMed && flowPlanKey === PLAN_KEYS.PARTICULAR) {
+        await finishWizardAndGoToDates({
+          phone,
+          phoneNumberIdFallback,
+          codUsuario,
+          planoKeyFromWizard: PLAN_KEYS.PARTICULAR,
+          traceId,
+        });
+        return;
+      }
+  
+      // cadastro MEDSENIOR + entrou por MEDSENIOR => agendar
+      if (!hasParticular && hasMed && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
+        await finishWizardAndGoToDates({
+          phone,
+          phoneNumberIdFallback,
+          codUsuario,
+          planoKeyFromWizard: PLAN_KEYS.MEDSENIOR_SP,
+          traceId,
+        });
+        return;
+      }
+  
+      // cadastro PARTICULAR + entrou por MEDSENIOR => humano
+      if (hasParticular && !hasMed && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
+        await updateSession(phone, (sess) => {
+          sess.portal = sess.portal || {};
+          sess.portal.issue = {
+            type: "CONVENIO_NAO_HABILITADO",
+            wantedPlan: "MEDSENIOR_SP",
+            note: "Paciente possui apenas PARTICULAR ativo no cadastro.",
+            codUsuario: Number(codUsuario) || null,
+            plansDetected: Array.isArray(plansCod) ? plansCod.map(Number) : [],
+          };
+        });
+  
+        audit("PLAN_INCONSISTENCY_MEDSENIOR_NOT_ENABLED", {
+          traceId,
+          tracePhone: maskPhone(phone),
+          codUsuario: Number(codUsuario) || null,
+          flowPlanKey,
+          plansDetected: Array.isArray(plansCod) ? plansCod.map(Number) : [],
+          escalationRequired: true,
+        });
+  
+        await sendButtons({
+          to: phone,
+          body:
+            `Notei que seu cadastro está como Particular.\n\n` +
+            `Para agendar por MedSênior, é necessário regularizar isso com nossa equipe.\n\n` +
+            `Como deseja prosseguir?`,
+          buttons: [
+            { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
+            { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
+          ],
+          phoneNumberIdFallback,
+        });
+  
+        await setState(phone, "PLAN_PICK");
+        return;
+      }
+  
+      // cadastro MEDSENIOR + entrou por PARTICULAR => perguntar qual usar
+      if (!hasParticular && hasMed && flowPlanKey === PLAN_KEYS.PARTICULAR) {
+        await sendButtons({
+          to: phone,
+          body: MSG.PLAN_DIVERGENCIA,
+          buttons: [
+            { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
+            { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
+          ],
+          phoneNumberIdFallback,
+        });
+  
+        await setState(phone, "PLAN_PICK");
+        return;
+      }
+  
+      // fallback de segurança
+      await sendText({
+        to: phone,
+        body: "⚠️ Não consegui validar o convênio do cadastro agora. Por favor, fale com nossa equipe.",
+        phoneNumberIdFallback,
+      });
+  
+      await setState(phone, "MAIN");
       return;
     }
-
-    const buttons = [{ id: "PL_USE_PART", title: MSG.BTN_PLAN_PART }];
-    if (hasMed) buttons.push({ id: "PL_USE_MED", title: MSG.BTN_PLAN_MED });
-
+  
+    await updateSession(phone, (sess) => {
+      sess.portal = sess.portal || {};
+      sess.portal.missing = v.missing;
+    });
+  
+    audit("PORTAL_EXISTING_USER_BLOCKED_INCOMPLETE_PROFILE", {
+      traceId,
+      tracePhone: maskPhone(phone),
+      codUsuario: codUsuario || null,
+      missingFields: Array.isArray(v.missing) ? v.missing : [],
+      escalationRequired: true,
+    });
+  
     await sendButtons({
       to: phone,
-      body: MSG.PLAN_DIVERGENCIA,
-      buttons,
+      body: MSG.PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO(formatMissing(v.missing)),
+      buttons: [{ id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE }],
       phoneNumberIdFallback,
     });
-
-    await setState(phone, "PLAN_PICK");
+  
+    await setState(phone, "BLOCK_EXISTING_INCOMPLETE");
     return;
   }
-
-  await updateSession(phone, (sess) => {
-    sess.portal = sess.portal || {};
-    sess.portal.missing = v.missing;
-  });
-
-  audit("PORTAL_EXISTING_USER_BLOCKED_INCOMPLETE_PROFILE", {
-    traceId,
-    tracePhone: maskPhone(phone),
-    codUsuario: codUsuario || null,
-    missingFields: Array.isArray(v.missing) ? v.missing : [],
-    escalationRequired: true,
-  });
-
-  await sendButtons({
-    to: phone,
-    body: MSG.PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO(formatMissing(v.missing)),
-    buttons: [{ id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE }],
-    phoneNumberIdFallback,
-  });
-
-  await setState(phone, "BLOCK_EXISTING_INCOMPLETE");
-  return;
-}
+  
   // =======================
   // WZ_NOME
   // =======================
