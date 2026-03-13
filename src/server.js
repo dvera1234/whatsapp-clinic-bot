@@ -2972,16 +2972,6 @@ await updateSession(phone, (sess) => {
 const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
 
 if (prof.ok && prof.data) {
-  debugLog("PROFILE_PLAN_DEBUG", {
-    traceId,
-    tracePhone: maskPhone(phone),
-    codUsuario,
-    codPlano: prof.data?.CodPlano ?? null,
-    codPlanos: Array.isArray(prof.data?.CodPlanos) ? prof.data.CodPlanos : null,
-    profileKeys: Object.keys(prof.data || {}).slice(0, 40),
-    rawProfileForPlanCheck: prof.data,
-  });
-
   const p = prof.data;
 
   await updateSession(phone, (sess) => {
