@@ -1,5 +1,6 @@
 import express from "express";
 import crypto from "crypto";
+import { getState } from "../session/redisSession.js";
 import { VERIFY_TOKEN } from "../config/env.js";
 import { LGPD_TEXT_HASH, LGPD_TEXT_VERSION, MSG } from "../config/constants.js";
 import { audit, errLog } from "../observability/audit.js";
