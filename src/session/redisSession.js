@@ -1,8 +1,8 @@
 import { getRedisClient } from "../redis.js";
 import { DEBUG_REDIS, SESSION_TTL_SECONDS } from "../config/env.js";
-import { INACTIVITY_WARN_MS, MSG } from "../config/constants.js";
-import { errLog, techLog, audit } from "../observability/audit.js";
-import { safeJson, safeConsoleWrite } from "../observability/logger.js";
+import { INACTIVITY_WARN_MS } from "../config/constants.js";
+import { audit, errLog, techLog } from "../observability/audit.js";
+import { safeConsoleWrite, safeJson } from "../observability/logger.js";
 import { maskKey, maskPhone } from "../utils/mask.js";
 
 const redis = getRedisClient();
@@ -76,6 +76,7 @@ async function loadSession(phone) {
   logRedis("REDIS_GET", { phone: maskPhone(phone), key: maskKey(key) });
 
   const raw = await redis.get(key);
+
   if (raw == null) return null;
   if (typeof raw === "object") return raw;
 
@@ -145,6 +146,27 @@ async function updateSession(phone, updater) {
   return s;
 }
 
+async function setState(phone, state) {
+  return await updateSession(phone, (s) => {
+    s.state = state;
+  });
+}
+
+async function getState(phone) {
+  const s = await loadSession(phone);
+  return s?.state || null;
+}
+
+async function getSession(phone) {
+  return await ensureSession(phone);
+}
+
+async function setBookingPlan(phone, planoKey) {
+  return await updateSession(phone, (s) => {
+    s.booking = { ...(s.booking || {}), planoKey };
+  });
+}
+
 function clearInactivityTimer(phone) {
   const key = String(phone || "").replace(/\D+/g, "");
   const timer = inactivityTimers.get(key);
@@ -160,11 +182,81 @@ async function clearSession(phone) {
   await deleteSession(phone);
 }
 
-// touchUser e scheduleInactivityWarning permanecem iguais,
-// apenas injetando sendText ao usar este módulo.
+function scheduleInactivityWarning({ phone, phoneNumberIdFallback, sendText, clearSession, loadSession, msgEncerramento }) {
+  const key = String(phone || "").replace(/\D+/g, "");
+  if (!key) return;
+
+  clearInactivityTimer(key);
+
+  const timer = setTimeout(async () => {
+    try {
+      const s = await loadSession(key);
+
+      if (!s) {
+        inactivityTimers.delete(key);
+        return;
+      }
+
+      const idleMs = Date.now() - Number(s.lastUserTs || 0);
+
+      if (idleMs < INACTIVITY_WARN_MS - 2000) {
+        inactivityTimers.delete(key);
+        return;
+      }
+
+      await sendText({
+        to: key,
+        body: msgEncerramento,
+        phoneNumberIdFallback: s.lastPhoneNumberIdFallback || phoneNumberIdFallback || "",
+      });
+
+      await clearSession(key);
+      inactivityTimers.delete(key);
+
+      audit("FLOW_INACTIVITY_TIMEOUT", {
+        tracePhone: maskPhone(key),
+        inactivityMs: idleMs,
+        ttlSeconds: SESSION_TTL_SECONDS,
+        warningMs: INACTIVITY_WARN_MS,
+        functionalResult: "SESSION_CLEARED_AFTER_INACTIVITY",
+        patientFacingMessage: "INACTIVITY_CLOSURE_MESSAGE_SENT",
+        escalationRequired: false,
+      });
+    } catch (e) {
+      inactivityTimers.delete(key);
+
+      errLog("FLOW_INACTIVITY_TIMEOUT_ERROR", {
+        tracePhone: maskPhone(key),
+        error: String(e?.message || e),
+      });
+    }
+  }, INACTIVITY_WARN_MS);
+
+  inactivityTimers.set(key, timer);
+}
+
+async function touchUser({ phone, phoneNumberIdFallback, sendText, msgEncerramento }) {
+  const s = await updateSession(phone, (sess) => {
+    sess.lastUserTs = Date.now();
+    if (phoneNumberIdFallback) sess.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+  });
+
+  scheduleInactivityWarning({
+    phone,
+    phoneNumberIdFallback,
+    sendText,
+    clearSession,
+    loadSession,
+    msgEncerramento,
+  });
+
+  return s;
+}
+
 export {
   redis,
   inactivityTimers,
+  logRedis,
   sessionKey,
   detectUnexpectedSessionKeys,
   sanitizeSessionForSave,
@@ -173,6 +265,12 @@ export {
   deleteSession,
   ensureSession,
   updateSession,
+  setState,
+  getState,
+  getSession,
+  setBookingPlan,
   clearInactivityTimer,
   clearSession,
+  scheduleInactivityWarning,
+  touchUser,
 };
