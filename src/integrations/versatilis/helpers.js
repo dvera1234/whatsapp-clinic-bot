@@ -1,29 +1,10 @@
-import {
-  COD_COLABORADOR,
-} from "../../config/env.js";
-import {
-  PLAN_KEYS,
-  resolveCodPlano,
-} from "../../config/constants.js";
-import {
-  audit,
-  auditOutcome,
-  debugLog,
-} from "../../observability/audit.js";
+import { isDebugVersaShapeEnabled, COD_COLABORADOR } from "../../config/env.js";
+import { PLAN_KEYS, resolveCodPlano } from "../../config/constants.js";
+import { audit, auditOutcome, debugLog } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
-import {
-  cleanStr,
-  formatCPFMask,
-  isValidEmail,
-  normalizeCEP,
-  parsePositiveInt,
-} from "../../utils/validators.js";
+import { cleanStr, formatCPFMask, isValidEmail, normalizeCEP, parsePositiveInt } from "../../utils/validators.js";
 import { parseBRDateToISO } from "../../utils/time.js";
-import {
-  md5HexLegacyVersatilisOnly,
-  generateTempPassword,
-} from "../../utils/crypto.js";
-import { isDebugVersaShapeEnabled } from "../../config/env.js";
+import { md5HexLegacyVersatilisOnly, generateTempPassword } from "../../utils/crypto.js";
 import { mergeTraceMeta, versatilisFetch } from "./client.js";
 
 function normalizePlanListFromProfile(profile) {
