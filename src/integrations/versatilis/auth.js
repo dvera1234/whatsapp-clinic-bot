@@ -5,10 +5,12 @@ import { fetchWithTimeout } from "../../utils/time.js";
 
 function sanitizeVersaBase(u) {
   let s = String(u).trim();
+
   s = s.replace(/\s+/g, "");
   s = s.replace(/\/+$/, "");
   s = s.replace(/\/api\/.*$/i, "");
   s = s.replace(/\/api$/i, "");
+
   return s;
 }
 
@@ -55,7 +57,10 @@ async function versatilisGetToken() {
   const exp = Number(json.expires_in || 0);
   versaTokenExpMs = Date.now() + Math.max(60, exp) * 1000;
 
-  opLog("VERSATILIS_TOKEN_REFRESH_OK", { token: maskToken(versaToken) });
+  opLog("VERSATILIS_TOKEN_REFRESH_OK", {
+    token: maskToken(versaToken),
+  });
+
   return versaToken;
 }
 
