@@ -1,26 +1,14 @@
 import express from "express";
 import crypto from "crypto";
-import { getState } from "../session/redisSession.js";
+import { getState, redis } from "../session/redisSession.js";
 import { VERIFY_TOKEN } from "../config/env.js";
-import { LGPD_TEXT_HASH, LGPD_TEXT_VERSION, MSG } from "../config/constants.js";
+import { LGPD_TEXT_HASH, LGPD_TEXT_VERSION } from "../config/constants.js";
 import { audit, errLog } from "../observability/audit.js";
 import { maskIp, maskPhone } from "../utils/mask.js";
-import { hashText } from "../utils/crypto.js";
 import { isValidMetaSignature } from "../whatsapp/signature.js";
 import { handleInbound } from "../flows/handleInbound.js";
-import { redis } from "../session/redisSession.js";
 
 const router = express.Router();
-
-function isDebugEnabled() {
-  const enabled = String(process.env.ENABLE_DEBUG || "").trim() === "1";
-  const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
-  return enabled && (nodeEnv === "development" || nodeEnv === "test");
-}
-
-function isDebugVersaShapeEnabled() {
-  return isDebugEnabled() && String(process.env.DEBUG_VERSA_SHAPE || "").trim() === "1";
-}
 
 async function isDuplicateWebhookMessage(messageId) {
   const id = String(messageId || "").trim();
@@ -39,6 +27,7 @@ router.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
+
   return res.sendStatus(403);
 });
 
@@ -53,7 +42,7 @@ router.post("/webhook", async (req, res) => {
     }
 
     res.sendStatus(200);
-    
+
     const body = req.body;
     if (!body || body.object !== "whatsapp_business_account") return;
 
@@ -66,11 +55,11 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    const currentState = (await getState(from)) || "(none)";
-    
     const change = entry.changes[0];
     if (!change || change.field !== "messages" || !change.value || typeof change.value !== "object") {
-      audit("WEBHOOK_INVALID_CHANGE_SHAPE", { ipMasked: maskIp(req.ip) });
+      audit("WEBHOOK_INVALID_CHANGE_SHAPE", {
+        ipMasked: maskIp(req.ip),
+      });
       return;
     }
 
@@ -79,6 +68,7 @@ router.post("/webhook", async (req, res) => {
     if (!msg) return;
 
     const from = msg.from;
+    const currentState = (await getState(from)) || "(none)";
     const traceId = crypto.randomUUID();
     const messageId = msg.id || null;
 
@@ -91,7 +81,9 @@ router.post("/webhook", async (req, res) => {
     }
 
     let text = (msg.text?.body || msg.interactive?.button_reply?.id || "").trim();
-    if (text.length > 500) text = text.slice(0, 500);
+    if (text.length > 500) {
+      text = text.slice(0, 500);
+    }
 
     if (!text) {
       audit("WEBHOOK_IGNORED_EMPTY_MESSAGE", {
@@ -106,13 +98,18 @@ router.post("/webhook", async (req, res) => {
     audit("WEBHOOK_INBOUND", {
       traceId,
       phoneMasked: maskPhone(from),
+      state: currentState,
       messageHidden: true,
       hasInteractiveReply: !!msg.interactive?.button_reply?.id,
       hasTextBody: !!msg.text?.body,
       phoneNumberIdPresent: !!phoneNumberIdFallback,
     });
 
-    await handleInbound(from, text, phoneNumberIdFallback, { traceId, LGPD_TEXT_VERSION, LGPD_TEXT_HASH });
+    await handleInbound(from, text, phoneNumberIdFallback, {
+      traceId,
+      LGPD_TEXT_VERSION,
+      LGPD_TEXT_HASH,
+    });
   } catch (err) {
     errLog("WEBHOOK_POST_ERROR", {
       error: String(err?.message || err),
@@ -120,10 +117,5 @@ router.post("/webhook", async (req, res) => {
     });
   }
 });
-
-export {
-  isDebugEnabled,
-  isDebugVersaShapeEnabled,
-};
 
 export default router;
