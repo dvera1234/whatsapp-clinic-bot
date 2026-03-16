@@ -13,8 +13,20 @@ function logRedis(tag, obj) {
   safeConsoleWrite(`[${tag}] ${safeJson(obj)}`);
 }
 
-function sessionKey(phone) {
-  return `sess:${String(phone || "").replace(/\D+/g, "")}`;
+function normalizeTenantId(tenantId) {
+  return String(tenantId || "").trim();
+}
+
+function normalizePhone(phone) {
+  return String(phone || "").replace(/\D+/g, "");
+}
+
+function inactivityTimerKey(tenantId, phone) {
+  return `${normalizeTenantId(tenantId)}:${normalizePhone(phone)}`;
+}
+
+function sessionKey(tenantId, phone) {
+  return `sess:${normalizeTenantId(tenantId)}:${normalizePhone(phone)}`;
 }
 
 function detectUnexpectedSessionKeys(s) {
@@ -71,9 +83,14 @@ function sanitizeSessionForSave(s) {
   };
 }
 
-async function loadSession(phone) {
-  const key = sessionKey(phone);
-  logRedis("REDIS_GET", { phone: maskPhone(phone), key: maskKey(key) });
+async function loadSession(tenantId, phone) {
+  const key = sessionKey(tenantId, phone);
+
+  logRedis("REDIS_GET", {
+    tenantId,
+    phone: maskPhone(phone),
+    key: maskKey(key),
+  });
 
   const raw = await redis.get(key);
 
@@ -85,6 +102,7 @@ async function loadSession(phone) {
       return JSON.parse(raw);
     } catch (e) {
       errLog("REDIS_SESSION_CORRUPTED", {
+        tenantId,
         phoneMasked: maskPhone(phone),
         keyMasked: maskKey(key),
         error: String(e?.message || e),
@@ -97,12 +115,13 @@ async function loadSession(phone) {
   return null;
 }
 
-async function saveSession(phone, sessionObj) {
-  const key = sessionKey(phone);
+async function saveSession(tenantId, phone, sessionObj) {
+  const key = sessionKey(tenantId, phone);
 
   const unexpectedKeys = detectUnexpectedSessionKeys(sessionObj);
   if (unexpectedKeys.length) {
     techLog("SESSION_UNEXPECTED_KEYS_DROPPED", {
+      tenantId,
       phoneMasked: maskPhone(phone),
       unexpectedKeys: unexpectedKeys.slice(0, 20),
     });
@@ -112,6 +131,7 @@ async function saveSession(phone, sessionObj) {
   const val = JSON.stringify(safeSession);
 
   logRedis("REDIS_SET", {
+    tenantId,
     phone: maskPhone(phone),
     key: maskKey(key),
     len: val.length,
@@ -121,14 +141,14 @@ async function saveSession(phone, sessionObj) {
   return true;
 }
 
-async function deleteSession(phone) {
-  const key = sessionKey(phone);
+async function deleteSession(tenantId, phone) {
+  const key = sessionKey(tenantId, phone);
   await redis.del(key);
 }
 
-async function ensureSession(phone) {
+async function ensureSession(tenantId, phone) {
   return (
-    (await loadSession(phone)) || {
+    (await loadSession(tenantId, phone)) || {
       state: null,
       lastUserTs: 0,
       lastPhoneNumberIdFallback: "",
@@ -139,36 +159,36 @@ async function ensureSession(phone) {
   );
 }
 
-async function updateSession(phone, updater) {
-  const s = await ensureSession(phone);
+async function updateSession(tenantId, phone, updater) {
+  const s = await ensureSession(tenantId, phone);
   await updater(s);
-  await saveSession(phone, s);
+  await saveSession(tenantId, phone, s);
   return s;
 }
 
-async function setState(phone, state) {
-  return await updateSession(phone, (s) => {
+async function setState(tenantId, phone, state) {
+  return await updateSession(tenantId, phone, (s) => {
     s.state = state;
   });
 }
 
-async function getState(phone) {
-  const s = await loadSession(phone);
+async function getState(tenantId, phone) {
+  const s = await loadSession(tenantId, phone);
   return s?.state || null;
 }
 
-async function getSession(phone) {
-  return await ensureSession(phone);
+async function getSession(tenantId, phone) {
+  return await ensureSession(tenantId, phone);
 }
 
-async function setBookingPlan(phone, planoKey) {
-  return await updateSession(phone, (s) => {
+async function setBookingPlan(tenantId, phone, planoKey) {
+  return await updateSession(tenantId, phone, (s) => {
     s.booking = { ...(s.booking || {}), planoKey };
   });
 }
 
-function clearInactivityTimer(phone) {
-  const key = String(phone || "").replace(/\D+/g, "");
+function clearInactivityTimer(tenantId, phone) {
+  const key = inactivityTimerKey(tenantId, phone);
   const timer = inactivityTimers.get(key);
 
   if (timer) {
@@ -177,44 +197,54 @@ function clearInactivityTimer(phone) {
   }
 }
 
-async function clearSession(phone) {
-  clearInactivityTimer(phone);
-  await deleteSession(phone);
+async function clearSession(tenantId, phone) {
+  clearInactivityTimer(tenantId, phone);
+  await deleteSession(tenantId, phone);
 }
 
-function scheduleInactivityWarning({ phone, phoneNumberIdFallback, sendText, clearSession, loadSession, msgEncerramento }) {
-  const key = String(phone || "").replace(/\D+/g, "");
-  if (!key) return;
+function scheduleInactivityWarning({
+  tenantId,
+  phone,
+  phoneNumberIdFallback,
+  sendText,
+  msgEncerramento,
+}) {
+  const normalizedPhone = normalizePhone(phone);
+  const timerKey = inactivityTimerKey(tenantId, normalizedPhone);
 
-  clearInactivityTimer(key);
+  if (!tenantId || !normalizedPhone) return;
+
+  clearInactivityTimer(tenantId, normalizedPhone);
 
   const timer = setTimeout(async () => {
     try {
-      const s = await loadSession(key);
+      const s = await loadSession(tenantId, normalizedPhone);
 
       if (!s) {
-        inactivityTimers.delete(key);
+        inactivityTimers.delete(timerKey);
         return;
       }
 
       const idleMs = Date.now() - Number(s.lastUserTs || 0);
 
       if (idleMs < INACTIVITY_WARN_MS - 2000) {
-        inactivityTimers.delete(key);
+        inactivityTimers.delete(timerKey);
         return;
       }
 
       await sendText({
-        to: key,
+        tenantId,
+        to: normalizedPhone,
         body: msgEncerramento,
         phoneNumberIdFallback: s.lastPhoneNumberIdFallback || phoneNumberIdFallback || "",
       });
 
-      await clearSession(key);
-      inactivityTimers.delete(key);
+      await clearSession(tenantId, normalizedPhone);
+      inactivityTimers.delete(timerKey);
 
       audit("FLOW_INACTIVITY_TIMEOUT", {
-        tracePhone: maskPhone(key),
+        tenantId,
+        tracePhone: maskPhone(normalizedPhone),
         inactivityMs: idleMs,
         ttlSeconds: SESSION_TTL_SECONDS,
         warningMs: INACTIVITY_WARN_MS,
@@ -223,30 +253,30 @@ function scheduleInactivityWarning({ phone, phoneNumberIdFallback, sendText, cle
         escalationRequired: false,
       });
     } catch (e) {
-      inactivityTimers.delete(key);
+      inactivityTimers.delete(timerKey);
 
       errLog("FLOW_INACTIVITY_TIMEOUT_ERROR", {
-        tracePhone: maskPhone(key),
+        tenantId,
+        tracePhone: maskPhone(normalizedPhone),
         error: String(e?.message || e),
       });
     }
   }, INACTIVITY_WARN_MS);
 
-  inactivityTimers.set(key, timer);
+  inactivityTimers.set(timerKey, timer);
 }
 
-async function touchUser({ phone, phoneNumberIdFallback, sendText, msgEncerramento }) {
-  const s = await updateSession(phone, (sess) => {
+async function touchUser({ tenantId, phone, phoneNumberIdFallback, sendText, msgEncerramento }) {
+  const s = await updateSession(tenantId, phone, (sess) => {
     sess.lastUserTs = Date.now();
     if (phoneNumberIdFallback) sess.lastPhoneNumberIdFallback = phoneNumberIdFallback;
   });
 
   scheduleInactivityWarning({
+    tenantId,
     phone,
     phoneNumberIdFallback,
     sendText,
-    clearSession,
-    loadSession,
     msgEncerramento,
   });
 
