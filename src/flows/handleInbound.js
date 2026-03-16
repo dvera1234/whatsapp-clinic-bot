@@ -52,7 +52,7 @@ import {
   COD_UNIDADE,
   COD_ESPECIALIDADE,
   COD_PLANO_PARTICULAR,
- } from "../config/env.js";
+} from "../config/env.js";
 
 function normalizeHttpsUrlOrEmpty(value) {
   const s = String(value || "").trim();
@@ -89,6 +89,7 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
   const upper = String(raw || "").toUpperCase();
   const digits = onlyDigits(raw);
   const currentState = (await getState(phone)) || "MAIN";
+  const ctx = currentState;
 
   debugLog("FLOW_INBOUND_RECEIVED", {
     traceId,
@@ -126,11 +127,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     }
   }
 
-  const ctx = (await getState(phone)) || "MAIN";
-
-  // =======================
-  // LGPD
-  // =======================
   if (ctx === "LGPD_CONSENT") {
     if (digits === "1") {
       audit("LGPD_CONSENT_ACCEPTED", {
@@ -170,9 +166,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     }
   }
 
-  // =======================
-  // GLOBAL: FALAR ATENDENTE
-  // =======================
   if (upper === "FALAR_ATENDENTE") {
     const s = await getSession(phone);
     const prefill = buildSupportPrefillFromSession(phone, s, traceId);
@@ -188,9 +181,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
-  // =======================
-  // BLOQUEIO CADASTRO INCOMPLETO
-  // =======================
   if (ctx === "BLOCK_EXISTING_INCOMPLETE") {
     const s = await getSession(phone);
     const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
@@ -213,9 +203,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
-  // =======================
-  // ESCOLHA DE PLANO EM DIVERGÊNCIA
-  // =======================
   if (ctx === "PLAN_PICK") {
     if (upper === "FALAR_ATENDENTE") {
       const s = await getSession(phone);
@@ -277,9 +264,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
-  // =======================
-  // SELEÇÃO DE DATA
-  // =======================
   if (upper.startsWith("D_")) {
     const isoDate = raw.slice(2).trim();
     const s = await getSession(phone);
@@ -309,16 +293,13 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
         pageIndex: 0,
         slots,
       };
-      sess.state = "SLOTS";
     });
 
+    await setState(phone, "SLOTS");
     await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
     return;
   }
 
-  // =======================
-  // AGUARDANDO DATA
-  // =======================
   if (ctx === "ASK_DATE_PICK") {
     const s = await getSession(phone);
     const codColaborador = s?.booking?.codColaborador ?? COD_COLABORADOR;
@@ -347,9 +328,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
-  // =======================
-  // LISTA DE HORÁRIOS
-  // =======================
   if (ctx === "SLOTS") {
     if (upper.startsWith("PAGE_")) {
       const n = Number(raw.split("_")[1]);
@@ -421,9 +399,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
 
       await updateSession(phone, (s) => {
         s.pending = { codHorario };
-        s.state = "WAIT_CONFIRM";
       });
 
+      await setState(phone, "WAIT_CONFIRM");
       await sendButtons({
         to: phone,
         body: `✅ Horário selecionado.\n\nDeseja confirmar este horário?`,
@@ -446,9 +424,6 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     }
   }
 
-  // =======================
-  // CONFIRMAÇÃO DO AGENDAMENTO
-  // =======================
   if (ctx === "WAIT_CONFIRM") {
     if (upper === "ESCOLHER_OUTRO") {
       const s = await getSession(phone);
@@ -456,9 +431,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
 
       await updateSession(phone, (sess) => {
         delete sess.pending;
-        sess.state = "SLOTS";
       });
 
+      await setState(phone, "SLOTS");
       await showSlotsPage({ phone, phoneNumberIdFallback, slots, page: 0 });
       return;
     }
@@ -496,9 +471,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
 
         await updateSession(phone, (sess) => {
           delete sess.pending;
-          sess.state = "SLOTS";
         });
 
+        await setState(phone, "SLOTS");
         await sendText({
           to: phone,
           body: "⚠️ Não encontrei o horário selecionado. Escolha novamente.",
@@ -530,9 +505,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
         if (!isoDate || !chosen?.hhmm || !isSlotAllowed(isoDate, chosen.hhmm)) {
           await updateSession(phone, (sess) => {
             delete sess.pending;
-            sess.state = "SLOTS";
           });
 
+          await setState(phone, "SLOTS");
           await sendText({
             to: phone,
             body: "⚠️ Este horário não pode mais ser agendado (mínimo de 12h). Escolha outro.",
@@ -612,9 +587,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
         if (!out.ok) {
           await updateSession(phone, (sess) => {
             delete sess.pending;
-            sess.state = "SLOTS";
           });
 
+          await setState(phone, "SLOTS");
           await sendText({
             to: phone,
             body: "⚠️ Não consegui confirmar agora. Tente outro horário ou digite AJUDA.",
@@ -757,9 +732,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
-  // =======================
-  // AJUDA
-  // =======================
   if (upper === "AJUDA") {
     await sendAndSetState(
       phone,
@@ -789,9 +761,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
-  // =======================
-  // TEXTO LIVRE FORA DO WIZARD
-  // =======================
   if (!digits && !String(ctx || "").startsWith("WZ_")) {
     if (ctx === "ATENDENTE") {
       const prefill = buildSafeSupportPrefill({
@@ -816,9 +785,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
-  // =======================
-  // WIZARD
-  // =======================
   if (String(ctx || "").startsWith("WZ_")) {
     let s = await getSession(phone);
     if (!s.portal) {
@@ -835,9 +801,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       s = await getSession(phone);
     }
 
-    // -----------------------
-    // WZ_CPF
-    // -----------------------
     if (ctx === "WZ_CPF") {
       const cpf = onlyCpfDigits(raw);
 
@@ -1111,9 +1074,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_NOME
-    // -----------------------
     if (ctx === "WZ_NOME") {
       const nome = normalizeHumanText(raw, 120);
 
@@ -1136,9 +1096,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_DTNASC
-    // -----------------------
     if (ctx === "WZ_DTNASC") {
       const iso = parseBRDateToISO(raw);
       if (!iso) {
@@ -1170,9 +1127,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_SEXO
-    // -----------------------
     if (ctx === "WZ_SEXO") {
       await updateSession(phone, (sess) => {
         sess.portal = sess.portal || {};
@@ -1196,9 +1150,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_PLANO
-    // -----------------------
     if (ctx === "WZ_PLANO") {
       if (upper !== "PL_PART" && upper !== "PL_MED") {
         await sendText({
@@ -1221,9 +1172,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_EMAIL
-    // -----------------------
     if (ctx === "WZ_EMAIL") {
       const email = cleanStr(raw);
       if (!isValidEmail(email)) {
@@ -1245,9 +1193,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_CEP
-    // -----------------------
     if (ctx === "WZ_CEP") {
       const cep = normalizeCEP(raw);
       if (cep.length !== 8) {
@@ -1269,9 +1214,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_ENDERECO
-    // -----------------------
     if (ctx === "WZ_ENDERECO") {
       const v = normalizeHumanText(raw, 120);
 
@@ -1294,9 +1236,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_NUMERO
-    // -----------------------
     if (ctx === "WZ_NUMERO") {
       const v = normalizeHumanText(raw, 20);
 
@@ -1319,9 +1258,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_COMPLEMENTO
-    // -----------------------
     if (ctx === "WZ_COMPLEMENTO") {
       const v = normalizeHumanText(raw, 80) || "0";
 
@@ -1335,9 +1271,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_BAIRRO
-    // -----------------------
     if (ctx === "WZ_BAIRRO") {
       const v = normalizeHumanText(raw, 80);
 
@@ -1360,9 +1293,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_CIDADE
-    // -----------------------
     if (ctx === "WZ_CIDADE") {
       const v = normalizeHumanText(raw, 80);
 
@@ -1385,9 +1315,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    // -----------------------
-    // WZ_UF
-    // -----------------------
     if (ctx === "WZ_UF") {
       const uf = cleanStr(raw).toUpperCase();
       if (!/^[A-Z]{2}$/.test(uf)) {
@@ -1467,9 +1394,6 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
-  // =======================
-  // MENUS
-  // =======================
   if (ctx === "MAIN") {
     if (digits === "1") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
     if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
