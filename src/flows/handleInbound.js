@@ -55,6 +55,12 @@ import {
   PORTAL_URL,
 } from "../config/env.js";
 
+const LGPD_TEXT_VERSION = "LGPD_v1";
+const LGPD_TEXT_HASH = crypto
+  .createHash("sha256")
+  .update(String(MSG?.LGPD_CONSENT || ""), "utf8")
+  .digest("hex");
+
 async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMeta = {}) {
   await touchUser({
     phone,
@@ -66,7 +72,7 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
   const traceId = traceMeta?.traceId || crypto.randomUUID();
 
   const raw = normalizeSpaces(inboundText);
-  let upper = raw.toUpperCase();
+  const upper = String(raw || "").toUpperCase();
   const digits = onlyDigits(raw);
   const currentState = (await getState(phone)) || "MAIN";
 
@@ -90,7 +96,7 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
         msgU === codeU ||
         msgU === withHashU ||
         (code.startsWith("#") && msgU === codeU) ||
-        (!code.startsWith("#") && msgU === ("#" + codeU));
+        (!code.startsWith("#") && msgU === "#" + codeU);
 
       if (hit) {
         audit("FLOW_RESET_TRIGGERED", {
@@ -108,6 +114,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
 
   const ctx = (await getState(phone)) || "MAIN";
 
+  // =======================
+  // LGPD
+  // =======================
   if (ctx === "LGPD_CONSENT") {
     if (digits === "1") {
       audit("LGPD_CONSENT_ACCEPTED", {
@@ -147,6 +156,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     }
   }
 
+  // =======================
+  // GLOBAL: FALAR ATENDENTE
+  // =======================
   if (upper === "FALAR_ATENDENTE") {
     const s = await getSession(phone);
     const prefill = buildSupportPrefillFromSession(phone, s, traceId);
@@ -162,6 +174,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
+  // =======================
+  // BLOQUEIO CADASTRO INCOMPLETO
+  // =======================
   if (ctx === "BLOCK_EXISTING_INCOMPLETE") {
     const s = await getSession(phone);
     const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
@@ -184,6 +199,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
+  // =======================
+  // ESCOLHA DE PLANO EM DIVERGÊNCIA
+  // =======================
   if (ctx === "PLAN_PICK") {
     if (upper === "FALAR_ATENDENTE") {
       const s = await getSession(phone);
@@ -245,6 +263,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
+  // =======================
+  // SELEÇÃO DE DATA
+  // =======================
   if (upper.startsWith("D_")) {
     const isoDate = raw.slice(2).trim();
     const s = await getSession(phone);
@@ -281,6 +302,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
+  // =======================
+  // AGUARDANDO DATA
+  // =======================
   if (ctx === "ASK_DATE_PICK") {
     const s = await getSession(phone);
     const codColaborador = s?.booking?.codColaborador ?? COD_COLABORADOR;
@@ -309,6 +333,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     return;
   }
 
+  // =======================
+  // LISTA DE HORÁRIOS
+  // =======================
   if (ctx === "SLOTS") {
     if (upper.startsWith("PAGE_")) {
       const n = Number(raw.split("_")[1]);
@@ -405,6 +432,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
     }
   }
 
+  // =======================
+  // CONFIRMAÇÃO DO AGENDAMENTO
+  // =======================
   if (ctx === "WAIT_CONFIRM") {
     if (upper === "ESCOLHER_OUTRO") {
       const s = await getSession(phone);
@@ -556,7 +586,9 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
           rid: out?.rid || null,
           httpStatus: out?.status || null,
           technicalAccepted: !!out?.ok,
-          functionalResult: !!out?.ok ? "BOOKING_PRESUMED_CREATED" : "BOOKING_NOT_CONFIRMED",
+          functionalResult: !!out?.ok
+            ? "BOOKING_PRESUMED_CREATED"
+            : "BOOKING_NOT_CONFIRMED",
           patientFacingMessage: !!out?.ok
             ? "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE"
             : "BOOKING_FAILURE_RETRY_OR_SUPPORT",
@@ -593,12 +625,13 @@ async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMet
         }
 
         const msgOk =
-          out?.data?.Message || out?.data?.message || "Agendamento confirmado com sucesso!";
+          out?.data?.Message ||
+          out?.data?.message ||
+          "Agendamento confirmado com sucesso!";
 
         const isParticularBooking =
           Number(payload.CodPlano) === Number(COD_PLANO_PARTICULAR);
         const isRetornoBooking = !!s?.booking?.isRetorno;
-
         const showPagamentoInfo = isParticularBooking && !isRetornoBooking;
 
         const PAGAMENTO_INFO = showPagamentoInfo
@@ -710,6 +743,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
+  // =======================
+  // AJUDA
+  // =======================
   if (upper === "AJUDA") {
     await sendAndSetState(
       phone,
@@ -739,6 +775,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
+  // =======================
+  // TEXTO LIVRE FORA DO WIZARD
+  // =======================
   if (!digits && !String(ctx || "").startsWith("WZ_")) {
     if (ctx === "ATENDENTE") {
       const prefill = buildSafeSupportPrefill({
@@ -763,6 +802,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
+  // =======================
+  // WIZARD
+  // =======================
   if (String(ctx || "").startsWith("WZ_")) {
     let s = await getSession(phone);
     if (!s.portal) {
@@ -779,6 +821,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       s = await getSession(phone);
     }
 
+    // -----------------------
+    // WZ_CPF
+    // -----------------------
     if (ctx === "WZ_CPF") {
       const cpf = onlyCpfDigits(raw);
 
@@ -860,31 +905,49 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           if (nomeExist && !sess.portal.form.nome) sess.portal.form.nome = nomeExist;
 
           const emailExist = cleanStr(p?.Email);
-          if (isValidEmail(emailExist) && !sess.portal.form.email) sess.portal.form.email = emailExist;
+          if (isValidEmail(emailExist) && !sess.portal.form.email) {
+            sess.portal.form.email = emailExist;
+          }
 
           const celExist = cleanStr(p?.Celular).replace(/\D+/g, "");
-          if (celExist.length >= 10 && !sess.portal.form.celular) sess.portal.form.celular = celExist;
+          if (celExist.length >= 10 && !sess.portal.form.celular) {
+            sess.portal.form.celular = celExist;
+          }
 
           const telExist = cleanStr(p?.Telefone).replace(/\D+/g, "");
-          if (telExist.length >= 10 && !sess.portal.form.telefone) sess.portal.form.telefone = telExist;
+          if (telExist.length >= 10 && !sess.portal.form.telefone) {
+            sess.portal.form.telefone = telExist;
+          }
 
           const cepExist = String(p?.CEP ?? "").replace(/\D+/g, "");
-          if (cepExist.length === 8 && !sess.portal.form.cep) sess.portal.form.cep = cepExist;
+          if (cepExist.length === 8 && !sess.portal.form.cep) {
+            sess.portal.form.cep = cepExist;
+          }
 
           const endExist = cleanStr(p?.Endereco);
-          if (endExist && !sess.portal.form.endereco) sess.portal.form.endereco = endExist;
+          if (endExist && !sess.portal.form.endereco) {
+            sess.portal.form.endereco = endExist;
+          }
 
           const numExist = cleanStr(p?.Numero);
-          if (numExist && !sess.portal.form.numero) sess.portal.form.numero = numExist;
+          if (numExist && !sess.portal.form.numero) {
+            sess.portal.form.numero = numExist;
+          }
 
           const compExist = cleanStr(p?.Complemento);
-          if (compExist && !sess.portal.form.complemento) sess.portal.form.complemento = compExist;
+          if (compExist && !sess.portal.form.complemento) {
+            sess.portal.form.complemento = compExist;
+          }
 
           const bairroExist = cleanStr(p?.Bairro);
-          if (bairroExist && !sess.portal.form.bairro) sess.portal.form.bairro = bairroExist;
+          if (bairroExist && !sess.portal.form.bairro) {
+            sess.portal.form.bairro = bairroExist;
+          }
 
           const cidadeExist = cleanStr(p?.Cidade);
-          if (cidadeExist && !sess.portal.form.cidade) sess.portal.form.cidade = cidadeExist;
+          if (cidadeExist && !sess.portal.form.cidade) {
+            sess.portal.form.cidade = cidadeExist;
+          }
 
           const dtRaw = cleanStr(p?.DtNasc);
           let dtISO = parseBRDateToISO(dtRaw) || null;
@@ -894,7 +957,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             if (m) dtISO = `${m[1]}-${m[2]}-${m[3]}`;
           }
 
-          if (dtISO && !sess.portal.form.dtNascISO) sess.portal.form.dtNascISO = dtISO;
+          if (dtISO && !sess.portal.form.dtNascISO) {
+            sess.portal.form.dtNascISO = dtISO;
+          }
         });
       }
 
@@ -1032,6 +1097,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_NOME
+    // -----------------------
     if (ctx === "WZ_NOME") {
       const nome = normalizeHumanText(raw, 120);
 
@@ -1054,6 +1122,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_DTNASC
+    // -----------------------
     if (ctx === "WZ_DTNASC") {
       const iso = parseBRDateToISO(raw);
       if (!iso) {
@@ -1085,6 +1156,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_SEXO
+    // -----------------------
     if (ctx === "WZ_SEXO") {
       await updateSession(phone, (sess) => {
         sess.portal = sess.portal || {};
@@ -1108,6 +1182,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_PLANO
+    // -----------------------
     if (ctx === "WZ_PLANO") {
       if (upper !== "PL_PART" && upper !== "PL_MED") {
         await sendText({
@@ -1125,10 +1202,14 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           upper === "PL_MED" ? "MEDSENIOR_SP" : "PARTICULAR";
         sess.portal.form.celular = formatCellFromWA(phone);
       });
+
       await sendAndSetState(phone, MSG.ASK_EMAIL, "WZ_EMAIL", phoneNumberIdFallback);
       return;
     }
 
+    // -----------------------
+    // WZ_EMAIL
+    // -----------------------
     if (ctx === "WZ_EMAIL") {
       const email = cleanStr(raw);
       if (!isValidEmail(email)) {
@@ -1150,6 +1231,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_CEP
+    // -----------------------
     if (ctx === "WZ_CEP") {
       const cep = normalizeCEP(raw);
       if (cep.length !== 8) {
@@ -1160,15 +1244,20 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         });
         return;
       }
+
       await updateSession(phone, (sess) => {
         sess.portal = sess.portal || {};
         sess.portal.form = sess.portal.form || {};
         sess.portal.form.cep = cep;
       });
+
       await sendAndSetState(phone, MSG.ASK_ENDERECO, "WZ_ENDERECO", phoneNumberIdFallback);
       return;
     }
 
+    // -----------------------
+    // WZ_ENDERECO
+    // -----------------------
     if (ctx === "WZ_ENDERECO") {
       const v = normalizeHumanText(raw, 120);
 
@@ -1191,6 +1280,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_NUMERO
+    // -----------------------
     if (ctx === "WZ_NUMERO") {
       const v = normalizeHumanText(raw, 20);
 
@@ -1213,6 +1305,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_COMPLEMENTO
+    // -----------------------
     if (ctx === "WZ_COMPLEMENTO") {
       const v = normalizeHumanText(raw, 80) || "0";
 
@@ -1226,6 +1321,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_BAIRRO
+    // -----------------------
     if (ctx === "WZ_BAIRRO") {
       const v = normalizeHumanText(raw, 80);
 
@@ -1248,6 +1346,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_CIDADE
+    // -----------------------
     if (ctx === "WZ_CIDADE") {
       const v = normalizeHumanText(raw, 80);
 
@@ -1270,6 +1371,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
+    // -----------------------
+    // WZ_UF
+    // -----------------------
     if (ctx === "WZ_UF") {
       const uf = cleanStr(raw).toUpperCase();
       if (!/^[A-Z]{2}$/.test(uf)) {
@@ -1280,14 +1384,15 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         });
         return;
       }
-      const s = await updateSession(phone, (sess) => {
+
+      const sUpdated = await updateSession(phone, (sess) => {
         sess.portal = sess.portal || {};
         sess.portal.form = sess.portal.form || {};
         sess.portal.form.uf = uf;
       });
 
       const up = await versaCreatePortalCompleto({
-        form: s.portal.form,
+        form: sUpdated.portal.form,
         traceMeta: {
           traceId,
           tracePhone: maskPhone(phone),
@@ -1348,6 +1453,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     return;
   }
 
+  // =======================
+  // MENUS
+  // =======================
   if (ctx === "MAIN") {
     if (digits === "1") return sendAndSetState(phone, MSG.PARTICULAR, "PARTICULAR", phoneNumberIdFallback);
     if (digits === "2") return sendAndSetState(phone, MSG.CONVENIOS, "CONVENIOS", phoneNumberIdFallback);
@@ -1490,32 +1598,36 @@ export { handleInbound };
 async function clearTransientPortalData(phone) {
   await updateSession(phone, (s) => {
     if (!s?.portal) return;
-
     s.portal.form = {};
     delete s.portal.missing;
     delete s.portal.issue;
   });
 }
 
-function auditVersaDivergence(payload = {}) {
-  audit("VERSATILIS_MANUAL_TENANT_DIVERGENCE", {
-    ...payload,
-  });
-}
-
 function getPromptByWizardState(state) {
   switch (state) {
-    case "WZ_NOME": return MSG.ASK_NOME;
-    case "WZ_DTNASC": return MSG.ASK_DTNASC;
-    case "WZ_EMAIL": return MSG.ASK_EMAIL;
-    case "WZ_CEP": return MSG.ASK_CEP;
-    case "WZ_ENDERECO": return MSG.ASK_ENDERECO;
-    case "WZ_NUMERO": return MSG.ASK_NUMERO;
-    case "WZ_COMPLEMENTO": return MSG.ASK_COMPLEMENTO;
-    case "WZ_BAIRRO": return MSG.ASK_BAIRRO;
-    case "WZ_CIDADE": return MSG.ASK_CIDADE;
-    case "WZ_UF": return MSG.ASK_UF;
-    default: return MSG.ASK_NOME;
+    case "WZ_NOME":
+      return MSG.ASK_NOME;
+    case "WZ_DTNASC":
+      return MSG.ASK_DTNASC;
+    case "WZ_EMAIL":
+      return MSG.ASK_EMAIL;
+    case "WZ_CEP":
+      return MSG.ASK_CEP;
+    case "WZ_ENDERECO":
+      return MSG.ASK_ENDERECO;
+    case "WZ_NUMERO":
+      return MSG.ASK_NUMERO;
+    case "WZ_COMPLEMENTO":
+      return MSG.ASK_COMPLEMENTO;
+    case "WZ_BAIRRO":
+      return MSG.ASK_BAIRRO;
+    case "WZ_CIDADE":
+      return MSG.ASK_CIDADE;
+    case "WZ_UF":
+      return MSG.ASK_UF;
+    default:
+      return MSG.ASK_NOME;
   }
 }
 
@@ -1552,7 +1664,12 @@ function makeWaLink(prefillText) {
   return `https://wa.me/${SUPPORT_WA}?text=${encoded}`;
 }
 
-async function sendSupportLink({ phone, phoneNumberIdFallback, prefill, nextState = "MAIN" }) {
+async function sendSupportLink({
+  phone,
+  phoneNumberIdFallback,
+  prefill,
+  nextState = "MAIN",
+}) {
   const link = makeWaLink(prefill);
 
   await sendText({
@@ -1663,13 +1780,26 @@ async function fetchSlotsDoDia({ codColaborador, codUsuario, isoDate }) {
   return { ok: true, slots };
 }
 
-async function fetchNextAvailableDates({ codColaborador, codUsuario, daysLookahead = 60, limit = 3 }) {
+async function fetchNextAvailableDates({
+  codColaborador,
+  codUsuario,
+  daysLookahead = 60,
+  limit = 3,
+}) {
   const dates = [];
   const start = new Date();
 
   for (let i = 0; i < daysLookahead && dates.length < limit; i++) {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const d = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate() + i
+    );
+
+    const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(d.getDate()).padStart(2, "0")}`;
 
     const out = await fetchSlotsDoDia({ codColaborador, codUsuario, isoDate });
     if (out.ok && out.slots.length > 0) {
@@ -1686,7 +1816,12 @@ function formatBRFromISO(isoDate) {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-async function showNextDates({ phone, phoneNumberIdFallback, codColaborador, codUsuario }) {
+async function showNextDates({
+  phone,
+  phoneNumberIdFallback,
+  codColaborador,
+  codUsuario,
+}) {
   const dates = await fetchNextAvailableDates({
     codColaborador,
     codUsuario,
