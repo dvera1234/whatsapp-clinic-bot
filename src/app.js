@@ -1,9 +1,10 @@
 import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import healthRouter from "./routes/health.js";
+
 import webhookRouter from "./routes/webhook.js";
-import { errLog, opLog } from "./observability/audit.js";
+import healthRouter from "./routes/health.js";
+import { errLog } from "./observability/audit.js";
 import { maskIp } from "./utils/mask.js";
 
 const globalLimiter = rateLimit({
@@ -22,55 +23,59 @@ const webhookLimiter = rateLimit({
   message: { ok: false, error: "too many webhook requests" },
 });
 
-function createApp() {
-  const app = express();
+const debugLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: "too many debug requests" },
+});
 
-  app.use(globalLimiter);
-  app.use("/webhook", webhookLimiter);
+const app = express();
 
-  app.use(
-    helmet({
-      contentSecurityPolicy: false,
-      crossOriginEmbedderPolicy: false,
-    })
-  );
+app.use(globalLimiter);
+app.use("/webhook", webhookLimiter);
 
-  app.disable("x-powered-by");
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
 
-  app.use(
-    express.json({
-      limit: "128kb",
-      verify: (req, res, buf) => {
-        req.rawBody = buf;
-      },
-    })
-  );
+app.disable("x-powered-by");
 
-  app.use(express.urlencoded({ extended: false, limit: "64kb" }));
-  app.set("trust proxy", 1);
+app.use(
+  express.json({
+    limit: "128kb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
-  app.use(healthRouter);
-  app.use(webhookRouter);
+app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 
-  app.use((err, req, res, next) => {
-    errLog("UNHANDLED_SERVER_ERROR", {
-      route: req.originalUrl || req.url || null,
-      method: req.method || null,
-      ipMasked: maskIp(req.ip),
-      error: String(err?.message || err),
-      stackPreview: err?.stack ? String(err.stack).slice(0, 500) : null,
-    });
+app.set("trust proxy", 1);
 
-    return res.sendStatus(500);
+app.use(healthRouter);
+app.use(webhookRouter);
+
+app.use((err, req, res, next) => {
+  errLog("UNHANDLED_SERVER_ERROR", {
+    route: req.originalUrl || req.url || null,
+    method: req.method || null,
+    ipMasked: maskIp(req.ip),
+    error: String(err?.message || err),
+    stackPreview: err?.stack ? String(err.stack).slice(0, 500) : null,
   });
 
-  app.use((req, res) => {
-    res.sendStatus(404);
-  });
+  return res.sendStatus(500);
+});
 
-  opLog("BUILD_INFO", { build: "2026-02-21T20:05 PORTAL-CREATE-ONLY" });
+app.use((req, res) => {
+  res.sendStatus(404);
+});
 
-  return app;
-}
-
-export { createApp };
+export { debugLimiter };
+export default app;
