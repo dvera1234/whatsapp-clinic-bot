@@ -4,7 +4,7 @@ import { maskPhone, maskLoginValue } from "../../utils/mask.js";
 import { parseBRDateToISO } from "../../utils/time.js";
 import { md5HexLegacyVersatilisOnly, generateTempPassword } from "../../utils/crypto.js";
 import { PLAN_KEYS, resolveCodPlano } from "../../config/constants.js";
-import { isDebugVersaShapeEnabled } from "../../routes/webhook.js"; // manter separação funcional seria ideal, mas na Fase 1 isso deve ir para um helper compartilhado
+import { isDebugVersaShapeEnabled } from "../../routes/config/env.js"; // manter separação funcional seria ideal, mas na Fase 1 isso deve ir para um helper compartilhado
 import { versatilisFetch, mergeTraceMeta } from "./client.js";
 
 // este import circular acima é o único ponto que não deve ficar assim.
