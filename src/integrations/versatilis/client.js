@@ -3,7 +3,7 @@ import { debugLog, techLog } from "../../observability/audit.js";
 import { canLog, log, logRateLimited } from "../../observability/logger.js";
 import { fetchWithTimeout } from "../../utils/time.js";
 import { versatilisGetToken, VERSA_BASE } from "./auth.js";
-import { sanitizeQueryForLog } from "./helpers.js";
+import { sanitizeQueryForLog } from "./queryLog.js";
 
 function mergeTraceMeta(base, extra) {
   return {
