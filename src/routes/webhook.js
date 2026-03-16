@@ -53,7 +53,7 @@ router.post("/webhook", async (req, res) => {
     }
 
     res.sendStatus(200);
-
+    
     const body = req.body;
     if (!body || body.object !== "whatsapp_business_account") return;
 
@@ -66,6 +66,8 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
+    const currentState = (await getState(from)) || "(none)";
+    
     const change = entry.changes[0];
     if (!change || change.field !== "messages" || !change.value || typeof change.value !== "object") {
       audit("WEBHOOK_INVALID_CHANGE_SHAPE", { ipMasked: maskIp(req.ip) });
