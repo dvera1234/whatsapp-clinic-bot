@@ -52,8 +52,22 @@ import {
   COD_UNIDADE,
   COD_ESPECIALIDADE,
   COD_PLANO_PARTICULAR,
-  PORTAL_URL,
-} from "../config/env.js";
+ } from "../config/env.js";
+
+function normalizeHttpsUrlOrEmpty(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "https:") return "";
+    return u.toString();
+  } catch {
+    return "";
+  }
+}
+
+const PORTAL_URL = normalizeHttpsUrlOrEmpty(process.env.PORTAL_URL);
 
 const LGPD_TEXT_VERSION = "LGPD_v1";
 const LGPD_TEXT_HASH = crypto
