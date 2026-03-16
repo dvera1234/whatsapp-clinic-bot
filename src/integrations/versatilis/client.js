@@ -12,7 +12,10 @@ function mergeTraceMeta(base, extra) {
   };
 }
 
-async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, traceMeta } = {}) {
+async function versatilisFetch(
+  path,
+  { method = "GET", jsonBody, extraHeaders, traceMeta } = {}
+) {
   const token = await versatilisGetToken();
 
   const rid = crypto.randomUUID();
@@ -82,7 +85,13 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, t
     debugLog("VERSATILIS_CALL_OK", baseLog);
   } else if (isNoDates404) {
     const rateLimitKey = `nodates:${method}:${path.split("?")[0]}`;
-    logRateLimited("DEBUG", rateLimitKey, "VERSATILIS_CALL_EXPECTED_EMPTY", baseLog, 60_000);
+    logRateLimited(
+      "DEBUG",
+      rateLimitKey,
+      "VERSATILIS_CALL_EXPECTED_EMPTY",
+      baseLog,
+      60_000
+    );
   } else {
     techLog("VERSATILIS_CALL_FAIL", {
       ...baseLog,
@@ -124,6 +133,7 @@ async function versatilisFetch(path, { method = "GET", jsonBody, extraHeaders, t
         },
         10000
       );
+
       const allow2 = ro.headers.get("allow") || ro.headers.get("Allow") || null;
 
       log("DEBUG", "VERSATILIS_OPTIONS", {
