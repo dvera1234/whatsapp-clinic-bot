@@ -1,71 +1,110 @@
-import { VERSATILIS_BASE, VERSATILIS_USER, VERSATILIS_PASS } from "../../config/env.js";
-import { opLog } from "../../observability/audit.js";
-import { maskToken, maskUrl } from "../../utils/mask.js";
+import crypto from "crypto";
 import { fetchWithTimeout } from "../../utils/time.js";
+import { techLog } from "../../observability/audit.js";
 
-function sanitizeVersaBase(u) {
-  let s = String(u).trim();
+const tokenCache = new Map();
 
-  s = s.replace(/\s+/g, "");
-  s = s.replace(/\/+$/, "");
-  s = s.replace(/\/api\/.*$/i, "");
-  s = s.replace(/\/api$/i, "");
-
-  return s;
+function readString(value) {
+  const v = String(value ?? "").trim();
+  return v || "";
 }
 
-const VERSA_BASE = sanitizeVersaBase(VERSATILIS_BASE);
+function resolveVersatilisConfig(tenantConfig = {}) {
+  const baseUrl = readString(tenantConfig?.integrations?.versatilis?.baseUrl);
+  const user = readString(tenantConfig?.integrations?.versatilis?.user);
+  const pass = readString(tenantConfig?.integrations?.versatilis?.pass);
 
-opLog("VERSATILIS_BASE_CONFIG", {
-  raw: maskUrl(VERSATILIS_BASE),
-  sanitized: maskUrl(VERSA_BASE),
-});
+  const missing = [];
+  if (!baseUrl) missing.push("integrations.versatilis.baseUrl");
+  if (!user) missing.push("integrations.versatilis.user");
+  if (!pass) missing.push("integrations.versatilis.pass");
 
-let versaToken = null;
-let versaTokenExpMs = 0;
-
-async function versatilisGetToken() {
-  const now = Date.now();
-  if (versaToken && now < versaTokenExpMs - 30_000) return versaToken;
-
-  if (!VERSA_BASE || !VERSATILIS_USER || !VERSATILIS_PASS) {
-    throw new Error("Versatilis ENV ausente (VERSATILIS_BASE/USER/PASS).");
+  if (missing.length) {
+    const err = new Error(
+      `Versatilis config incompleta: ${missing.join(", ")}`
+    );
+    err.code = "VERSATILIS_CONFIG_INVALID";
+    err.missingFields = missing;
+    throw err;
   }
 
-  const body = new URLSearchParams({
-    username: VERSATILIS_USER,
-    password: VERSATILIS_PASS,
-    grant_type: "password",
+  return { baseUrl, user, pass };
+}
+
+function tokenCacheKey(tenantId, baseUrl, user) {
+  const raw = `${tenantId || ""}|${baseUrl}|${user}`;
+  return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
+}
+
+export async function versatilisGetToken({ tenantId, tenantConfig }) {
+  const { baseUrl, user, pass } = resolveVersatilisConfig(tenantConfig);
+
+  const cacheKey = tokenCacheKey(tenantId, baseUrl, user);
+  const now = Date.now();
+  const cached = tokenCache.get(cacheKey);
+
+  if (cached && cached.token && cached.expiresAt > now + 15_000) {
+    return cached.token;
+  }
+
+  const url = `${baseUrl}/api/Login/GetToken`;
+  const body = JSON.stringify({
+    Usuario: user,
+    Senha: pass,
   });
 
-  const r = await fetchWithTimeout(
-    `${VERSA_BASE}/Token`,
+  const response = await fetchWithTimeout(
+    url,
     {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
       body,
     },
     15000
   );
 
-  const json = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    throw new Error(`Versatilis Token falhou status=${r.status}`);
+  const text = await response.text().catch(() => "");
+  let data;
+
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
   }
 
-  versaToken = json.access_token;
-  const exp = Number(json.expires_in || 0);
-  versaTokenExpMs = Date.now() + Math.max(60, exp) * 1000;
+  if (!response.ok) {
+    techLog("VERSATILIS_TOKEN_FETCH_FAILED", {
+      tenantId: tenantId || null,
+      status: response.status,
+    });
 
-  opLog("VERSATILIS_TOKEN_REFRESH_OK", {
-    token: maskToken(versaToken),
+    const err = new Error(
+      `Falha ao obter token Versatilis. HTTP ${response.status}`
+    );
+    err.code = "VERSATILIS_TOKEN_FETCH_FAILED";
+    err.httpStatus = response.status;
+    throw err;
+  }
+
+  const token =
+    data?.Token ||
+    data?.token ||
+    data?.access_token ||
+    (typeof data === "string" ? data : null);
+
+  if (!token || typeof token !== "string") {
+    const err = new Error("Resposta de token Versatilis sem token utilizável.");
+    err.code = "VERSATILIS_TOKEN_INVALID_RESPONSE";
+    throw err;
+  }
+
+  tokenCache.set(cacheKey, {
+    token,
+    expiresAt: now + 50 * 60 * 1000,
   });
 
-  return versaToken;
+  return token;
 }
-
-export {
-  VERSA_BASE,
-  sanitizeVersaBase,
-  versatilisGetToken,
-};
