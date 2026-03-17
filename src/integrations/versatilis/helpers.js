@@ -1,11 +1,34 @@
-import { isDebugVersaShapeEnabled, COD_COLABORADOR } from "../../config/env.js";
-import { PLAN_KEYS, resolveCodPlano } from "../../config/constants.js";
+import { isDebugVersaShapeEnabled } from "../../config/env.js";
+import { PLAN_KEYS } from "../../config/constants.js";
 import { audit, auditOutcome, debugLog } from "../../observability/audit.js";
-import { maskPhone } from "../../utils/mask.js";
-import { cleanStr, formatCPFMask, isValidEmail, normalizeCEP, parsePositiveInt } from "../../utils/validators.js";
-import { parseBRDateToISO } from "../../utils/time.js";
-import { md5HexLegacyVersatilisOnly, generateTempPassword } from "../../utils/crypto.js";
+import {
+  cleanStr,
+  formatCPFMask,
+  isValidEmail,
+  parsePositiveInt,
+} from "../../utils/validators.js";
+import {
+  md5HexLegacyVersatilisOnly,
+  generateTempPassword,
+} from "../../utils/crypto.js";
 import { mergeTraceMeta, versatilisFetch } from "./client.js";
+
+function resolveCodPlanoFromRuntime(planKey, runtime = {}) {
+  const particular =
+    Number(runtime?.codPlanoParticular) ||
+    Number(runtime?.tenantConfig?.plans?.codPlanoParticular) ||
+    null;
+
+  const medSenior =
+    Number(runtime?.codPlanoMedSeniorSp) ||
+    Number(runtime?.tenantConfig?.plans?.codPlanoMedSeniorSp) ||
+    null;
+
+  if (planKey === PLAN_KEYS.PARTICULAR) return particular;
+  if (planKey === PLAN_KEYS.MEDSENIOR_SP) return medSenior;
+
+  return particular;
+}
 
 function normalizePlanListFromProfile(profile) {
   const list = [];
@@ -23,12 +46,12 @@ function normalizePlanListFromProfile(profile) {
   return Array.from(new Set(list));
 }
 
-function codPlanoFromPlanKey(planKey) {
-  return resolveCodPlano(planKey);
+function codPlanoFromPlanKey(planKey, runtime = {}) {
+  return resolveCodPlanoFromRuntime(planKey, runtime);
 }
 
-function hasPlanKey(plansCodList, planKey) {
-  const want = codPlanoFromPlanKey(planKey);
+function hasPlanKey(plansCodList, planKey, runtime = {}) {
+  const want = codPlanoFromPlanKey(planKey, runtime);
   return (plansCodList || []).some((x) => Number(x) === Number(want));
 }
 
@@ -55,7 +78,11 @@ function findCodUsuarioDeep(obj, depth = 0, maxDepth = 6, seen = new Set()) {
   for (const [k, v] of Object.entries(obj)) {
     const key = String(k || "").toLowerCase();
 
-    if (key === "codusuario" || key === "codigousuario" || key.includes("codusuario")) {
+    if (
+      key === "codusuario" ||
+      key === "codigousuario" ||
+      key.includes("codusuario")
+    ) {
       const n = parsePositiveInt(v);
       if (n) return n;
       const deep = findCodUsuarioDeep(v, depth + 1, maxDepth, seen);
@@ -75,10 +102,20 @@ function parseCodUsuarioFromAny(data) {
   return findCodUsuarioDeep(data);
 }
 
-async function versaFindCodUsuarioByCPF(cpfDigits) {
+function getVersaCtx(runtime = {}) {
+  return {
+    tenantId: runtime?.tenantId || null,
+    tenantConfig: runtime?.tenantConfig || null,
+    traceId: runtime?.traceId || null,
+    tracePhone: runtime?.tracePhone || null,
+  };
+}
+
+async function versaFindCodUsuarioByCPF(cpfDigits, runtime = {}) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return null;
 
+  const ctx = getVersaCtx(runtime);
   const cpfMask = formatCPFMask(cpf);
 
   const candidates = [
@@ -89,11 +126,25 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
   ].filter(Boolean);
 
   for (const path of candidates) {
-    const out = await versatilisFetch(path);
+    const out = await versatilisFetch(path, {
+      tenantId: ctx.tenantId,
+      tenantConfig: ctx.tenantConfig,
+      traceMeta: {
+        tenantId: ctx.tenantId,
+        traceId: ctx.traceId,
+        flow: "LOOKUP_CODUSUARIO_BY_CPF",
+      },
+    });
 
-    if (isDebugVersaShapeEnabled() && out.ok && out.data && typeof out.data === "object") {
+    if (
+      isDebugVersaShapeEnabled() &&
+      out.ok &&
+      out.data &&
+      typeof out.data === "object"
+    ) {
       const keys = Object.keys(out.data || {}).slice(0, 30);
       debugLog("VERSA_CODUSUARIO_SHAPE", {
+        tenantId: ctx.tenantId,
         path,
         keys,
         isArray: Array.isArray(out.data),
@@ -103,6 +154,7 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
     const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
 
     debugLog("VERSA_CODUSUARIO_LOOKUP_ATTEMPT", {
+      tenantId: ctx.tenantId,
       technicalAccepted: out.ok,
       httpStatus: out.status,
       path,
@@ -111,6 +163,7 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
 
     if (!parsed) {
       debugLog("VERSA_CODUSUARIO_LOOKUP_DETAIL", {
+        tenantId: ctx.tenantId,
         path,
         httpStatus: out.status,
         dataType: typeof out.data,
@@ -131,22 +184,35 @@ async function versaFindCodUsuarioByCPF(cpfDigits) {
   return null;
 }
 
-async function versaFindCodUsuarioByDadosCPF(cpfDigits) {
+async function versaFindCodUsuarioByDadosCPF(cpfDigits, runtime = {}) {
   const cpf = String(cpfDigits || "").replace(/\D+/g, "");
   if (cpf.length !== 11) return null;
 
+  const ctx = getVersaCtx(runtime);
   const cpfMask = formatCPFMask(cpf);
 
   const candidates = [
-    cpfMask ? `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpfMask)}` : null,
+    cpfMask
+      ? `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpfMask)}`
+      : null,
     `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpf)}`,
   ].filter(Boolean);
 
   for (const path of candidates) {
-    const out = await versatilisFetch(path);
+    const out = await versatilisFetch(path, {
+      tenantId: ctx.tenantId,
+      tenantConfig: ctx.tenantConfig,
+      traceMeta: {
+        tenantId: ctx.tenantId,
+        traceId: ctx.traceId,
+        flow: "LOOKUP_DADOSUSUARIOPORCPF",
+      },
+    });
+
     const parsed = out.ok ? parseCodUsuarioFromAny(out.data) : null;
 
     debugLog("VERSA_DADOSUSUARIOPORCPF_LOOKUP_ATTEMPT", {
+      tenantId: ctx.tenantId,
       technicalAccepted: out.ok,
       httpStatus: out.status,
       path,
@@ -155,6 +221,7 @@ async function versaFindCodUsuarioByDadosCPF(cpfDigits) {
 
     if (!parsed) {
       debugLog("VERSA_DADOSUSUARIOPORCPF_LOOKUP_DETAIL", {
+        tenantId: ctx.tenantId,
         path,
         httpStatus: out.status,
         dataType: typeof out.data,
@@ -167,14 +234,20 @@ async function versaFindCodUsuarioByDadosCPF(cpfDigits) {
   return null;
 }
 
-async function versaGetDadosUsuarioPorCodigo(codUsuario) {
+async function versaGetDadosUsuarioPorCodigo(codUsuario, runtime = {}) {
+  const ctx = getVersaCtx(runtime);
   const id = Number(codUsuario);
+
   if (!Number.isFinite(id) || id <= 0) return { ok: false, data: null };
 
   const out = await versatilisFetch(
     `/api/Login/DadosUsuarioPorCodigo?CodUsuario=${encodeURIComponent(id)}`,
     {
+      tenantId: ctx.tenantId,
+      tenantConfig: ctx.tenantConfig,
       traceMeta: {
+        tenantId: ctx.tenantId,
+        traceId: ctx.traceId,
         flow: "DADOS_USUARIO_CODIGO",
         codUsuario: id,
       },
@@ -185,16 +258,28 @@ async function versaGetDadosUsuarioPorCodigo(codUsuario) {
   return { ok: true, data: out.data };
 }
 
-async function versaHadAppointmentLast30Days(codUsuario, traceMeta = {}) {
+async function versaHadAppointmentLast30Days(codUsuario, runtime = {}) {
+  const ctx = getVersaCtx(runtime);
   if (!codUsuario) return false;
 
   const out = await versatilisFetch(
-    `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(codUsuario)}`,
+    `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(
+      codUsuario
+    )}`,
     {
-      traceMeta: mergeTraceMeta(traceMeta, {
-        flow: "RETURN_CHECK_LAST_30_DAYS",
-        codUsuario: Number(codUsuario) || null,
-      }),
+      tenantId: ctx.tenantId,
+      tenantConfig: ctx.tenantConfig,
+      traceMeta: mergeTraceMeta(
+        {
+          tenantId: ctx.tenantId,
+          traceId: ctx.traceId,
+          tracePhone: ctx.tracePhone,
+        },
+        {
+          flow: "RETURN_CHECK_LAST_30_DAYS",
+          codUsuario: Number(codUsuario) || null,
+        }
+      ),
     }
   );
 
@@ -202,7 +287,9 @@ async function versaHadAppointmentLast30Days(codUsuario, traceMeta = {}) {
     audit(
       "RETURN_CHECK_HISTORY_UNAVAILABLE",
       auditOutcome({
-        ...traceMeta,
+        tenantId: ctx.tenantId,
+        traceId: ctx.traceId,
+        tracePhone: ctx.tracePhone,
         codUsuario: Number(codUsuario) || null,
         technicalAccepted: !!out?.ok,
         httpStatus: out?.status || null,
@@ -233,7 +320,9 @@ async function versaHadAppointmentLast30Days(codUsuario, traceMeta = {}) {
       audit(
         "RETURN_CHECK_POSITIVE_LAST_30_DAYS",
         auditOutcome({
-          ...traceMeta,
+          tenantId: ctx.tenantId,
+          traceId: ctx.traceId,
+          tracePhone: ctx.tracePhone,
           codUsuario: Number(codUsuario) || null,
           technicalAccepted: true,
           functionalResult: "RETURN_CHECK_POSITIVE",
@@ -248,7 +337,9 @@ async function versaHadAppointmentLast30Days(codUsuario, traceMeta = {}) {
   audit(
     "RETURN_CHECK_NEGATIVE_LAST_30_DAYS",
     auditOutcome({
-      ...traceMeta,
+      tenantId: ctx.tenantId,
+      traceId: ctx.traceId,
+      tracePhone: ctx.tracePhone,
       codUsuario: Number(codUsuario) || null,
       technicalAccepted: true,
       functionalResult: "RETURN_CHECK_NEGATIVE",
@@ -301,32 +392,34 @@ function mergeComplementoWithUF(complementoUser, uf) {
   return `${base} | ${c}`;
 }
 
-async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
-  const planoKey = form.planoKey;
-  const codPlano = resolveCodPlano(planoKey);
+async function versaCreatePortalCompleto(
+  { form, traceMeta = {} },
+  runtime = {}
+) {
+  const codPlano = resolveCodPlanoFromRuntime(form?.planoKey, runtime);
 
   const senhaMD5 = md5HexLegacyVersatilisOnly(generateTempPassword(10));
-  const dtNascISO = cleanStr(form.dtNascISO);
+  const dtNascISO = cleanStr(form?.dtNascISO);
 
   const payload = {
-    Nome: form.nome,
-    CPF: form.cpf,
-    Email: form.email,
+    Nome: form?.nome,
+    CPF: form?.cpf,
+    Email: form?.email,
     DtNasc: dtNascISO,
-    Celular: form.celular,
-    Telefone: form.telefone || form.celular || "",
-    CEP: form.cep,
-    Endereco: form.endereco,
-    Numero: form.numero,
-    Complemento: mergeComplementoWithUF(form.complemento, form.uf),
-    Bairro: form.bairro,
-    Cidade: form.cidade,
+    Celular: form?.celular,
+    Telefone: form?.telefone || form?.celular || "",
+    CEP: form?.cep,
+    Endereco: form?.endereco,
+    Numero: form?.numero,
+    Complemento: mergeComplementoWithUF(form?.complemento, form?.uf),
+    Bairro: form?.bairro,
+    Cidade: form?.cidade,
     CodPlano: String(codPlano),
-    CodPlanos: [codPlano],
+    CodPlanos: codPlano ? [codPlano] : [],
     Senha: senhaMD5,
   };
 
-  if (form.sexoOpt === "M" || form.sexoOpt === "F") {
+  if (form?.sexoOpt === "M" || form?.sexoOpt === "F") {
     payload.Sexo = form.sexoOpt;
   }
 
@@ -343,17 +436,22 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
 
   const validationErrors = [];
 
-  if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5) validationErrors.push("Nome");
-  if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, ""))) validationErrors.push("CPF");
+  if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5)
+    validationErrors.push("Nome");
+  if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, "")))
+    validationErrors.push("CPF");
   if (!isValidEmail(payload.Email)) validationErrors.push("Email");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || ""))) validationErrors.push("DtNasc");
-  if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, ""))) validationErrors.push("CEP");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || "")))
+    validationErrors.push("DtNasc");
+  if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, "")))
+    validationErrors.push("CEP");
   if (!cleanStr(payload.Endereco)) validationErrors.push("Endereco");
   if (!cleanStr(payload.Numero)) validationErrors.push("Numero");
   if (!cleanStr(payload.Bairro)) validationErrors.push("Bairro");
   if (!cleanStr(payload.Cidade)) validationErrors.push("Cidade");
   if (!cleanStr(payload.Celular)) validationErrors.push("Celular");
   if (!cleanStr(payload.Senha)) validationErrors.push("Senha");
+  if (!codPlano) validationErrors.push("CodPlano");
 
   const shape = Object.fromEntries(
     Object.entries(payload).map(([k, v]) => {
@@ -366,6 +464,7 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
   );
 
   debugLog("PORTAL_CREATE_PAYLOAD_SHAPE", {
+    tenantId: runtime?.tenantId || null,
     empties,
     validationErrors,
     shape,
@@ -375,7 +474,10 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
     audit(
       "PORTAL_CREATE_BLOCKED_INVALID_PAYLOAD",
       auditOutcome({
-        ...traceMeta,
+        ...(traceMeta || {}),
+        tenantId: runtime?.tenantId || traceMeta?.tenantId || null,
+        traceId: runtime?.traceId || traceMeta?.traceId || null,
+        tracePhone: runtime?.tracePhone || traceMeta?.tracePhone || null,
         technicalAccepted: false,
         functionalResult: "PORTAL_CREATE_BLOCKED_INVALID_PAYLOAD",
         patientFacingMessage: null,
@@ -409,9 +511,14 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
   }
 
   const out = await versatilisFetch("/api/Login/CadastrarUsuario", {
+    tenantId: runtime?.tenantId || null,
+    tenantConfig: runtime?.tenantConfig || null,
     method: "POST",
     jsonBody: payload,
     traceMeta: mergeTraceMeta(traceMeta, {
+      tenantId: runtime?.tenantId || traceMeta?.tenantId || null,
+      traceId: runtime?.traceId || traceMeta?.traceId || null,
+      tracePhone: runtime?.tracePhone || traceMeta?.tracePhone || null,
       flow: "PORTAL_USER_CREATE",
       cpfMasked: "***",
     }),
@@ -420,11 +527,16 @@ async function versaCreatePortalCompleto({ form, traceMeta = {} }) {
   audit(
     "PORTAL_USER_CREATE_ATTEMPT",
     auditOutcome({
-      ...traceMeta,
+      ...(traceMeta || {}),
+      tenantId: runtime?.tenantId || traceMeta?.tenantId || null,
+      traceId: runtime?.traceId || traceMeta?.traceId || null,
+      tracePhone: runtime?.tracePhone || traceMeta?.tracePhone || null,
       technicalAccepted: out.ok,
       httpStatus: out.status,
       rid: out.rid,
-      functionalResult: out.ok ? "PORTAL_USER_CREATED" : "PORTAL_USER_CREATE_FAILED",
+      functionalResult: out.ok
+        ? "PORTAL_USER_CREATED"
+        : "PORTAL_USER_CREATE_FAILED",
       patientFacingMessage: null,
       escalationRequired: !out.ok,
       dataType: typeof out.data,
