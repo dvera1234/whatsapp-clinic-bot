@@ -2,8 +2,17 @@ import crypto from "crypto";
 import { debugLog, techLog } from "../../observability/audit.js";
 import { canLog, log, logRateLimited } from "../../observability/logger.js";
 import { fetchWithTimeout } from "../../utils/time.js";
-import { versatilisGetToken, VERSA_BASE } from "./auth.js";
+import { versatilisGetToken } from "./auth.js";
 import { sanitizeQueryForLog } from "./queryLog.js";
+
+function readString(value) {
+  const v = String(value ?? "").trim();
+  return v || "";
+}
+
+function resolveVersatilisBaseUrl(tenantConfig = {}) {
+  return readString(tenantConfig?.integrations?.versatilis?.baseUrl);
+}
 
 function mergeTraceMeta(base, extra) {
   return {
@@ -14,19 +23,41 @@ function mergeTraceMeta(base, extra) {
 
 async function versatilisFetch(
   path,
-  { method = "GET", jsonBody, extraHeaders, traceMeta } = {}
+  {
+    method = "GET",
+    jsonBody,
+    extraHeaders,
+    traceMeta,
+    tenantId,
+    tenantConfig,
+  } = {}
 ) {
-  const token = await versatilisGetToken();
-
   const rid = crypto.randomUUID();
-  const url = `${VERSA_BASE}${path}`;
+  const baseUrl = resolveVersatilisBaseUrl(tenantConfig);
+
+  if (!tenantId) {
+    const err = new Error("tenantId ausente em versatilisFetch");
+    err.code = "TENANT_ID_MISSING_IN_VERSATILIS_FETCH";
+    throw err;
+  }
+
+  if (!baseUrl) {
+    const err = new Error("Base URL do Versatilis ausente no tenantConfig");
+    err.code = "VERSATILIS_BASE_URL_MISSING";
+    throw err;
+  }
+
+  const token = await versatilisGetToken({ tenantId, tenantConfig });
+  const url = `${baseUrl}${path}`;
   const t0 = Date.now();
 
   let query = null;
   try {
     const u = new URL(url);
     query = Object.fromEntries(u.searchParams.entries());
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   const safeQuery = sanitizeQueryForLog(query);
 
@@ -64,13 +95,15 @@ async function versatilisFetch(
     typeof data === "string" &&
     data.toLowerCase().includes("não foram encontradas datas disponiveis");
 
-  const technicalResult =
-    r.ok ? "API_ACCEPTED" :
-    isNoDates404 ? "EXPECTED_EMPTY_RESULT" :
-    "API_REJECTED";
+  const technicalResult = r.ok
+    ? "API_ACCEPTED"
+    : isNoDates404
+    ? "EXPECTED_EMPTY_RESULT"
+    : "API_REJECTED";
 
   const baseLog = {
     rid,
+    tenantId,
     method,
     path,
     status: r.status,
@@ -84,7 +117,7 @@ async function versatilisFetch(
   if (r.ok) {
     debugLog("VERSATILIS_CALL_OK", baseLog);
   } else if (isNoDates404) {
-    const rateLimitKey = `nodates:${method}:${path.split("?")[0]}`;
+    const rateLimitKey = `nodates:${tenantId}:${method}:${path.split("?")[0]}`;
     logRateLimited(
       "DEBUG",
       rateLimitKey,
@@ -112,10 +145,11 @@ async function versatilisFetch(
       ...baseLog,
       contentType,
       textLen,
-      dataType:
-        Array.isArray(data) ? "array" :
-        data === null ? "null" :
-        typeof data,
+      dataType: Array.isArray(data)
+        ? "array"
+        : data === null
+        ? "null"
+        : typeof data,
       responseTopLevelKeys,
     });
   }
@@ -152,7 +186,4 @@ async function versatilisFetch(
   return { ok: r.ok, status: r.status, data, rid, allow };
 }
 
-export {
-  mergeTraceMeta,
-  versatilisFetch,
-};
+export { mergeTraceMeta, versatilisFetch };
