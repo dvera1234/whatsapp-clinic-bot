@@ -13,12 +13,9 @@ import {
 
 import { sendText, sendButtons } from "../whatsapp/sender.js";
 
-import {
-  MSG,
-  PLAN_KEYS,
-  FLOW_RESET_CODE,
-  resolveCodPlano,
-} from "../config/constants.js";
+import { MSG, PLAN_KEYS, FLOW_RESET_CODE } from "../config/constants.js";
+
+import { buildTenantRuntime } from "../tenants/buildTenantRuntime.js";
 
 import {
   onlyDigits,
@@ -103,15 +100,29 @@ async function handleInbound({
     codUnidade,
     codEspecialidade,
     codPlanoParticular,
+    codPlanoMedSeniorSp,
     portalUrl,
     supportWa,
   } = tenantRuntime.value;
+
+  const runtimeCtx = {
+    tenantId,
+    tenantConfig,
+    traceId,
+    tracePhone: maskPhone(phone),
+    codPlanoParticular,
+    codPlanoMedSeniorSp,
+  };
 
   const raw = normalizeSpaces(inboundText);
   const upper = String(raw || "").toUpperCase();
   const digits = onlyDigits(raw);
 
-  await touchUser(tenantId, phone);
+  await touchUser({
+    tenantId,
+    phone,
+    phoneNumberIdFallback: effectivePhoneNumberId,
+  });
 
   const currentState = (await getState(tenantId, phone)) || "MAIN";
   const ctx = currentState;
@@ -304,12 +315,15 @@ async function handleInbound({
 
     await finishWizardAndGoToDates({
       tenantId,
+      tenantConfig,
       phone,
       phoneNumberIdFallback: effectivePhoneNumberId,
       codUsuario,
       planoKeyFromWizard: chosenKey,
       traceId,
       codColaborador,
+      codPlanoParticular,
+      codPlanoMedSeniorSp,
     });
 
     return;
@@ -335,6 +349,7 @@ async function handleInbound({
 
     const out = await fetchSlotsDoDia({
       tenantId,
+      tenantConfig,
       traceId,
       codColaborador: bookingCodColaborador,
       codUsuario,
@@ -527,8 +542,12 @@ async function handleInbound({
     if (upper === "CONFIRMAR") {
       const s = await getSession(tenantId, phone);
       const codHorario = Number(s?.pending?.codHorario);
-      const planoSelecionado = resolveCodPlano(
-        s?.booking?.planoKey || PLAN_KEYS.PARTICULAR
+      const planoSelecionado = resolvePlanCodeFromRuntime(
+        s?.booking?.planoKey || PLAN_KEYS.PARTICULAR,
+        {
+          codPlanoParticular,
+          codPlanoMedSeniorSp,
+        }
       );
 
       const payload = {
@@ -652,6 +671,8 @@ async function handleInbound({
         }
 
         const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
+          tenantId,
+          tenantConfig,
           method: "POST",
           jsonBody: payload,
           traceMeta: {
@@ -959,9 +980,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         cpfMasked: "***",
       });
 
-      let codUsuario = await versaFindCodUsuarioByCPF(cpf);
+      let codUsuario = await versaFindCodUsuarioByCPF(cpf, runtimeCtx);
       if (!codUsuario) {
-        codUsuario = await versaFindCodUsuarioByDadosCPF(cpf);
+        codUsuario = await versaFindCodUsuarioByDadosCPF(cpf, runtimeCtx);
       }
 
       debugLog("PATIENT_CPF_IDENTIFICATION_RESULT", {
@@ -1003,7 +1024,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         sess.portal.codUsuario = codUsuario;
       });
 
-      const prof = await versaGetDadosUsuarioPorCodigo(codUsuario);
+      const prof = await versaGetDadosUsuarioPorCodigo(codUsuario, runtimeCtx);
 
       if (prof.ok && prof.data) {
         const p = prof.data;
@@ -1092,8 +1113,8 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         const flowPlanKey = sCurrent?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
         const plansCod = normalizePlanListFromProfile(prof.data);
 
-        const hasParticular = hasPlanKey(plansCod, PLAN_KEYS.PARTICULAR);
-        const hasMed = hasPlanKey(plansCod, PLAN_KEYS.MEDSENIOR_SP);
+        const hasParticular = hasPlanKey(plansCod, PLAN_KEYS.PARTICULAR, runtimeCtx);
+        const hasMed = hasPlanKey(plansCod, PLAN_KEYS.MEDSENIOR_SP, runtimeCtx);
 
         await updateSession(tenantId, phone, (sess) => {
           sess.booking = sess.booking || {};
@@ -1103,12 +1124,15 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         if (hasParticular && !hasMed && flowPlanKey === PLAN_KEYS.PARTICULAR) {
           await finishWizardAndGoToDates({
             tenantId,
+            tenantConfig,
             phone,
             phoneNumberIdFallback: effectivePhoneNumberId,
             codUsuario,
-            planoKeyFromWizard: PLAN_KEYS.PARTICULAR,
+            planoKeyFromWizard: chosenKey,
             traceId,
             codColaborador,
+            codPlanoParticular,
+            codPlanoMedSeniorSp,
           });
           return;
         }
@@ -1116,12 +1140,15 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         if (!hasParticular && hasMed && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
           await finishWizardAndGoToDates({
             tenantId,
+            tenantConfig,
             phone,
             phoneNumberIdFallback: effectivePhoneNumberId,
             codUsuario,
-            planoKeyFromWizard: PLAN_KEYS.MEDSENIOR_SP,
+            planoKeyFromWizard: chosenKey,
             traceId,
             codColaborador,
+            codPlanoParticular,
+            codPlanoMedSeniorSp,
           });
           return;
         }
@@ -1546,15 +1573,18 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
       const sUpdated = await getSession(tenantId, phone);
 
-      const up = await versaCreatePortalCompleto({
-        form: sUpdated?.portal?.form || {},
-        traceMeta: {
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          flow: "PORTAL_WIZARD_CREATE",
+      const up = await versaCreatePortalCompleto(
+        {
+          form: sUpdated?.portal?.form || {},
+          traceMeta: {
+            tenantId,
+            traceId,
+            tracePhone: maskPhone(phone),
+            flow: "PORTAL_WIZARD_CREATE",
+          },
         },
-      });
+        runtimeCtx
+      );
 
       if (!up.ok || !up.codUsuario) {
         await sendText({
@@ -1567,7 +1597,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         return;
       }
 
-      const prof2 = await versaGetDadosUsuarioPorCodigo(up.codUsuario);
+      const prof2 = await versaGetDadosUsuarioPorCodigo(up.codUsuario, runtimeCtx);
       const v2 = prof2.ok
         ? validatePortalCompleteness(prof2.data)
         : { ok: false, missing: ["dados do cadastro"] };
@@ -1599,12 +1629,15 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
       await finishWizardAndGoToDates({
         tenantId,
+        tenantConfig,
         phone,
         phoneNumberIdFallback: effectivePhoneNumberId,
-        codUsuario: up.codUsuario,
-        planoKeyFromWizard: planoKeyFinal,
+        codUsuario,
+        planoKeyFromWizard: chosenKey,
         traceId,
         codColaborador,
+        codPlanoParticular,
+        codPlanoMedSeniorSp,
       });
 
       return;
@@ -2225,6 +2258,7 @@ function isSlotAllowed(isoDate, hhmm) {
 
 async function fetchSlotsDoDia({
   tenantId,
+  tenantConfig,
   traceId = null,
   codColaborador,
   codUsuario,
@@ -2238,6 +2272,8 @@ async function fetchSlotsDoDia({
     `&DataFinal=${encodeURIComponent(isoDate)}`;
 
   const out = await versatilisFetch(path, {
+    tenantId,
+    tenantConfig,
     traceMeta: {
       tenantId,
       traceId,
@@ -2296,8 +2332,9 @@ async function fetchNextAvailableDates({
 
     const out = await fetchSlotsDoDia({
       tenantId,
+      tenantConfig,
       traceId,
-      codColaborador,
+      codColaborador: bookingCodColaborador,
       codUsuario,
       isoDate,
       phone,
@@ -2479,19 +2516,25 @@ function nextWizardStateFromMissing(missingList) {
   return "WZ_NOME";
 }
 
-async function finishWizardAndGoToDates({
-  tenantId,
-  phone,
-  phoneNumberIdFallback,
-  codUsuario,
-  planoKeyFromWizard,
-  traceId = null,
-  codColaborador,
-}) {
+  async function finishWizardAndGoToDates({
+    tenantId,
+    tenantConfig,
+    phone,
+    phoneNumberIdFallback,
+    codUsuario,
+    planoKeyFromWizard,
+    traceId = null,
+    codColaborador,
+    codPlanoParticular,
+    codPlanoMedSeniorSp,
+  }) {
   const isRetorno = await versaHadAppointmentLast30Days(codUsuario, {
     tenantId,
+    tenantConfig,
     traceId,
     tracePhone: maskPhone(phone),
+    codPlanoParticular,
+    codPlanoMedSeniorSp,
   });
 
   await updateSession(tenantId, phone, (s) => {
@@ -2518,3 +2561,11 @@ async function finishWizardAndGoToDates({
     await setState(tenantId, phone, "ASK_DATE_PICK");
   }
 }
+
+  function resolvePlanCodeFromRuntime(planKey, runtime) {
+    if (planKey === PLAN_KEYS.MEDSENIOR_SP) {
+      return Number(runtime?.codPlanoMedSeniorSp || 0) || null;
+    }
+  
+    return Number(runtime?.codPlanoParticular || 0) || null;
+  }
