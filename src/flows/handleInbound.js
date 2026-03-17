@@ -75,13 +75,13 @@ const LGPD_TEXT_HASH = crypto
   .update(String(MSG?.LGPD_CONSENT || ""), "utf8")
   .digest("hex");
 
-async function handleInbound(phone, inboundText, phoneNumberIdFallback, traceMeta = {}) {
-  await touchUser({
-    phone,
-    phoneNumberIdFallback,
-    sendText,
-    msgEncerramento: MSG.ENCERRAMENTO,
-  });
+async function handleInbound({
+  context = {},
+  phone,
+  text: inboundText,
+  phoneNumberIdFallback,
+}) {
+  const tenantId = String(context?.tenantId || "").trim();
 
   const traceId = traceMeta?.traceId || crypto.randomUUID();
 
@@ -1533,8 +1533,8 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
 export { handleInbound };
 
-async function clearTransientPortalData(phone) {
-  await updateSession(phone, (s) => {
+async function clearTransientPortalData(tenantId, phone) {
+  await updateSession(tenantId, phone, (s) => {
     if (!s?.portal) return;
     s.portal.form = {};
     delete s.portal.missing;
@@ -1841,19 +1841,24 @@ async function showSlotsPage({ phone, phoneNumberIdFallback, slots, page = 0 }) 
   });
 }
 
-async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
+async function sendAndSetState({
+  tenantId,
+  phone,
+  body,
+  state,
+  phoneNumberIdFallback,
+}) {
   const sent = await sendText({
+    tenantId,
     to: phone,
     body,
     phoneNumberIdFallback,
   });
 
-  if (!sent) {
-    return false;
-  }
+  if (!sent) return false;
 
   if (state) {
-    await setState(phone, state);
+    await setState(tenantId, phone, state);
   }
 
   return true;
