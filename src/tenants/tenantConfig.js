@@ -24,52 +24,117 @@ function readHttpsUrl(value) {
   }
 }
 
-export const tenantConfigs = {
-  dr_davidvera_campinas: {
-    tenantId: "dr_davidvera_campinas",
+function readBool(value) {
+  return readString(value).toLowerCase() === "true";
+}
+
+function buildTenantConfig({
+  tenantId,
+  env = process.env,
+  overrides = {},
+}) {
+  const baseConfig = {
+    tenantId: readString(tenantId),
 
     channel: {
-      phoneNumberId: readString(process.env.WHATSAPP_PHONE_NUMBER_ID),
-      whatsappToken: readString(process.env.WHATSAPP_TOKEN),
+      phoneNumberId: readString(env.WHATSAPP_PHONE_NUMBER_ID),
+      whatsappToken: readString(env.WHATSAPP_TOKEN),
     },
 
     scheduling: {
       provider: "versatilis",
-      codColaborador: readNumber(process.env.COD_COLABORADOR),
+      codColaborador: readNumber(env.COD_COLABORADOR),
     },
 
     clinic: {
-      codUnidade: readNumber(process.env.COD_UNIDADE),
-      codEspecialidade: readNumber(process.env.COD_ESPECIALIDADE),
+      codUnidade: readNumber(env.COD_UNIDADE),
+      codEspecialidade: readNumber(env.COD_ESPECIALIDADE),
     },
 
     plans: {
-      codPlanoParticular: readNumber(process.env.COD_PLANO_PARTICULAR),
-      codPlanoMedSeniorSp: readNumber(process.env.COD_PLANO_MEDSENIOR_SP),
+      codPlanoParticular: readNumber(env.COD_PLANO_PARTICULAR),
+      codPlanoMedSeniorSp: readNumber(env.COD_PLANO_MEDSENIOR_SP),
     },
 
     portal: {
-      url: readHttpsUrl(process.env.PORTAL_URL),
+      url: readHttpsUrl(env.PORTAL_URL),
     },
 
     support: {
-      waNumber: readDigits(process.env.SUPPORT_WA_NUMBER),
+      waNumber: readDigits(env.SUPPORT_WA_NUMBER),
     },
 
     integrations: {
       versatilis: {
-        baseUrl: readString(process.env.VERSATILIS_BASE),
-        user: readString(process.env.VERSATILIS_USER),
-        pass: readString(process.env.VERSATILIS_PASS),
+        baseUrl: readString(env.VERSATILIS_BASE),
+        user: readString(env.VERSATILIS_USER),
+        pass: readString(env.VERSATILIS_PASS),
       },
     },
 
     flags: {
-      debugWebhook: readString(process.env.DEBUG_WEBHOOK) === "true",
-      debugVersa: readString(process.env.DEBUG_VERSA) === "true",
-      debugVersaShape: readString(process.env.DEBUG_VERSA_SHAPE) === "true",
-      debugRedis: readString(process.env.DEBUG_REDIS) === "true",
-      enableDebug: readString(process.env.ENABLE_DEBUG) === "true",
+      debugWebhook: readBool(env.DEBUG_WEBHOOK),
+      debugVersa: readBool(env.DEBUG_VERSA),
+      debugVersaShape: readBool(env.DEBUG_VERSA_SHAPE),
+      debugRedis: readBool(env.DEBUG_REDIS),
+      enableDebug: readBool(env.ENABLE_DEBUG),
     },
-  },
+  };
+
+  return mergeDeep(baseConfig, overrides);
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeDeep(target, source) {
+  if (!isPlainObject(target)) return source;
+  if (!isPlainObject(source)) return target;
+
+  const out = { ...target };
+
+  for (const key of Object.keys(source)) {
+    const targetValue = out[key];
+    const sourceValue = source[key];
+
+    if (isPlainObject(targetValue) && isPlainObject(sourceValue)) {
+      out[key] = mergeDeep(targetValue, sourceValue);
+    } else {
+      out[key] = sourceValue;
+    }
+  }
+
+  return out;
+}
+
+export const tenantConfigs = {
+  dr_davidvera_campinas: buildTenantConfig({
+    tenantId: "dr_davidvera_campinas",
+  }),
+
+  // Exemplo futuro:
+  // clinica_sp: buildTenantConfig({
+  //   tenantId: "clinica_sp",
+  //   env: {
+  //     ...process.env,
+  //     WHATSAPP_PHONE_NUMBER_ID: process.env.CLINICA_SP_WHATSAPP_PHONE_NUMBER_ID,
+  //     WHATSAPP_TOKEN: process.env.CLINICA_SP_WHATSAPP_TOKEN,
+  //     COD_COLABORADOR: process.env.CLINICA_SP_COD_COLABORADOR,
+  //     COD_UNIDADE: process.env.CLINICA_SP_COD_UNIDADE,
+  //     COD_ESPECIALIDADE: process.env.CLINICA_SP_COD_ESPECIALIDADE,
+  //     COD_PLANO_PARTICULAR: process.env.CLINICA_SP_COD_PLANO_PARTICULAR,
+  //     COD_PLANO_MEDSENIOR_SP: process.env.CLINICA_SP_COD_PLANO_MEDSENIOR_SP,
+  //     PORTAL_URL: process.env.CLINICA_SP_PORTAL_URL,
+  //     SUPPORT_WA_NUMBER: process.env.CLINICA_SP_SUPPORT_WA_NUMBER,
+  //     VERSATILIS_BASE: process.env.CLINICA_SP_VERSATILIS_BASE,
+  //     VERSATILIS_USER: process.env.CLINICA_SP_VERSATILIS_USER,
+  //     VERSATILIS_PASS: process.env.CLINICA_SP_VERSATILIS_PASS,
+  //   },
+  //   overrides: {
+  //     scheduling: {
+  //       provider: "versatilis",
+  //     },
+  //   },
+  // }),
 };
