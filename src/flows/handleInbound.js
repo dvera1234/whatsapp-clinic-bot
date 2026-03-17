@@ -1859,8 +1859,8 @@ async function sendAndSetState(phone, body, state, phoneNumberIdFallback) {
   return true;
 }
 
-async function resetToMain(phone, phoneNumberIdFallback) {
-  await updateSession(phone, (s) => {
+async function resetToMain(tenantId, phone, phoneNumberIdFallback) {
+  await updateSession(tenantId, phone, (s) => {
     if (s?.portal) {
       s.portal.form = {};
       delete s.portal.issue;
@@ -1869,7 +1869,13 @@ async function resetToMain(phone, phoneNumberIdFallback) {
     if (s?.pending) delete s.pending;
   });
 
-  await sendAndSetState(phone, MSG.MENU, "MAIN", phoneNumberIdFallback);
+  await sendAndSetState({
+    tenantId,
+    phone,
+    body: MSG.MENU,
+    state: "MAIN",
+    phoneNumberIdFallback,
+  });
 }
 
 function nextWizardStateFromMissing(missingList) {
