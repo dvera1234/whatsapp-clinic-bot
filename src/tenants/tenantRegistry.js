@@ -1,3 +1,3 @@
 export const tenantRegistry = {
-  "SEU_PHONE_NUMBER_ID": "dr_davidvera_campinas",
+  "972717262587538": "dr_davidvera_campinas",
 };
