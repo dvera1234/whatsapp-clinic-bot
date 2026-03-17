@@ -216,6 +216,10 @@ function scheduleInactivityWarning({
 
   clearInactivityTimer(tenantId, normalizedPhone);
 
+  if (typeof sendText !== "function" || !msgEncerramento) {
+    return;
+  }
+
   const timer = setTimeout(async () => {
     try {
       const s = await loadSession(tenantId, normalizedPhone);
@@ -236,7 +240,8 @@ function scheduleInactivityWarning({
         tenantId,
         to: normalizedPhone,
         body: msgEncerramento,
-        phoneNumberIdFallback: s.lastPhoneNumberIdFallback || phoneNumberIdFallback || "",
+        phoneNumberIdFallback:
+          s.lastPhoneNumberIdFallback || phoneNumberIdFallback || "",
       });
 
       await clearSession(tenantId, normalizedPhone);
@@ -266,10 +271,29 @@ function scheduleInactivityWarning({
   inactivityTimers.set(timerKey, timer);
 }
 
-async function touchUser({ tenantId, phone, phoneNumberIdFallback, sendText, msgEncerramento }) {
+async function touchUser(arg1, arg2) {
+  let tenantId;
+  let phone;
+  let phoneNumberIdFallback;
+  let sendText;
+  let msgEncerramento;
+
+  if (typeof arg1 === "object" && arg1 !== null) {
+    tenantId = arg1.tenantId;
+    phone = arg1.phone;
+    phoneNumberIdFallback = arg1.phoneNumberIdFallback;
+    sendText = arg1.sendText;
+    msgEncerramento = arg1.msgEncerramento;
+  } else {
+    tenantId = arg1;
+    phone = arg2;
+  }
+
   const s = await updateSession(tenantId, phone, (sess) => {
     sess.lastUserTs = Date.now();
-    if (phoneNumberIdFallback) sess.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+    if (phoneNumberIdFallback) {
+      sess.lastPhoneNumberIdFallback = phoneNumberIdFallback;
+    }
   });
 
   scheduleInactivityWarning({
