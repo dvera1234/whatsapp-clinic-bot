@@ -28,62 +28,6 @@ function readBool(value) {
   return readString(value).toLowerCase() === "true";
 }
 
-function buildTenantConfig({
-  tenantId,
-  env = process.env,
-  overrides = {},
-}) {
-  const baseConfig = {
-    tenantId: readString(tenantId),
-
-    channel: {
-      phoneNumberId: readString(env.WHATSAPP_PHONE_NUMBER_ID),
-      whatsappToken: readString(env.WHATSAPP_TOKEN),
-    },
-
-    scheduling: {
-      provider: "versatilis",
-      codColaborador: readNumber(env.COD_COLABORADOR),
-    },
-
-    clinic: {
-      codUnidade: readNumber(env.COD_UNIDADE),
-      codEspecialidade: readNumber(env.COD_ESPECIALIDADE),
-    },
-
-    plans: {
-      codPlanoParticular: readNumber(env.COD_PLANO_PARTICULAR),
-      codPlanoMedSeniorSp: readNumber(env.COD_PLANO_MEDSENIOR_SP),
-    },
-
-    portal: {
-      url: readHttpsUrl(env.PORTAL_URL),
-    },
-
-    support: {
-      waNumber: readDigits(env.SUPPORT_WA_NUMBER),
-    },
-
-    integrations: {
-      versatilis: {
-        baseUrl: readString(env.VERSATILIS_BASE),
-        user: readString(env.VERSATILIS_USER),
-        pass: readString(env.VERSATILIS_PASS),
-      },
-    },
-
-    flags: {
-      debugWebhook: readBool(env.DEBUG_WEBHOOK),
-      debugVersa: readBool(env.DEBUG_VERSA),
-      debugVersaShape: readBool(env.DEBUG_VERSA_SHAPE),
-      debugRedis: readBool(env.DEBUG_REDIS),
-      enableDebug: readBool(env.ENABLE_DEBUG),
-    },
-  };
-
-  return mergeDeep(baseConfig, overrides);
-}
-
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -108,6 +52,66 @@ function mergeDeep(target, source) {
   return out;
 }
 
+function buildTenantConfig({
+  tenantId,
+  env = process.env,
+  overrides = {},
+}) {
+  const baseConfig = {
+    tenantId: readString(tenantId),
+
+    channel: {
+      phoneNumberId: readString(env.WHATSAPP_PHONE_NUMBER_ID),
+      whatsappToken: readString(env.WHATSAPP_TOKEN),
+    },
+
+    clinic: {
+      codUnidade: readNumber(env.COD_UNIDADE),
+      codEspecialidade: readNumber(env.COD_ESPECIALIDADE),
+      codColaborador: readNumber(env.COD_COLABORADOR),
+    },
+
+    plans: {
+      codPlanoParticular: readNumber(env.COD_PLANO_PARTICULAR),
+      codPlanoMedSeniorSp: readNumber(env.COD_PLANO_MEDSENIOR_SP),
+    },
+
+    portal: {
+      url: readHttpsUrl(env.PORTAL_URL),
+    },
+
+    support: {
+      waNumber: readDigits(env.SUPPORT_WA_NUMBER),
+    },
+
+    integrations: {
+      patientProvider: "versatilis",
+      portalProvider: "versatilis",
+      schedulingProvider: "versatilis",
+
+      versatilis: {
+        baseUrl: readString(env.VERSATILIS_BASE),
+        user: readString(env.VERSATILIS_USER),
+        pass: readString(env.VERSATILIS_PASS),
+      },
+
+      googleCalendar: {
+        calendarId: readString(env.GOOGLE_CALENDAR_ID),
+      },
+    },
+
+    flags: {
+      debugWebhook: readBool(env.DEBUG_WEBHOOK),
+      debugVersa: readBool(env.DEBUG_VERSA),
+      debugVersaShape: readBool(env.DEBUG_VERSA_SHAPE),
+      debugRedis: readBool(env.DEBUG_REDIS),
+      enableDebug: readBool(env.ENABLE_DEBUG),
+    },
+  };
+
+  return mergeDeep(baseConfig, overrides);
+}
+
 export const tenantConfigs = {
   dr_davidvera_campinas: buildTenantConfig({
     tenantId: "dr_davidvera_campinas",
@@ -130,11 +134,28 @@ export const tenantConfigs = {
   //     VERSATILIS_BASE: process.env.CLINICA_SP_VERSATILIS_BASE,
   //     VERSATILIS_USER: process.env.CLINICA_SP_VERSATILIS_USER,
   //     VERSATILIS_PASS: process.env.CLINICA_SP_VERSATILIS_PASS,
+  //     GOOGLE_CALENDAR_ID: process.env.CLINICA_SP_GOOGLE_CALENDAR_ID,
   //   },
   //   overrides: {
-  //     scheduling: {
-  //       provider: "versatilis",
+  //     integrations: {
+  //       patientProvider: "versatilis",
+  //       portalProvider: "versatilis",
+  //       schedulingProvider: "versatilis",
+  //     },
+  //   },
+  // }),
+
+  // Exemplo futuro híbrido:
+  // clinica_hibrida: buildTenantConfig({
+  //   tenantId: "clinica_hibrida",
+  //   overrides: {
+  //     integrations: {
+  //       patientProvider: "versatilis",
+  //       portalProvider: "versatilis",
+  //       schedulingProvider: "google_calendar",
   //     },
   //   },
   // }),
 };
+
+export { buildTenantConfig };
