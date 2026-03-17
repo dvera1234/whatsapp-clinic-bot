@@ -24,12 +24,30 @@ function readHttpsUrl(value) {
   }
 }
 
+function pushIfMissing(list, condition, fieldName) {
+  if (condition) list.push(fieldName);
+}
+
+function isSupportedProvider(value) {
+  return ["versatilis", "google_calendar"].includes(value);
+}
+
 export function buildTenantRuntime(tenantConfig = {}) {
-  const schedulingProvider = readString(
-    tenantConfig?.scheduling?.provider || "versatilis"
+  const tenantId = readString(tenantConfig?.tenantId);
+
+  const patientProvider = readString(
+    tenantConfig?.integrations?.patientProvider || "versatilis"
   );
 
-  const codColaborador = readNumber(tenantConfig?.scheduling?.codColaborador);
+  const portalProvider = readString(
+    tenantConfig?.integrations?.portalProvider || "versatilis"
+  );
+
+  const schedulingProvider = readString(
+    tenantConfig?.integrations?.schedulingProvider || "versatilis"
+  );
+
+  const codColaborador = readNumber(tenantConfig?.clinic?.codColaborador);
   const codUnidade = readNumber(tenantConfig?.clinic?.codUnidade);
   const codEspecialidade = readNumber(tenantConfig?.clinic?.codEspecialidade);
 
@@ -54,40 +72,116 @@ export function buildTenantRuntime(tenantConfig = {}) {
     tenantConfig?.integrations?.versatilis?.pass
   );
 
+  const googleCalendarId = readString(
+    tenantConfig?.integrations?.googleCalendar?.calendarId
+  );
+
   const missing = [];
+  const invalid = [];
 
-  if (!codColaborador) missing.push("scheduling.codColaborador");
-  if (!codUnidade) missing.push("clinic.codUnidade");
-  if (!codEspecialidade) missing.push("clinic.codEspecialidade");
-  if (!codPlanoParticular) missing.push("plans.codPlanoParticular");
-  if (!codPlanoMedSeniorSp) missing.push("plans.codPlanoMedSeniorSp");
-  if (!supportWa || supportWa.length < 10) missing.push("support.waNumber");
+  pushIfMissing(missing, !tenantId, "tenantId");
 
-  if (schedulingProvider === "versatilis") {
-    if (!versatilisBaseUrl) missing.push("integrations.versatilis.baseUrl");
-    if (!versatilisUser) missing.push("integrations.versatilis.user");
-    if (!versatilisPass) missing.push("integrations.versatilis.pass");
+  if (!isSupportedProvider(patientProvider)) {
+    invalid.push("integrations.patientProvider");
   }
 
-  if (missing.length) {
-    return { ok: false, missing };
+  if (!isSupportedProvider(portalProvider)) {
+    invalid.push("integrations.portalProvider");
+  }
+
+  if (!isSupportedProvider(schedulingProvider)) {
+    invalid.push("integrations.schedulingProvider");
+  }
+
+  pushIfMissing(missing, !codColaborador, "clinic.codColaborador");
+  pushIfMissing(missing, !codUnidade, "clinic.codUnidade");
+  pushIfMissing(missing, !codEspecialidade, "clinic.codEspecialidade");
+  pushIfMissing(missing, !codPlanoParticular, "plans.codPlanoParticular");
+  pushIfMissing(missing, !codPlanoMedSeniorSp, "plans.codPlanoMedSeniorSp");
+  pushIfMissing(
+    missing,
+    !supportWa || supportWa.length < 10,
+    "support.waNumber"
+  );
+
+  const needsVersatilis =
+    patientProvider === "versatilis" ||
+    portalProvider === "versatilis" ||
+    schedulingProvider === "versatilis";
+
+  if (needsVersatilis) {
+    pushIfMissing(
+      missing,
+      !versatilisBaseUrl,
+      "integrations.versatilis.baseUrl"
+    );
+    pushIfMissing(
+      missing,
+      !versatilisUser,
+      "integrations.versatilis.user"
+    );
+    pushIfMissing(
+      missing,
+      !versatilisPass,
+      "integrations.versatilis.pass"
+    );
+  }
+
+  if (schedulingProvider === "google_calendar") {
+    pushIfMissing(
+      missing,
+      !googleCalendarId,
+      "integrations.googleCalendar.calendarId"
+    );
+  }
+
+  if (invalid.length || missing.length) {
+    return {
+      ok: false,
+      missing,
+      invalid,
+    };
   }
 
   return {
     ok: true,
     value: {
-      schedulingProvider,
-      codColaborador,
-      codUnidade,
-      codEspecialidade,
-      codPlanoParticular,
-      codPlanoMedSeniorSp,
-      portalUrl,
-      supportWa,
-      versatilis: {
-        baseUrl: versatilisBaseUrl,
-        user: versatilisUser,
-        pass: versatilisPass,
+      tenantId,
+
+      providers: {
+        patientProvider,
+        portalProvider,
+        schedulingProvider,
+      },
+
+      clinic: {
+        codColaborador,
+        codUnidade,
+        codEspecialidade,
+      },
+
+      plans: {
+        codPlanoParticular,
+        codPlanoMedSeniorSp,
+      },
+
+      portal: {
+        url: portalUrl,
+      },
+
+      support: {
+        waNumber: supportWa,
+      },
+
+      integrations: {
+        versatilis: {
+          baseUrl: versatilisBaseUrl,
+          user: versatilisUser,
+          pass: versatilisPass,
+        },
+        googleCalendar: {
+          calendarId: googleCalendarId,
+        },
       },
     },
   };
