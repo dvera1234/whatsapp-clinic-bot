@@ -11,7 +11,9 @@ function readString(value) {
 }
 
 function resolveVersatilisBaseUrl(tenantConfig = {}) {
-  return readString(tenantConfig?.integrations?.versatilis?.baseUrl);
+  const base = readString(tenantConfig?.integrations?.versatilis?.baseUrl);
+  if (!base) return "";
+  return base.endsWith("/") ? base.slice(0, -1) : base;
 }
 
 function mergeTraceMeta(base, extra) {
@@ -90,20 +92,26 @@ async function versatilisFetch(
     data = text;
   }
 
-  const isNoDates404 =
+  const normalizedText =
+    typeof data === "string" ? data.toLowerCase() : "";
+
+  const isExpected404 =
     r.status === 404 &&
-    typeof data === "string" &&
-    data.toLowerCase().includes("não foram encontradas datas disponiveis");
+    (
+      normalizedText.includes("não foram encontradas") ||
+      normalizedText.includes("não foram encontrados") ||
+      normalizedText.includes("usuário não encontrado") ||
+      normalizedText.includes("agendamento não encontrado")
+    );
 
   const technicalResult = r.ok
     ? "API_ACCEPTED"
-    : isNoDates404
+    : isExpected404
     ? "EXPECTED_EMPTY_RESULT"
     : "API_REJECTED";
 
   const baseLog = {
     rid,
-    tenantId,
     method,
     path,
     status: r.status,
@@ -112,12 +120,13 @@ async function versatilisFetch(
     hasBody: !!jsonBody,
     technicalResult,
     ...(traceMeta ? traceMeta : {}),
+    tenantId,
   };
 
   if (r.ok) {
     debugLog("VERSATILIS_CALL_OK", baseLog);
-  } else if (isNoDates404) {
-    const rateLimitKey = `nodates:${tenantId}:${method}:${path.split("?")[0]}`;
+  } else if (isExpected404) {
+    const rateLimitKey = `expected404:${tenantId}:${method}:${path.split("?")[0]}`;
     logRateLimited(
       "DEBUG",
       rateLimitKey,
@@ -134,7 +143,7 @@ async function versatilisFetch(
     });
   }
 
-  if (!r.ok && !isNoDates404 && canLog("DEBUG")) {
+  if (!r.ok && !isExpected404 && canLog("DEBUG")) {
     let responseTopLevelKeys = null;
 
     if (data && typeof data === "object" && !Array.isArray(data)) {
@@ -183,7 +192,7 @@ async function versatilisFetch(
     }
   }
 
-  return { ok: r.ok, status: r.status, data, rid, allow };
+  return { ok: r.ok, status: r.status, data, rid, allow, contentType };
 }
 
 export { mergeTraceMeta, versatilisFetch };
