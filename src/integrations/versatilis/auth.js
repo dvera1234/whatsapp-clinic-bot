@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { fetchWithTimeout } from "../../utils/time.js";
-import { techLog } from "../../observability/audit.js";
+import { techLog, debugLog } from "../../observability/audit.js";
 
 const tokenCache = new Map();
 
@@ -9,8 +9,16 @@ function readString(value) {
   return v || "";
 }
 
+function normalizeBaseUrl(baseUrl) {
+  const s = readString(baseUrl);
+  if (!s) return "";
+  return s.endsWith("/") ? s.slice(0, -1) : s;
+}
+
 function resolveVersatilisConfig(tenantConfig = {}) {
-  const baseUrl = readString(tenantConfig?.integrations?.versatilis?.baseUrl);
+  const baseUrl = normalizeBaseUrl(
+    tenantConfig?.integrations?.versatilis?.baseUrl
+  );
   const user = readString(tenantConfig?.integrations?.versatilis?.user);
   const pass = readString(tenantConfig?.integrations?.versatilis?.pass);
 
@@ -47,11 +55,11 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
     return cached.token;
   }
 
-  const url = `${baseUrl}/api/Login/GetToken`;
-  const body = JSON.stringify({
-    Usuario: user,
-    Senha: pass,
-  });
+  const url = `${baseUrl}/Token`;
+  const body =
+    `username=${encodeURIComponent(user)}` +
+    `&password=${encodeURIComponent(pass)}` +
+    `&grant_type=password`;
 
   const response = await fetchWithTimeout(
     url,
@@ -59,7 +67,7 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
       method: "POST",
       headers: {
         Accept: "application/json",
-        "Content-Type": "application/json",
+        "Content-Type": "text/plain",
       },
       body,
     },
@@ -79,6 +87,9 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
     techLog("VERSATILIS_TOKEN_FETCH_FAILED", {
       tenantId: tenantId || null,
       status: response.status,
+      tokenPath: "/Token",
+      responseType:
+        Array.isArray(data) ? "array" : data === null ? "null" : typeof data,
     });
 
     const err = new Error(
@@ -90,21 +101,43 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
   }
 
   const token =
-    data?.Token ||
-    data?.token ||
     data?.access_token ||
+    data?.token ||
+    data?.Token ||
     (typeof data === "string" ? data : null);
 
   if (!token || typeof token !== "string") {
+    techLog("VERSATILIS_TOKEN_INVALID_RESPONSE", {
+      tenantId: tenantId || null,
+      hasToken: false,
+      responseKeys:
+        data && typeof data === "object" && !Array.isArray(data)
+          ? Object.keys(data).slice(0, 20)
+          : [],
+    });
+
     const err = new Error("Resposta de token Versatilis sem token utilizável.");
     err.code = "VERSATILIS_TOKEN_INVALID_RESPONSE";
     throw err;
   }
 
+  const expiresIn =
+    Number(data?.expires_in || data?.expires || 3600) || 3600;
+
   tokenCache.set(cacheKey, {
     token,
-    expiresAt: now + 50 * 60 * 1000,
+    expiresAt: now + Math.max(60, expiresIn - 60) * 1000,
+  });
+
+  debugLog("VERSATILIS_TOKEN_FETCH_OK", {
+    tenantId: tenantId || null,
+    expiresIn,
+    cached: true,
   });
 
   return token;
+}
+
+export function clearVersatilisTokenCache() {
+  tokenCache.clear();
 }
