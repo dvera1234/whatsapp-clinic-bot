@@ -47,31 +47,14 @@ import {
 
 import { versatilisFetch } from "../integrations/versatilis/client.js";
 
-import {
-  COD_COLABORADOR,
-  COD_UNIDADE,
-  COD_ESPECIALIDADE,
-  COD_PLANO_PARTICULAR,
-} from "../config/env.js";
-
-function normalizeHttpsUrlOrEmpty(value) {
-  const s = String(value || "").trim();
-  if (!s) return "";
-
-  try {
-    const u = new URL(s);
-    if (u.protocol !== "https:") return "";
-    return u.toString();
-  } catch {
-    return "";
-  }
-}
-
 const LGPD_TEXT_VERSION = "LGPD_v1";
 const LGPD_TEXT_HASH = crypto
   .createHash("sha256")
   .update(String(MSG?.LGPD_CONSENT || ""), "utf8")
   .digest("hex");
+
+const MIN_LEAD_HOURS = 12;
+const TZ_OFFSET = "-03:00";
 
 async function handleInbound({
   context = {},
@@ -79,9 +62,50 @@ async function handleInbound({
   text: inboundText,
   phoneNumberIdFallback,
 }) {
-  const tenantId = String(context?.tenantId || "").trim();
   const traceId = String(context?.traceId || crypto.randomUUID());
+  const tenantId = String(context?.tenantId || "").trim();
   const tenantConfig = context?.tenantConfig || {};
+  const effectivePhoneNumberId =
+    context?.phoneNumberId || phoneNumberIdFallback || null;
+
+  if (!tenantId) {
+    audit("TENANT_CONTEXT_MISSING", {
+      traceId,
+      tracePhone: maskPhone(phone),
+      hasContext: !!context,
+      hasPhoneNumberId: !!effectivePhoneNumberId,
+      blockedBeforeFlow: true,
+    });
+    return;
+  }
+
+  const tenantRuntime = buildTenantRuntime(tenantConfig);
+
+  if (!tenantRuntime.ok) {
+    audit("TENANT_CONFIG_INVALID", {
+      tenantId,
+      traceId,
+      tracePhone: maskPhone(phone),
+      missingFields: tenantRuntime.missing,
+      blockedBeforeFlow: true,
+    });
+
+    await failSafeTenantConfigError({
+      tenantId,
+      phone,
+      phoneNumberIdFallback: effectivePhoneNumberId,
+    });
+    return;
+  }
+
+  const {
+    codColaborador,
+    codUnidade,
+    codEspecialidade,
+    codPlanoParticular,
+    portalUrl,
+    supportWa,
+  } = tenantRuntime.value;
 
   const raw = normalizeSpaces(inboundText);
   const upper = String(raw || "").toUpperCase();
@@ -130,7 +154,7 @@ async function handleInbound({
           phone,
           body: MSG.MENU,
           state: "MAIN",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -154,7 +178,7 @@ async function handleInbound({
         phone,
         body: MSG.ASK_CPF_PORTAL,
         state: "WZ_CPF",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -174,7 +198,7 @@ async function handleInbound({
         tenantId,
         to: phone,
         body: MSG.LGPD_RECUSA,
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
 
       await clearSession(tenantId, phone);
@@ -184,14 +208,14 @@ async function handleInbound({
 
   if (upper === "FALAR_ATENDENTE") {
     const s = await getSession(tenantId, phone);
-    const prefill = buildSupportPrefillFromSession(phone, s, traceId);
+    const prefill = buildSupportPrefillFromSession(phone, s, traceId, tenantId);
 
     await sendSupportLink({
       tenantId,
-      tenantConfig,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
       prefill,
+      supportWa,
       nextState: "MAIN",
     });
 
@@ -204,6 +228,7 @@ async function handleInbound({
     const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
 
     const prefill = buildSafeSupportPrefill({
+      tenantId,
       traceId,
       phone,
       reason: "Cadastro incompleto no Portal do Paciente.",
@@ -212,10 +237,10 @@ async function handleInbound({
 
     await sendSupportLink({
       tenantId,
-      tenantConfig,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
       prefill,
+      supportWa,
       nextState: "MAIN",
     });
 
@@ -226,14 +251,14 @@ async function handleInbound({
   if (ctx === "PLAN_PICK") {
     if (upper === "FALAR_ATENDENTE") {
       const s = await getSession(tenantId, phone);
-      const prefill = buildSupportPrefillFromSession(phone, s, traceId);
+      const prefill = buildSupportPrefillFromSession(phone, s, traceId, tenantId);
 
       await sendSupportLink({
         tenantId,
-        tenantConfig,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
         prefill,
+        supportWa,
         nextState: "MAIN",
       });
 
@@ -246,7 +271,7 @@ async function handleInbound({
         tenantId,
         to: phone,
         body: "Use os botões apresentados para prosseguir.",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -271,7 +296,7 @@ async function handleInbound({
         tenantId,
         to: phone,
         body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return;
@@ -279,12 +304,12 @@ async function handleInbound({
 
     await finishWizardAndGoToDates({
       tenantId,
-      tenantConfig,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
       codUsuario,
       planoKeyFromWizard: chosenKey,
       traceId,
+      codColaborador,
     });
 
     return;
@@ -294,8 +319,7 @@ async function handleInbound({
     const isoDate = raw.slice(2).trim();
     const s = await getSession(tenantId, phone);
 
-    const codColaborador =
-      s?.booking?.codColaborador ?? getCodColaborador(tenantConfig);
+    const bookingCodColaborador = s?.booking?.codColaborador ?? codColaborador;
     const codUsuario = s?.booking?.codUsuario;
 
     if (!codUsuario) {
@@ -303,7 +327,7 @@ async function handleInbound({
         tenantId,
         to: phone,
         body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return;
@@ -312,7 +336,7 @@ async function handleInbound({
     const out = await fetchSlotsDoDia({
       tenantId,
       traceId,
-      codColaborador,
+      codColaborador: bookingCodColaborador,
       codUsuario,
       isoDate,
       phone,
@@ -322,7 +346,7 @@ async function handleInbound({
     await updateSession(tenantId, phone, (sess) => {
       sess.booking = {
         ...(sess.booking || {}),
-        codColaborador,
+        codColaborador: bookingCodColaborador,
         codUsuario,
         isoDate,
         pageIndex: 0,
@@ -334,7 +358,7 @@ async function handleInbound({
     await showSlotsPage({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
       slots,
       page: 0,
     });
@@ -343,8 +367,7 @@ async function handleInbound({
 
   if (ctx === "ASK_DATE_PICK") {
     const s = await getSession(tenantId, phone);
-    const codColaborador =
-      s?.booking?.codColaborador ?? getCodColaborador(tenantConfig);
+    const bookingCodColaborador = s?.booking?.codColaborador ?? codColaborador;
     const codUsuario = s?.booking?.codUsuario;
 
     if (!codUsuario) {
@@ -352,7 +375,7 @@ async function handleInbound({
         tenantId,
         to: phone,
         body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return;
@@ -361,8 +384,8 @@ async function handleInbound({
     const shown = await showNextDates({
       tenantId,
       phone,
-      phoneNumberIdFallback,
-      codColaborador,
+      phoneNumberIdFallback: effectivePhoneNumberId,
+      codColaborador: bookingCodColaborador,
       codUsuario,
       traceId,
     });
@@ -389,7 +412,7 @@ async function handleInbound({
       await showSlotsPage({
         tenantId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
         slots,
         page,
       });
@@ -398,8 +421,7 @@ async function handleInbound({
 
     if (upper === "TROCAR_DATA") {
       const s = await getSession(tenantId, phone);
-      const codColaborador =
-        s?.booking?.codColaborador ?? getCodColaborador(tenantConfig);
+      const bookingCodColaborador = s?.booking?.codColaborador ?? codColaborador;
       const codUsuario = s?.booking?.codUsuario;
 
       await updateSession(tenantId, phone, (sess) => {
@@ -415,7 +437,7 @@ async function handleInbound({
           tenantId,
           to: phone,
           body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         await setState(tenantId, phone, "MAIN");
         return;
@@ -424,8 +446,8 @@ async function handleInbound({
       const shown = await showNextDates({
         tenantId,
         phone,
-        phoneNumberIdFallback,
-        codColaborador,
+        phoneNumberIdFallback: effectivePhoneNumberId,
+        codColaborador: bookingCodColaborador,
         codUsuario,
         traceId,
       });
@@ -443,7 +465,7 @@ async function handleInbound({
           tenantId,
           to: phone,
           body: "⚠️ Horário inválido.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -461,7 +483,7 @@ async function handleInbound({
           { id: "CONFIRMAR", title: "Confirmar" },
           { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
         ],
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -474,7 +496,7 @@ async function handleInbound({
       await showSlotsPage({
         tenantId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
         slots,
         page,
       });
@@ -495,7 +517,7 @@ async function handleInbound({
       await showSlotsPage({
         tenantId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
         slots,
         page: 0,
       });
@@ -510,12 +532,12 @@ async function handleInbound({
       );
 
       const payload = {
-        CodUnidade: getCodUnidade(tenantConfig),
-        CodEspecialidade: getCodEspecialidade(tenantConfig),
+        CodUnidade: codUnidade,
+        CodEspecialidade: codEspecialidade,
         CodPlano: planoSelecionado,
         CodHorario: codHorario,
         CodUsuario: s?.booking?.codUsuario,
-        CodColaborador: s?.booking?.codColaborador ?? getCodColaborador(tenantConfig),
+        CodColaborador: s?.booking?.codColaborador ?? codColaborador,
         BitTelemedicina: false,
         Confirmada: true,
       };
@@ -525,7 +547,7 @@ async function handleInbound({
           tenantId,
           to: phone,
           body: "⚠️ Não consegui identificar o paciente. Digite AJUDA.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         await setState(tenantId, phone, "MAIN");
         return;
@@ -543,13 +565,13 @@ async function handleInbound({
           tenantId,
           to: phone,
           body: "⚠️ Não encontrei o horário selecionado. Escolha novamente.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
 
         await showSlotsPage({
           tenantId,
           phone,
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
           slots,
           page: 0,
         });
@@ -564,7 +586,7 @@ async function handleInbound({
           tenantId,
           to: phone,
           body: "⏳ Seu agendamento já está sendo processado. Aguarde alguns segundos.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -585,11 +607,11 @@ async function handleInbound({
             tenantId,
             to: phone,
             body: "⚠️ Este horário não pode mais ser agendado (mínimo de 12h). Escolha outro.",
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
-          const codColaborador =
-            s?.booking?.codColaborador ?? getCodColaborador(tenantConfig);
+          const bookingCodColaborador =
+            s?.booking?.codColaborador ?? codColaborador;
           const codUsuario = s?.booking?.codUsuario;
 
           if (!codUsuario) {
@@ -597,7 +619,7 @@ async function handleInbound({
               tenantId,
               to: phone,
               body: "⚠️ Sessão inválida. Digite 1 para iniciar novamente.",
-              phoneNumberIdFallback,
+              phoneNumberIdFallback: effectivePhoneNumberId,
             });
             await setState(tenantId, phone, "MAIN");
             return;
@@ -606,7 +628,7 @@ async function handleInbound({
           const outSlots = await fetchSlotsDoDia({
             tenantId,
             traceId,
-            codColaborador,
+            codColaborador: bookingCodColaborador,
             codUsuario,
             isoDate,
             phone,
@@ -622,7 +644,7 @@ async function handleInbound({
           await showSlotsPage({
             tenantId,
             phone,
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
             slots: sUpdated?.booking?.slots || [],
             page: 0,
           });
@@ -676,7 +698,7 @@ async function handleInbound({
             tenantId,
             to: phone,
             body: "⚠️ Não consegui confirmar agora. Tente outro horário ou digite AJUDA.",
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
           audit("BOOKING_CONFIRM_PATIENT_RESPONSE", {
@@ -696,7 +718,7 @@ async function handleInbound({
           await showSlotsPage({
             tenantId,
             phone,
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
             slots,
             page: 0,
           });
@@ -709,7 +731,7 @@ async function handleInbound({
           "Agendamento confirmado com sucesso!";
 
         const isParticularBooking =
-          Number(payload.CodPlano) === Number(getCodPlanoParticular(tenantConfig));
+          Number(payload.CodPlano) === Number(codPlanoParticular);
         const isRetornoBooking = !!s?.booking?.isRetorno;
         const showPagamentoInfo = isParticularBooking && !isRetornoBooking;
 
@@ -750,17 +772,16 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             tenantId,
             to: phone,
             body: `✅ ${msgOk}\n\n${ORIENTACOES}\n\n${PORTAL_INFO}`,
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
           let sentPortalLink = false;
-          const portalUrl = getPortalUrl(tenantConfig);
           if (portalUrl) {
             sentPortalLink = await sendText({
               tenantId,
               to: phone,
               body: `🔗 Portal do Paciente:\n${portalUrl}`,
-              phoneNumberIdFallback,
+              phoneNumberIdFallback: effectivePhoneNumberId,
             });
           }
 
@@ -794,7 +815,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             tenantId,
             to: phone,
             body: "✅ Agendamento confirmado. Se precisar, digite MENU para voltar.",
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
           audit("BOOKING_CONFIRM_PATIENT_RESPONSE", {
@@ -825,7 +846,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         { id: "CONFIRMAR", title: "Confirmar" },
         { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
       ],
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
     return;
   }
@@ -836,13 +857,14 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.AJUDA_PERGUNTA,
       state: "WAIT_AJUDA_MOTIVO",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
     return;
   }
 
   if (ctx === "WAIT_AJUDA_MOTIVO") {
     const prefill = buildSafeSupportPrefill({
+      tenantId,
       traceId,
       phone,
       reason: "Paciente relatou dificuldade no agendamento.",
@@ -851,10 +873,10 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
     await sendSupportLink({
       tenantId,
-      tenantConfig,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
       prefill,
+      supportWa,
       nextState: "MAIN",
     });
 
@@ -865,6 +887,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
   if (!digits && !String(ctx || "").startsWith("WZ_")) {
     if (ctx === "ATENDENTE") {
       const prefill = buildSafeSupportPrefill({
+        tenantId,
         traceId,
         phone,
         reason: "Paciente solicitou atendimento humano.",
@@ -873,10 +896,10 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
       await sendSupportLink({
         tenantId,
-        tenantConfig,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
         prefill,
+        supportWa,
         nextState: "MAIN",
       });
 
@@ -884,7 +907,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       return;
     }
 
-    await resetToMain(tenantId, phone, phoneNumberIdFallback);
+    await resetToMain(tenantId, phone, effectivePhoneNumberId);
     return;
   }
 
@@ -914,7 +937,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: MSG.CPF_INVALIDO,
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -952,18 +975,19 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
       if (!codUsuario) {
         const prefill = buildSafeSupportPrefill({
+          tenantId,
           traceId,
           phone,
           reason: "Paciente sem cadastro localizável automaticamente no sistema.",
         });
 
-        const link = makeWaLink(getSupportWa(tenantConfig), prefill);
+        const link = makeWaLink(supportWa, prefill);
 
         await sendText({
           tenantId,
           to: phone,
           body: `⚠️ Não consegui localizar seu cadastro automaticamente.\n\n✅ Para prosseguir com segurança, fale com nossa equipe:\n${link}`,
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
 
         await clearTransientPortalData(tenantId, phone);
@@ -1055,7 +1079,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Encontrei seu cadastro, mas não consegui consultar seus dados agora. Por favor, fale com nossa equipe.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         await setState(tenantId, phone, "MAIN");
         return;
@@ -1079,12 +1103,12 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         if (hasParticular && !hasMed && flowPlanKey === PLAN_KEYS.PARTICULAR) {
           await finishWizardAndGoToDates({
             tenantId,
-            tenantConfig,
             phone,
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
             codUsuario,
             planoKeyFromWizard: PLAN_KEYS.PARTICULAR,
             traceId,
+            codColaborador,
           });
           return;
         }
@@ -1092,12 +1116,12 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         if (!hasParticular && hasMed && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
           await finishWizardAndGoToDates({
             tenantId,
-            tenantConfig,
             phone,
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
             codUsuario,
             planoKeyFromWizard: PLAN_KEYS.MEDSENIOR_SP,
             traceId,
+            codColaborador,
           });
           return;
         }
@@ -1135,7 +1159,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
               { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
               { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
             ],
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
           await setState(tenantId, phone, "PLAN_PICK");
@@ -1151,7 +1175,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
               { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
               { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
             ],
-            phoneNumberIdFallback,
+            phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
           await setState(tenantId, phone, "PLAN_PICK");
@@ -1162,7 +1186,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Não consegui validar o convênio do cadastro agora. Por favor, fale com nossa equipe.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
 
         await setState(tenantId, phone, "MAIN");
@@ -1188,7 +1212,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         to: phone,
         body: MSG.PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO(formatMissing(v.missing)),
         buttons: [{ id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE }],
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
 
       await setState(tenantId, phone, "BLOCK_EXISTING_INCOMPLETE");
@@ -1203,7 +1227,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Envie seu nome completo.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1219,7 +1243,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_DTNASC,
         state: "WZ_DTNASC",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1231,7 +1255,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Data inválida. Use DD/MM/AAAA.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1251,7 +1275,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           { id: "SX_F", title: "Feminino" },
           { id: "SX_NI", title: "Prefiro não informar" },
         ],
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       await setState(tenantId, phone, "WZ_SEXO");
       return;
@@ -1275,7 +1299,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           { id: "PL_PART", title: "Particular" },
           { id: "PL_MED", title: "MedSênior SP" },
         ],
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       await setState(tenantId, phone, "WZ_PLANO");
       return;
@@ -1287,7 +1311,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "Use os botões para selecionar o convênio.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1296,7 +1320,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         sess.portal = sess.portal || {};
         sess.portal.form = sess.portal.form || {};
         sess.portal.form.planoKey =
-          upper === "PL_MED" ? "MEDSENIOR_SP" : "PARTICULAR";
+          upper === "PL_MED" ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
         sess.portal.form.celular = formatCellFromWA(phone);
       });
 
@@ -1305,7 +1329,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_EMAIL,
         state: "WZ_EMAIL",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1317,7 +1341,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ E-mail inválido.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1333,7 +1357,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_CEP,
         state: "WZ_CEP",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1345,7 +1369,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ CEP inválido. Envie 8 dígitos.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1361,7 +1385,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_ENDERECO,
         state: "WZ_ENDERECO",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1374,7 +1398,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Endereço inválido.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1390,7 +1414,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_NUMERO,
         state: "WZ_NUMERO",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1403,7 +1427,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Informe o número.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1419,7 +1443,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_COMPLEMENTO,
         state: "WZ_COMPLEMENTO",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1438,7 +1462,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_BAIRRO,
         state: "WZ_BAIRRO",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1451,7 +1475,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Informe o bairro.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1467,7 +1491,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_CIDADE,
         state: "WZ_CIDADE",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1480,7 +1504,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Informe a cidade.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1496,7 +1520,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ASK_UF,
         state: "WZ_UF",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
@@ -1509,7 +1533,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ UF inválida. Ex.: SP",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1537,7 +1561,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: "⚠️ Não consegui concluir seu cadastro agora. Digite AJUDA para falar com nossa equipe.",
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         await setState(tenantId, phone, "MAIN");
         return;
@@ -1553,7 +1577,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: MSG.PORTAL_NEED_DATA(formatMissing(v2.missing)),
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
 
         const next = nextWizardStateFromMissing(v2.missing);
@@ -1563,7 +1587,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           tenantId,
           to: phone,
           body: getPromptByWizardState(next),
-          phoneNumberIdFallback,
+          phoneNumberIdFallback: effectivePhoneNumberId,
         });
         return;
       }
@@ -1575,12 +1599,12 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
       await finishWizardAndGoToDates({
         tenantId,
-        tenantConfig,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
         codUsuario: up.codUsuario,
         planoKeyFromWizard: planoKeyFinal,
         traceId,
+        codColaborador,
       });
 
       return;
@@ -1591,7 +1615,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.ASK_CPF_PORTAL,
       state: "WZ_CPF",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
     return;
   }
@@ -1603,7 +1627,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.PARTICULAR,
         state: "PARTICULAR",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1613,7 +1637,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.CONVENIOS,
         state: "CONVENIOS",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1623,7 +1647,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.POS_MENU,
         state: "POS",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1633,7 +1657,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.ATENDENTE,
         state: "ATENDENTE",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1642,7 +1666,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.MENU,
       state: "MAIN",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
@@ -1652,7 +1676,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         s.booking = {
           ...(s.booking || {}),
           planoKey: PLAN_KEYS.PARTICULAR,
-          codColaborador: getCodColaborador(tenantConfig),
+          codColaborador,
           codUsuario: null,
           isoDate: null,
           slots: [],
@@ -1682,13 +1706,13 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.LGPD_CONSENT,
         state: "LGPD_CONSENT",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
 
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     return sendAndSetState({
@@ -1696,13 +1720,13 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.PARTICULAR,
       state: "PARTICULAR",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
   if (ctx === "CONVENIOS") {
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     if (digits === "1") {
@@ -1711,7 +1735,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.CONVENIO_GOCARE,
         state: "CONV_DETALHE",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1721,7 +1745,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.CONVENIO_SAMARITANO,
         state: "CONV_DETALHE",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1731,7 +1755,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.CONVENIO_SALUSMED,
         state: "CONV_DETALHE",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1741,7 +1765,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.CONVENIO_PROASA,
         state: "CONV_DETALHE",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1752,7 +1776,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.MEDSENIOR,
         state: "MEDSENIOR",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1761,7 +1785,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.CONVENIOS,
       state: "CONVENIOS",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
@@ -1772,12 +1796,12 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.PARTICULAR,
         state: "PARTICULAR",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     return sendAndSetState({
@@ -1785,7 +1809,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.CONVENIOS,
       state: "CONVENIOS",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
@@ -1795,7 +1819,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         s.booking = {
           ...(s.booking || {}),
           planoKey: PLAN_KEYS.MEDSENIOR_SP,
-          codColaborador: getCodColaborador(tenantConfig),
+          codColaborador,
           codUsuario: null,
           isoDate: null,
           slots: [],
@@ -1825,13 +1849,13 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.LGPD_CONSENT,
         state: "LGPD_CONSENT",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
       return;
     }
 
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     return sendAndSetState({
@@ -1839,7 +1863,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.MEDSENIOR,
       state: "MEDSENIOR",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
@@ -1850,7 +1874,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.POS_RECENTE,
         state: "POS_RECENTE",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1860,12 +1884,12 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.POS_TARDIO,
         state: "POS_TARDIO",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     return sendAndSetState({
@@ -1873,13 +1897,13 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.POS_MENU,
       state: "POS",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
   if (ctx === "POS_RECENTE") {
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     return sendAndSetState({
@@ -1887,7 +1911,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.POS_RECENTE,
       state: "POS_RECENTE",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
@@ -1898,7 +1922,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.PARTICULAR,
         state: "PARTICULAR",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
@@ -1908,12 +1932,12 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         phone,
         body: MSG.CONVENIOS,
         state: "CONVENIOS",
-        phoneNumberIdFallback,
+        phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     return sendAndSetState({
@@ -1921,13 +1945,13 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: MSG.POS_TARDIO,
       state: "POS_TARDIO",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
   if (ctx === "ATENDENTE") {
     if (digits === "0") {
-      return resetToMain(tenantId, phone, phoneNumberIdFallback);
+      return resetToMain(tenantId, phone, effectivePhoneNumberId);
     }
 
     return sendAndSetState({
@@ -1935,7 +1959,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       phone,
       body: "Por favor, descreva abaixo como podemos te ajudar.",
       state: "ATENDENTE",
-      phoneNumberIdFallback,
+      phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
@@ -1944,57 +1968,96 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
     phone,
     body: MSG.MENU,
     state: "MAIN",
-    phoneNumberIdFallback,
+    phoneNumberIdFallback: effectivePhoneNumberId,
   });
 }
 
 export { handleInbound };
 
-function getCodColaborador(tenantConfig = {}) {
-  return (
+function normalizeHttpsUrlOrEmpty(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "https:") return "";
+    return u.toString();
+  } catch {
+    return "";
+  }
+}
+
+function buildTenantRuntime(tenantConfig = {}) {
+  const codColaborador =
     tenantConfig?.scheduling?.codColaborador ??
     tenantConfig?.cod_colaborador ??
-    COD_COLABORADOR
-  );
-}
+    null;
 
-function getCodUnidade(tenantConfig = {}) {
-  return (
+  const codUnidade =
     tenantConfig?.clinic?.codUnidade ??
     tenantConfig?.cod_unidade ??
-    COD_UNIDADE
-  );
-}
+    null;
 
-function getCodEspecialidade(tenantConfig = {}) {
-  return (
+  const codEspecialidade =
     tenantConfig?.clinic?.codEspecialidade ??
     tenantConfig?.cod_especialidade ??
-    COD_ESPECIALIDADE
-  );
-}
+    null;
 
-function getCodPlanoParticular(tenantConfig = {}) {
-  return (
+  const codPlanoParticular =
     tenantConfig?.plans?.codPlanoParticular ??
     tenantConfig?.cod_plano_particular ??
-    COD_PLANO_PARTICULAR
-  );
-}
+    null;
 
-function getPortalUrl(tenantConfig = {}) {
-  return normalizeHttpsUrlOrEmpty(
-    tenantConfig?.portal?.url ?? tenantConfig?.portal_url ?? process.env.PORTAL_URL
+  const portalUrl = normalizeHttpsUrlOrEmpty(
+    tenantConfig?.portal?.url ?? tenantConfig?.portal_url ?? ""
   );
-}
 
-function getSupportWa(tenantConfig = {}) {
-  return String(
+  const supportWa = String(
     tenantConfig?.support?.waNumber ??
       tenantConfig?.supportWa ??
-      process.env.SUPPORT_WA ??
-      "5519933005596"
+      ""
   ).replace(/\D+/g, "");
+
+  const missing = [];
+  if (!codColaborador) missing.push("scheduling.codColaborador");
+  if (!codUnidade) missing.push("clinic.codUnidade");
+  if (!codEspecialidade) missing.push("clinic.codEspecialidade");
+  if (!codPlanoParticular) missing.push("plans.codPlanoParticular");
+  if (!supportWa || supportWa.length < 10) missing.push("support.waNumber");
+
+  if (missing.length) {
+    return { ok: false, missing };
+  }
+
+  return {
+    ok: true,
+    value: {
+      codColaborador: Number(codColaborador),
+      codUnidade: Number(codUnidade),
+      codEspecialidade: Number(codEspecialidade),
+      codPlanoParticular: Number(codPlanoParticular),
+      portalUrl,
+      supportWa,
+    },
+  };
+}
+
+async function failSafeTenantConfigError({
+  tenantId,
+  phone,
+  phoneNumberIdFallback,
+}) {
+  try {
+    await sendText({
+      tenantId,
+      to: phone,
+      body:
+        "⚠️ Não foi possível continuar seu atendimento automático neste momento. Por favor, tente novamente em instantes.",
+      phoneNumberIdFallback,
+    });
+  } catch {
+    // fail-safe silencioso
+  }
 }
 
 async function clearTransientPortalData(tenantId, phone) {
@@ -2034,7 +2097,7 @@ function getPromptByWizardState(state) {
 }
 
 function bookingConfirmKey(tenantId, phone, codHorario) {
-  const t = String(tenantId || "default").trim();
+  const t = String(tenantId || "").trim();
   const p = String(phone || "").replace(/\D+/g, "");
   return `booking:confirm:${t}:${p}:${codHorario}`;
 }
@@ -2068,13 +2131,13 @@ function makeWaLink(supportWa, prefillText) {
 
 async function sendSupportLink({
   tenantId,
-  tenantConfig,
   phone,
   phoneNumberIdFallback,
   prefill,
+  supportWa,
   nextState = "MAIN",
 }) {
-  const link = makeWaLink(getSupportWa(tenantConfig), prefill);
+  const link = makeWaLink(supportWa, prefill);
 
   await sendText({
     tenantId,
@@ -2088,7 +2151,12 @@ async function sendSupportLink({
   }
 }
 
-function buildSupportPrefillFromSession(phone, s, traceId = null) {
+function buildSupportPrefillFromSession(
+  phone,
+  s,
+  traceId = null,
+  tenantId = null
+) {
   const faltas = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
   const issue = s?.portal?.issue || null;
 
@@ -2098,6 +2166,7 @@ function buildSupportPrefillFromSession(phone, s, traceId = null) {
       : "Ajuda no agendamento.";
 
   return buildSafeSupportPrefill({
+    tenantId,
     traceId,
     phone,
     reason: motivo,
@@ -2114,6 +2183,7 @@ function toHHMM(hora) {
 }
 
 function buildSafeSupportPrefill({
+  tenantId = null,
   traceId = null,
   phone = "",
   reason = "",
@@ -2123,6 +2193,7 @@ function buildSafeSupportPrefill({
   const lines = [
     "Olá! Preciso de ajuda no agendamento.",
     "",
+    `Tenant: ${tenantId || "(não informado)"}`,
     `TraceId: ${traceId || "(não informado)"}`,
     `Paciente: ${maskPhone(phone)}`,
     `Motivo: ${reason || "Ajuda no agendamento."}`,
@@ -2138,9 +2209,6 @@ function buildSafeSupportPrefill({
 
   return lines.join("\n").trim();
 }
-
-const MIN_LEAD_HOURS = 12;
-const TZ_OFFSET = "-03:00";
 
 function slotEpochMs(isoDate, hhmm) {
   const d = new Date(`${isoDate}T${hhmm}:00${TZ_OFFSET}`);
@@ -2413,12 +2481,12 @@ function nextWizardStateFromMissing(missingList) {
 
 async function finishWizardAndGoToDates({
   tenantId,
-  tenantConfig,
   phone,
   phoneNumberIdFallback,
   codUsuario,
   planoKeyFromWizard,
   traceId = null,
+  codColaborador,
 }) {
   const isRetorno = await versaHadAppointmentLast30Days(codUsuario, {
     tenantId,
@@ -2429,7 +2497,7 @@ async function finishWizardAndGoToDates({
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.codUsuario = codUsuario;
-    s.booking.codColaborador = getCodColaborador(tenantConfig);
+    s.booking.codColaborador = codColaborador;
     s.booking.isRetorno = isRetorno;
 
     if (planoKeyFromWizard) {
@@ -2441,7 +2509,7 @@ async function finishWizardAndGoToDates({
     tenantId,
     phone,
     phoneNumberIdFallback,
-    codColaborador: getCodColaborador(tenantConfig),
+    codColaborador,
     codUsuario,
     traceId,
   });
