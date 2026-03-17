@@ -1,5 +1,5 @@
 export const tenantConfigs = {
-  dr_david_campinas: {
+  dr_davidvera_campinas: {
     tenantId: "dr_davidvera_campinas",
 
     channel: {
