@@ -107,8 +107,7 @@ function validatePortalCompleteness(perfil = {}) {
   if (!hasMinText(numero, 1)) missing.push("número");
   if (!hasMinText(bairro, 2)) missing.push("bairro");
   if (!hasMinText(cidade, 2)) missing.push("cidade");
-  if (!hasValidUf(uf)) missing.push("estado (UF)");
-
+  
   return {
     ok: missing.length === 0,
     missing,
