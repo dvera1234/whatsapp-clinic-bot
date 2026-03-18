@@ -1,6 +1,6 @@
 import crypto from "crypto";
-import { fetchWithTimeout } from "../../utils/time.js";
-import { techLog, debugLog } from "../../observability/audit.js";
+import { fetchWithTimeout } from "../../../utils/time.js";
+import { techLog, debugLog } from "../../../observability/audit.js";
 
 const tokenCache = new Map();
 
@@ -88,8 +88,11 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
       tenantId: tenantId || null,
       status: response.status,
       tokenPath: "/Token",
-      responseType:
-        Array.isArray(data) ? "array" : data === null ? "null" : typeof data,
+      responseType: Array.isArray(data)
+        ? "array"
+        : data === null
+          ? "null"
+          : typeof data,
     });
 
     const err = new Error(
