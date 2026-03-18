@@ -9,6 +9,101 @@ import {
   hasPlanKey,
 } from "../shared/versatilisMappers.js";
 
+function readString(value) {
+  const v = String(value ?? "").trim();
+  return v || "";
+}
+
+function onlyDigits(value) {
+  return String(value ?? "").replace(/\D+/g, "");
+}
+
+function hasMinText(value, min = 1) {
+  return readString(value).length >= min;
+}
+
+function hasValidEmail(value) {
+  const v = readString(value);
+  if (!v) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+function hasValidCep(value) {
+  return onlyDigits(value).length === 8;
+}
+
+function hasValidUf(value) {
+  return /^[A-Z]{2}$/.test(readString(value).toUpperCase());
+}
+
+function hasDateLike(value) {
+  const v = readString(value);
+  if (!v) return false;
+
+  return (
+    /^\d{2}\/\d{2}\/\d{4}$/.test(v) ||
+    /^\d{4}-\d{2}-\d{2}/.test(v)
+  );
+}
+
+function pickFirst(obj, keys = []) {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function validatePortalCompleteness(perfil = {}) {
+  const missing = [];
+
+  const nome = pickFirst(perfil, ["Nome", "nome"]);
+  const dtNasc = pickFirst(perfil, [
+    "DtNasc",
+    "DataNascimento",
+    "Nascimento",
+    "dtNasc",
+    "dataNascimento",
+  ]);
+  const email = pickFirst(perfil, ["Email", "email"]);
+  const cep = pickFirst(perfil, ["CEP", "Cep", "cep"]);
+  const endereco = pickFirst(perfil, [
+    "Endereco",
+    "Endereço",
+    "Logradouro",
+    "endereco",
+    "logradouro",
+  ]);
+  const numero = pickFirst(perfil, ["Numero", "Número", "numero"]);
+  const bairro = pickFirst(perfil, ["Bairro", "bairro"]);
+  const cidade = pickFirst(perfil, ["Cidade", "cidade"]);
+  const uf = pickFirst(perfil, [
+    "UF",
+    "Uf",
+    "Estado",
+    "estado",
+    "SiglaUF",
+    "siglaUf",
+  ]);
+
+  if (!hasMinText(nome, 5)) missing.push("nome completo");
+  if (!hasDateLike(dtNasc)) missing.push("data de nascimento");
+  if (!hasValidEmail(email)) missing.push("e-mail");
+  if (!hasValidCep(cep)) missing.push("cep");
+  if (!hasMinText(endereco, 3)) missing.push("endereço");
+  if (!hasMinText(numero, 1)) missing.push("número");
+  if (!hasMinText(bairro, 2)) missing.push("bairro");
+  if (!hasMinText(cidade, 2)) missing.push("cidade");
+  if (!hasValidUf(uf)) missing.push("estado (uf)");
+
+  return {
+    ok: missing.length === 0,
+    missing,
+  };
+}
+
 function createVersatilisPatientAdapter() {
   async function buscarPacientePorCpf({ cpf, runtimeCtx = {} }) {
     const cpfDigits = String(cpf || "").replace(/\D+/g, "");
@@ -75,10 +170,10 @@ function createVersatilisPatientAdapter() {
             typeof out.data === "string"
               ? out.data.slice(0, 80)
               : Array.isArray(out.data)
-              ? "array"
-              : out.data
-              ? "object"
-              : "null",
+                ? "array"
+                : out.data
+                  ? "object"
+                  : "null",
         });
       }
 
@@ -185,6 +280,10 @@ function createVersatilisPatientAdapter() {
 
     temPlano({ plansCod, planKey, runtimeCtx = {} }) {
       return hasPlanKey(plansCod, planKey, runtimeCtx);
+    },
+
+    validarCadastroCompleto({ perfil }) {
+      return validatePortalCompleteness(perfil);
     },
   };
 }
