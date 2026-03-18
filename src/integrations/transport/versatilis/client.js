@@ -27,6 +27,47 @@ function mergeTraceMeta(base, extra) {
   };
 }
 
+function sanitizePathForLog(path) {
+  const raw = String(path || "");
+  if (!raw) return raw;
+
+  try {
+    const fakeUrl = new URL(raw, "https://sanitizer.local");
+    const sensitiveKeys = new Set([
+      "cpf",
+      "usercpf",
+      "dtnasc",
+      "datanascimento",
+      "login",
+      "email",
+    ]);
+
+    for (const [key, value] of fakeUrl.searchParams.entries()) {
+      const lower = String(key || "").toLowerCase();
+
+      if (sensitiveKeys.has(lower)) {
+        if (lower === "login") {
+          fakeUrl.searchParams.set(key, "***");
+        } else {
+          fakeUrl.searchParams.set(key, "***");
+        }
+      }
+    }
+
+    return `${fakeUrl.pathname}${fakeUrl.search}`;
+  } catch {
+    return raw
+      .replace(/(CPF=)[^&]+/gi, "$1***")
+      .replace(/(cpf=)[^&]+/gi, "$1***")
+      .replace(/(UserCPF=)[^&]+/gi, "$1***")
+      .replace(/(usercpf=)[^&]+/gi, "$1***")
+      .replace(/(dtNasc=)[^&]+/gi, "$1***")
+      .replace(/(dataNascimento=)[^&]+/gi, "$1***")
+      .replace(/(login=)[^&]+/gi, "$1***")
+      .replace(/(email=)[^&]+/gi, "$1***");
+  }
+}
+
 async function versatilisFetch(
   path,
   {
@@ -111,10 +152,12 @@ async function versatilisFetch(
       ? "EXPECTED_EMPTY_RESULT"
       : "API_REJECTED";
 
+  const safePath = sanitizePathForLog(path);
+
   const baseLog = {
     rid,
     method,
-    path,
+    path: safePath,
     status: r.status,
     ms,
     query: safeQuery,
