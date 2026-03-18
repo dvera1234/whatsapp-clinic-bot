@@ -28,7 +28,15 @@ function pushIfMissing(list, condition, fieldName) {
   if (condition) list.push(fieldName);
 }
 
-function isSupportedProvider(value) {
+function isSupportedPatientProvider(value) {
+  return ["versatilis"].includes(value);
+}
+
+function isSupportedPortalProvider(value) {
+  return ["versatilis"].includes(value);
+}
+
+function isSupportedSchedulingProvider(value) {
   return ["versatilis", "google_calendar"].includes(value);
 }
 
@@ -81,15 +89,15 @@ export function buildTenantRuntime(tenantConfig = {}) {
 
   pushIfMissing(missing, !tenantId, "tenantId");
 
-  if (!isSupportedProvider(patientProvider)) {
+  if (!isSupportedPatientProvider(patientProvider)) {
     invalid.push("integrations.patientProvider");
   }
 
-  if (!isSupportedProvider(portalProvider)) {
+  if (!isSupportedPortalProvider(portalProvider)) {
     invalid.push("integrations.portalProvider");
   }
 
-  if (!isSupportedProvider(schedulingProvider)) {
+  if (!isSupportedSchedulingProvider(schedulingProvider)) {
     invalid.push("integrations.schedulingProvider");
   }
 
