@@ -36,13 +36,14 @@ function readPositiveIntEnv(name, fallback) {
 }
 
 function isDebugEnabled() {
-  const enabled = String(process.env.ENABLE_DEBUG || "").trim() === "1";
-  const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
-  return enabled && (nodeEnv === "development" || nodeEnv === "test");
+  return String(process.env.ENABLE_DEBUG || "").trim() === "1";
 }
 
 function isDebugVersaShapeEnabled() {
-  return isDebugEnabled() && String(process.env.DEBUG_VERSA_SHAPE || "").trim() === "1";
+  return (
+    isDebugEnabled() &&
+    String(process.env.DEBUG_VERSA_SHAPE || "").trim() === "1"
+  );
 }
 
 const PORT = process.env.PORT || 3000;
