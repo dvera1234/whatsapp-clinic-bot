@@ -1,14 +1,14 @@
-import { assertSchedulingAdapter } from "../contracts/schedulingAdapter.contract.js";
-import { createVersatilisSchedulingAdapter } from "../providers/versatilis/scheduling/versatilisSchedulingAdapter.js";
+import { assertPatientAdapter } from "../contracts/patientAdapter.contract.js";
+import { createVersatilisPatientAdapter } from "../providers/versatilis/patient/versatilisPatientAdapter.js";
 
-function createSchedulingAdapter(runtime = {}) {
-  const provider = String(runtime?.providers?.schedulingProvider || "").trim();
+function createPatientAdapter(runtime = {}) {
+  const provider = String(runtime?.providers?.patientProvider || "").trim();
 
   if (provider === "versatilis") {
-    return assertSchedulingAdapter(createVersatilisSchedulingAdapter(runtime));
+    return assertPatientAdapter(createVersatilisPatientAdapter(runtime));
   }
 
-  throw new Error(`Unsupported scheduling provider: ${provider}`);
+  throw new Error(`Unsupported patient provider: ${provider}`);
 }
 
-export { createSchedulingAdapter };
+export { createPatientAdapter };
