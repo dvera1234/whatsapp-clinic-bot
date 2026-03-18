@@ -5,7 +5,7 @@ function createSchedulingAdapter(runtime = {}) {
   const provider = String(runtime?.providers?.schedulingProvider || "").trim();
 
   if (provider === "versatilis") {
-    return assertSchedulingAdapter(createVersatilisSchedulingAdapter(runtime));
+    return assertSchedulingAdapter(createVersatilisSchedulingAdapter());
   }
 
   throw new Error(`Unsupported scheduling provider: ${provider}`);
