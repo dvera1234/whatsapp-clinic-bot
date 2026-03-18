@@ -1000,19 +1000,17 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       });
 
       if (!codUsuario) {
-        // ✅ INÍCIO CORRETO DO CADASTRO NOVO
-      
         await updateSession(tenantId, phone, (s) => {
           s.portal = s.portal || {};
           s.portal.exists = false;
           s.portal.form = s.portal.form || {};
-          s.portal.form.cpf = cpfDigits;
+          s.portal.form.cpf = cpf;
         });
       
         await sendText({
           tenantId,
           to: phone,
-          body: "Perfeito! Vamos fazer seu cadastro 😊\n\nDigite seu *nome completo*:",
+          body: "Perfeito! Vamos fazer seu cadastro 😊\n\nDigite seu nome completo:",
           phoneNumberIdFallback: effectivePhoneNumberId,
         });
       
