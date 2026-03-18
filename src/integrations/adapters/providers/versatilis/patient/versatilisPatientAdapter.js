@@ -40,10 +40,7 @@ function hasDateLike(value) {
   const v = readString(value);
   if (!v) return false;
 
-  return (
-    /^\d{2}\/\d{2}\/\d{4}$/.test(v) ||
-    /^\d{4}-\d{2}-\d{2}/.test(v)
-  );
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(v) || /^\d{4}-\d{2}-\d{2}/.test(v);
 }
 
 function pickFirst(obj, keys = []) {
@@ -56,10 +53,28 @@ function pickFirst(obj, keys = []) {
   return "";
 }
 
+function resolveProfileUF(perfil = {}) {
+  return pickFirst(perfil, [
+    "UF",
+    "Uf",
+    "uf",
+    "EstadoUF",
+    "estadoUf",
+    "estadoUF",
+    "SiglaUF",
+    "siglaUf",
+    "siglaUF",
+    "CdUF",
+    "cdUf",
+    "cdUF",
+  ]);
+}
+
 function validatePortalCompleteness(perfil = {}) {
   const missing = [];
 
   const nome = pickFirst(perfil, ["Nome", "nome"]);
+  const cpf = pickFirst(perfil, ["CPF", "Cpf", "cpf"]);
   const dtNasc = pickFirst(perfil, [
     "DtNasc",
     "DataNascimento",
@@ -68,6 +83,7 @@ function validatePortalCompleteness(perfil = {}) {
     "dataNascimento",
   ]);
   const email = pickFirst(perfil, ["Email", "email"]);
+  const celular = pickFirst(perfil, ["Celular", "celular"]);
   const cep = pickFirst(perfil, ["CEP", "Cep", "cep"]);
   const endereco = pickFirst(perfil, [
     "Endereco",
@@ -79,24 +95,19 @@ function validatePortalCompleteness(perfil = {}) {
   const numero = pickFirst(perfil, ["Numero", "Número", "numero"]);
   const bairro = pickFirst(perfil, ["Bairro", "bairro"]);
   const cidade = pickFirst(perfil, ["Cidade", "cidade"]);
-  const uf = pickFirst(perfil, [
-    "UF",
-    "Uf",
-    "Estado",
-    "estado",
-    "SiglaUF",
-    "siglaUf",
-  ]);
+  const uf = resolveProfileUF(perfil);
 
   if (!hasMinText(nome, 5)) missing.push("nome completo");
+  if (onlyDigits(cpf).length !== 11) missing.push("CPF");
   if (!hasDateLike(dtNasc)) missing.push("data de nascimento");
   if (!hasValidEmail(email)) missing.push("e-mail");
+  if (onlyDigits(celular).length < 10) missing.push("celular");
   if (!hasValidCep(cep)) missing.push("cep");
   if (!hasMinText(endereco, 3)) missing.push("endereço");
   if (!hasMinText(numero, 1)) missing.push("número");
   if (!hasMinText(bairro, 2)) missing.push("bairro");
   if (!hasMinText(cidade, 2)) missing.push("cidade");
-  if (!hasValidUf(uf)) missing.push("estado (uf)");
+  if (!hasValidUf(uf)) missing.push("estado (UF)");
 
   return {
     ok: missing.length === 0,
@@ -269,6 +280,34 @@ function createVersatilisPatientAdapter() {
 
       if (!out.ok || !out.data) {
         return { ok: false, data: null };
+      }
+
+      if (isDebugVersaShapeEnabled() && typeof out.data === "object") {
+        const topLevelKeys =
+          !Array.isArray(out.data) && out.data
+            ? Object.keys(out.data).slice(0, 50)
+            : [];
+
+        debugLog("VERSA_PROFILE_SHAPE", {
+          tenantId: ctx.tenantId,
+          traceId: ctx.traceId,
+          codUsuario: id,
+          isArray: Array.isArray(out.data),
+          topLevelKeys,
+          hasUF: Object.prototype.hasOwnProperty.call(out.data || {}, "UF"),
+          hasUf: Object.prototype.hasOwnProperty.call(out.data || {}, "Uf"),
+          hasuf: Object.prototype.hasOwnProperty.call(out.data || {}, "uf"),
+          hasEstadoUF: Object.prototype.hasOwnProperty.call(
+            out.data || {},
+            "EstadoUF"
+          ),
+          hasSiglaUF: Object.prototype.hasOwnProperty.call(
+            out.data || {},
+            "SiglaUF"
+          ),
+          hasCdUF: Object.prototype.hasOwnProperty.call(out.data || {}, "CdUF"),
+          resolvedUF: hasValidUf(resolveProfileUF(out.data)),
+        });
       }
 
       return { ok: true, data: out.data };
