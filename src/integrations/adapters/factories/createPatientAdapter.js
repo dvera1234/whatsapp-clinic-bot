@@ -5,7 +5,7 @@ function createPatientAdapter(runtime = {}) {
   const provider = String(runtime?.providers?.patientProvider || "").trim();
 
   if (provider === "versatilis") {
-    return assertPatientAdapter(createVersatilisPatientAdapter(runtime));
+    return assertPatientAdapter(createVersatilisPatientAdapter());
   }
 
   throw new Error(`Unsupported patient provider: ${provider}`);
