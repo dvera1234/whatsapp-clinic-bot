@@ -15,7 +15,10 @@ import { sendText, sendButtons } from "../whatsapp/sender.js";
 
 import { MSG, PLAN_KEYS, FLOW_RESET_CODE } from "../config/constants.js";
 import { buildTenantRuntime } from "../tenants/buildTenantRuntime.js";
-import { createClinicAdapter } from "../integrations/adapters/clinicAdapter.js";
+
+import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
+import { createPortalAdapter } from "../integrations/adapters/factories/createPortalAdapter.js";
+import { createSchedulingAdapter } from "../integrations/adapters/factories/createSchedulingAdapter.js";
 
 import {
   onlyDigits,
@@ -65,12 +68,12 @@ async function handleInbound({
 
   const tenantRuntime = buildTenantRuntime(tenantConfig);
 
-  if (!tenantRuntime.ok) {
+  if (!tenantRuntime?.ok || !tenantRuntime?.value) {
     audit("TENANT_CONFIG_INVALID", {
       tenantId,
       traceId,
       tracePhone: maskPhone(phone),
-      missingFields: tenantRuntime.missing,
+      missingFields: tenantRuntime?.missing || [],
       blockedBeforeFlow: true,
     });
 
@@ -82,7 +85,13 @@ async function handleInbound({
     return;
   }
 
-  const clinicAdapter = createClinicAdapter({ tenantConfig });
+  const runtime = tenantRuntime.value;
+
+  const adapters = {
+    patient: createPatientAdapter(runtime),
+    portal: createPortalAdapter(runtime),
+    scheduling: createSchedulingAdapter(runtime),
+  };
 
   const {
     codColaborador,
@@ -92,7 +101,7 @@ async function handleInbound({
     codPlanoMedSeniorSp,
     portalUrl,
     supportWa,
-  } = tenantRuntime.value;
+  } = runtime;
 
   const runtimeCtx = {
     tenantId,
@@ -303,7 +312,7 @@ async function handleInbound({
     }
 
     await finishWizardAndGoToDates({
-      clinicAdapter,
+      schedulingAdapter: adapters.scheduling,
       tenantId,
       tenantConfig,
       phone,
@@ -338,7 +347,7 @@ async function handleInbound({
     }
 
     const out = await fetchSlotsDoDia({
-      clinicAdapter,
+      schedulingAdapter: adapters.scheduling,
       tenantId,
       tenantConfig,
       traceId,
@@ -388,7 +397,7 @@ async function handleInbound({
     }
 
     const shown = await showNextDates({
-      clinicAdapter,
+      schedulingAdapter: adapters.scheduling,
       tenantId,
       tenantConfig,
       phone,
@@ -452,7 +461,7 @@ async function handleInbound({
       }
 
       const shown = await showNextDates({
-        clinicAdapter,
+        schedulingAdapter: adapters.scheduling,
         tenantId,
         tenantConfig,
         phone,
@@ -640,7 +649,7 @@ async function handleInbound({
           }
 
           const outSlots = await fetchSlotsDoDia({
-            clinicAdapter,
+            schedulingAdapter: adapters.scheduling,
             tenantId,
             tenantConfig,
             traceId,
@@ -667,7 +676,7 @@ async function handleInbound({
           return;
         }
 
-        const out = await clinicAdapter.confirmarAgendamento({
+        const out = await adapters.scheduling.confirmarAgendamento({
           tenantId,
           tenantConfig,
           payload,
@@ -976,7 +985,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         cpfMasked: "***",
       });
 
-      const codUsuario = await clinicAdapter.buscarPacientePorCpfComFallback({
+      const codUsuario = await adapters.patient.buscarPacientePorCpfComFallback({
         cpf,
         runtimeCtx,
       });
@@ -1020,7 +1029,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         sess.portal.codUsuario = codUsuario;
       });
 
-      const prof = await clinicAdapter.buscarPerfilPaciente({
+      const prof = await adapters.patient.buscarPerfilPaciente({
         codUsuario,
         runtimeCtx,
       });
@@ -1105,24 +1114,24 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         return;
       }
 
-      const v = clinicAdapter.validarCadastroCompleto({
+      const v = adapters.patient.validarCadastroCompleto({
         perfil: prof.data,
       });
 
       if (v.ok) {
         const sCurrent = await getSession(tenantId, phone);
         const flowPlanKey = sCurrent?.booking?.planoKey || PLAN_KEYS.PARTICULAR;
-        const plansCod = clinicAdapter.normalizarPlanosAtivos({
+        const plansCod = adapters.patient.normalizarPlanosAtivos({
           perfil: prof.data,
         });
 
-        const hasParticular = clinicAdapter.temPlano({
+        const hasParticular = adapters.patient.temPlano({
           plansCod,
           planKey: PLAN_KEYS.PARTICULAR,
           runtimeCtx,
         });
 
-        const hasMed = clinicAdapter.temPlano({
+        const hasMed = adapters.patient.temPlano({
           plansCod,
           planKey: PLAN_KEYS.MEDSENIOR_SP,
           runtimeCtx,
@@ -1135,7 +1144,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
         if (hasParticular && !hasMed && flowPlanKey === PLAN_KEYS.PARTICULAR) {
           await finishWizardAndGoToDates({
-            clinicAdapter,
+            schedulingAdapter: adapters.scheduling,
             tenantId,
             tenantConfig,
             phone,
@@ -1152,7 +1161,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
         if (!hasParticular && hasMed && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
           await finishWizardAndGoToDates({
-            clinicAdapter,
+            schedulingAdapter: adapters.scheduling,
             tenantId,
             tenantConfig,
             phone,
@@ -1593,7 +1602,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
 
       const sUpdated = await getSession(tenantId, phone);
 
-      const up = await clinicAdapter.criarCadastroCompleto({
+      const up = await adapters.portal.criarCadastroCompleto({
         form: sUpdated?.portal?.form || {},
         traceMeta: {
           tenantId,
@@ -1615,13 +1624,13 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         return;
       }
 
-      const prof2 = await clinicAdapter.buscarPerfilPaciente({
+      const prof2 = await adapters.patient.buscarPerfilPaciente({
         codUsuario: up.codUsuario,
         runtimeCtx,
       });
 
       const v2 = prof2.ok
-        ? clinicAdapter.validarCadastroCompleto({ perfil: prof2.data })
+        ? adapters.patient.validarCadastroCompleto({ perfil: prof2.data })
         : { ok: false, missing: ["dados do cadastro"] };
 
       if (!v2.ok) {
@@ -1650,7 +1659,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       await clearTransientPortalData(tenantId, phone);
 
       await finishWizardAndGoToDates({
-        clinicAdapter,
+        schedulingAdapter: adapters.scheduling,
         tenantId,
         tenantConfig,
         phone,
@@ -2204,7 +2213,7 @@ function isSlotAllowed(isoDate, hhmm) {
 }
 
 async function fetchSlotsDoDia({
-  clinicAdapter,
+  schedulingAdapter,
   tenantId,
   tenantConfig,
   traceId = null,
@@ -2213,7 +2222,7 @@ async function fetchSlotsDoDia({
   isoDate,
   phone = "",
 }) {
-  const out = await clinicAdapter.buscarSlotsDoDia({
+  const out = await schedulingAdapter.buscarSlotsDoDia({
     tenantId,
     tenantConfig,
     traceId,
@@ -2239,7 +2248,7 @@ async function fetchSlotsDoDia({
 }
 
 async function fetchNextAvailableDates({
-  clinicAdapter,
+  schedulingAdapter,
   tenantId,
   tenantConfig,
   traceId = null,
@@ -2265,7 +2274,7 @@ async function fetchNextAvailableDates({
     )}-${String(d.getDate()).padStart(2, "0")}`;
 
     const out = await fetchSlotsDoDia({
-      clinicAdapter,
+      schedulingAdapter,
       tenantId,
       tenantConfig,
       traceId,
@@ -2290,7 +2299,7 @@ function formatBRFromISO(isoDate) {
 }
 
 async function showNextDates({
-  clinicAdapter,
+  schedulingAdapter,
   tenantId,
   tenantConfig,
   phone,
@@ -2300,7 +2309,7 @@ async function showNextDates({
   traceId = null,
 }) {
   const dates = await fetchNextAvailableDates({
-    clinicAdapter,
+    schedulingAdapter,
     tenantId,
     tenantConfig,
     traceId,
@@ -2456,7 +2465,7 @@ function nextWizardStateFromMissing(missingList) {
 }
 
 async function finishWizardAndGoToDates({
-  clinicAdapter,
+  schedulingAdapter,
   tenantId,
   tenantConfig,
   phone,
@@ -2468,7 +2477,7 @@ async function finishWizardAndGoToDates({
   codPlanoParticular,
   codPlanoMedSeniorSp,
 }) {
-  const isRetorno = await clinicAdapter.verificarRetorno30Dias({
+  const isRetorno = await schedulingAdapter.verificarRetorno30Dias({
     codUsuario,
     runtimeCtx: {
       tenantId,
@@ -2492,7 +2501,7 @@ async function finishWizardAndGoToDates({
   });
 
   const shown = await showNextDates({
-    clinicAdapter,
+    schedulingAdapter,
     tenantId,
     tenantConfig,
     phone,
