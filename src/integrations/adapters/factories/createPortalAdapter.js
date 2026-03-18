@@ -5,7 +5,7 @@ function createPortalAdapter(runtime = {}) {
   const provider = String(runtime?.providers?.portalProvider || "").trim();
 
   if (provider === "versatilis") {
-    return assertPortalAdapter(createVersatilisPortalAdapter(runtime));
+    return assertPortalAdapter(createVersatilisPortalAdapter());
   }
 
   throw new Error(`Unsupported portal provider: ${provider}`);
