@@ -1000,24 +1000,23 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       });
 
       if (!codUsuario) {
-        const prefill = buildSafeSupportPrefill({
-          tenantId,
-          traceId,
-          phone,
-          reason: "Paciente sem cadastro localizável automaticamente no sistema.",
+        // ✅ INÍCIO CORRETO DO CADASTRO NOVO
+      
+        await updateSession(tenantId, phone, (s) => {
+          s.portal = s.portal || {};
+          s.portal.exists = false;
+          s.portal.form = s.portal.form || {};
+          s.portal.form.cpf = cpfDigits;
         });
-
-        const link = makeWaLink(supportWa, prefill);
-
+      
         await sendText({
           tenantId,
           to: phone,
-          body: `⚠️ Não consegui localizar seu cadastro automaticamente.\n\n✅ Para prosseguir com segurança, fale com nossa equipe:\n${link}`,
+          body: "Perfeito! Vamos fazer seu cadastro 😊\n\nDigite seu *nome completo*:",
           phoneNumberIdFallback: effectivePhoneNumberId,
         });
-
-        await clearTransientPortalData(tenantId, phone);
-        await setState(tenantId, phone, "MAIN");
+      
+        await setState(tenantId, phone, "WZ_NOME");
         return;
       }
 
