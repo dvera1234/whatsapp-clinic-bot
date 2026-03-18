@@ -1,7 +1,11 @@
 import crypto from "crypto";
-import { debugLog, techLog } from "../../observability/audit.js";
-import { canLog, log, logRateLimited } from "../../observability/logger.js";
-import { fetchWithTimeout } from "../../utils/time.js";
+import { debugLog, techLog } from "../../../observability/audit.js";
+import {
+  canLog,
+  log,
+  logRateLimited,
+} from "../../../observability/logger.js";
+import { fetchWithTimeout } from "../../../utils/time.js";
 import { versatilisGetToken } from "./auth.js";
 import { sanitizeQueryForLog } from "./queryLog.js";
 
@@ -92,23 +96,20 @@ async function versatilisFetch(
     data = text;
   }
 
-  const normalizedText =
-    typeof data === "string" ? data.toLowerCase() : "";
+  const normalizedText = typeof data === "string" ? data.toLowerCase() : "";
 
   const isExpected404 =
     r.status === 404 &&
-    (
-      normalizedText.includes("não foram encontradas") ||
+    (normalizedText.includes("não foram encontradas") ||
       normalizedText.includes("não foram encontrados") ||
       normalizedText.includes("usuário não encontrado") ||
-      normalizedText.includes("agendamento não encontrado")
-    );
+      normalizedText.includes("agendamento não encontrado"));
 
   const technicalResult = r.ok
     ? "API_ACCEPTED"
     : isExpected404
-    ? "EXPECTED_EMPTY_RESULT"
-    : "API_REJECTED";
+      ? "EXPECTED_EMPTY_RESULT"
+      : "API_REJECTED";
 
   const baseLog = {
     rid,
@@ -157,8 +158,8 @@ async function versatilisFetch(
       dataType: Array.isArray(data)
         ? "array"
         : data === null
-        ? "null"
-        : typeof data,
+          ? "null"
+          : typeof data,
       responseTopLevelKeys,
     });
   }
