@@ -12,26 +12,77 @@ import { resolveTenant } from "../tenants/resolveTenant.js";
 
 const router = express.Router();
 
+const WEBHOOK_MESSAGE_DEDUP_TTL_SECONDS = 300;
+const MAX_INBOUND_TEXT_LENGTH = 500;
+
+function safeString(value) {
+  return String(value ?? "").trim();
+}
+
+function buildTraceId() {
+  return crypto.randomUUID();
+}
+
 async function isDuplicateWebhookMessage(tenantId, messageId) {
-  const safeTenantId = String(tenantId || "").trim();
-  const safeMessageId = String(messageId || "").trim();
+  const safeTenantId = safeString(tenantId);
+  const safeMessageId = safeString(messageId);
 
   if (!safeTenantId || !safeMessageId) {
     return false;
   }
 
   const key = `wa:msg:${safeTenantId}:${safeMessageId}`;
-  const created = await redis.set(key, "1", { ex: 300, nx: true });
+  const created = await redis.set(key, "1", {
+    ex: WEBHOOK_MESSAGE_DEDUP_TTL_SECONDS,
+    nx: true,
+  });
+
   return !created;
 }
 
 function normalizeInboundText(msg) {
-  const textBody = String(msg?.text?.body || "").trim();
-  const buttonReplyId = String(msg?.interactive?.button_reply?.id || "").trim();
-  const listReplyId = String(msg?.interactive?.list_reply?.id || "").trim();
+  const textBody = safeString(msg?.text?.body);
+  const buttonReplyId = safeString(msg?.interactive?.button_reply?.id);
+  const listReplyId = safeString(msg?.interactive?.list_reply?.id);
 
   const value = buttonReplyId || listReplyId || textBody;
-  return value.length > 500 ? value.slice(0, 500) : value;
+  return value.length > MAX_INBOUND_TEXT_LENGTH
+    ? value.slice(0, MAX_INBOUND_TEXT_LENGTH)
+    : value;
+}
+
+function getWebhookCore(req) {
+  const body = req?.body;
+  const entry = body?.entry?.[0];
+  const change = entry?.changes?.[0];
+  const value = change?.value;
+  const msg = value?.messages?.[0];
+
+  return { body, entry, change, value, msg };
+}
+
+function buildWebhookContext({
+  tenantId,
+  tenantConfig,
+  traceId,
+  phoneNumberId,
+}) {
+  return {
+    tenantId,
+    tenantConfig,
+    traceId,
+    phoneNumberId,
+    LGPD_TEXT_VERSION,
+    LGPD_TEXT_HASH,
+  };
+}
+
+function logWebhookIgnored(event, payload = {}) {
+  audit(event, {
+    tenantId: null,
+    traceId: null,
+    ...payload,
+  });
 }
 
 router.get("/webhook", (req, res) => {
@@ -48,6 +99,7 @@ router.get("/webhook", (req, res) => {
 
 router.post("/webhook", async (req, res) => {
   let traceId = null;
+  let tenantId = null;
 
   try {
     if (!isValidMetaSignature(req)) {
@@ -60,14 +112,12 @@ router.post("/webhook", async (req, res) => {
       return res.sendStatus(403);
     }
 
-    // ACK rápido para a Meta
     res.sendStatus(200);
 
-    const body = req.body;
+    const { body, entry, change, value, msg } = getWebhookCore(req);
+
     if (!body || body.object !== "whatsapp_business_account") {
-      audit("WEBHOOK_IGNORED_NON_WABA", {
-        tenantId: null,
-        traceId: null,
+      logWebhookIgnored("WEBHOOK_IGNORED_NON_WABA", {
         ipMasked: maskIp(req.ip),
         hasBody: !!body,
         objectType: body?.object || null,
@@ -75,11 +125,8 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    const entry = body?.entry?.[0];
     if (!entry || !Array.isArray(entry.changes) || entry.changes.length === 0) {
-      audit("WEBHOOK_INVALID_SHAPE", {
-        tenantId: null,
-        traceId: null,
+      logWebhookIgnored("WEBHOOK_INVALID_SHAPE", {
         ipMasked: maskIp(req.ip),
         hasBody: !!body,
         hasEntry: !!entry,
@@ -87,16 +134,13 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    const change = entry.changes[0];
     if (
       !change ||
       change.field !== "messages" ||
-      !change.value ||
-      typeof change.value !== "object"
+      !value ||
+      typeof value !== "object"
     ) {
-      audit("WEBHOOK_INVALID_CHANGE_SHAPE", {
-        tenantId: null,
-        traceId: null,
+      logWebhookIgnored("WEBHOOK_INVALID_CHANGE_SHAPE", {
         ipMasked: maskIp(req.ip),
         hasChange: !!change,
         field: change?.field || null,
@@ -104,25 +148,19 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    const value = change.value;
-    const msg = value?.messages?.[0];
-
-    // Pode ser status update ou outro evento sem mensagem inbound
     if (!msg) {
-      audit("WEBHOOK_IGNORED_WITHOUT_MESSAGE", {
-        tenantId: null,
-        traceId: null,
+      logWebhookIgnored("WEBHOOK_IGNORED_WITHOUT_MESSAGE", {
         ipMasked: maskIp(req.ip),
         hasStatuses: Array.isArray(value?.statuses) && value.statuses.length > 0,
       });
       return;
     }
 
-    traceId = crypto.randomUUID();
+    traceId = buildTraceId();
 
-    const from = String(msg?.from || "").trim();
-    const messageId = String(msg?.id || "").trim();
-    const phoneNumberId = String(value?.metadata?.phone_number_id || "").trim();
+    const from = safeString(msg?.from);
+    const messageId = safeString(msg?.id);
+    const phoneNumberId = safeString(value?.metadata?.phone_number_id);
 
     if (!from) {
       audit("WEBHOOK_IGNORED_MISSING_FROM", {
@@ -136,20 +174,21 @@ router.post("/webhook", async (req, res) => {
 
     const tenantResolved = resolveTenant(phoneNumberId);
 
-    if (!tenantResolved.ok) {
+    if (!tenantResolved?.ok) {
       audit("WEBHOOK_TENANT_NOT_RESOLVED", {
-        tenantId: tenantResolved.tenantId || null,
+        tenantId: tenantResolved?.tenantId || null,
         traceId,
         phoneMasked: maskPhone(from),
         phoneNumberIdPresent: !!phoneNumberId,
         phoneNumberId: phoneNumberId || null,
-        reason: tenantResolved.reason,
+        reason: tenantResolved?.reason || "UNKNOWN",
         blockedBeforeFlow: true,
       });
       return;
     }
 
-    const { tenantId, tenantConfig } = tenantResolved;
+    tenantId = tenantResolved.tenantId;
+    const tenantConfig = tenantResolved.tenantConfig;
 
     if (await isDuplicateWebhookMessage(tenantId, messageId)) {
       audit("WEBHOOK_DUPLICATE_IGNORED", {
@@ -177,14 +216,12 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    const context = {
+    const context = buildWebhookContext({
       tenantId,
       tenantConfig,
       traceId,
       phoneNumberId,
-      LGPD_TEXT_VERSION,
-      LGPD_TEXT_HASH,
-    };
+    });
 
     audit("WEBHOOK_INBOUND", {
       tenantId,
@@ -193,7 +230,8 @@ router.post("/webhook", async (req, res) => {
       state: currentState,
       messageHidden: true,
       hasInteractiveReply:
-        !!msg?.interactive?.button_reply?.id || !!msg?.interactive?.list_reply?.id,
+        !!msg?.interactive?.button_reply?.id ||
+        !!msg?.interactive?.list_reply?.id,
       hasTextBody: !!msg?.text?.body,
       phoneNumberIdPresent: !!phoneNumberId,
       messageIdPresent: !!messageId,
@@ -207,7 +245,7 @@ router.post("/webhook", async (req, res) => {
     });
   } catch (err) {
     errLog("WEBHOOK_POST_ERROR", {
-      tenantId: null,
+      tenantId,
       traceId,
       error: String(err?.message || err),
       stackPreview: err?.stack ? String(err.stack).slice(0, 500) : null,
