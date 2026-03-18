@@ -1,13 +1,11 @@
 import { assertPortalAdapter } from "../contracts/portalAdapter.contract.js";
 import { createVersatilisPortalAdapter } from "../providers/versatilis/portal/versatilisPortalAdapter.js";
 
-function createPortalAdapter({ tenantConfig }) {
-  const provider = String(
-    tenantConfig?.integrations?.portalProvider || ""
-  ).trim();
+function createPortalAdapter(runtime = {}) {
+  const provider = String(runtime?.providers?.portalProvider || "").trim();
 
   if (provider === "versatilis") {
-    return assertPortalAdapter(createVersatilisPortalAdapter({ tenantConfig }));
+    return assertPortalAdapter(createVersatilisPortalAdapter(runtime));
   }
 
   throw new Error(`Unsupported portal provider: ${provider}`);
