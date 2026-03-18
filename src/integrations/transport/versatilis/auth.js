@@ -9,14 +9,21 @@ function readString(value) {
   return v || "";
 }
 
-function normalizeBaseUrl(baseUrl) {
-  const s = readString(baseUrl);
+function sanitizeVersaBase(value) {
+  let s = readString(value);
+
   if (!s) return "";
-  return s.endsWith("/") ? s.slice(0, -1) : s;
+
+  s = s.replace(/\s+/g, "");
+  s = s.replace(/\/+$/, "");
+  s = s.replace(/\/api\/.*$/i, "");
+  s = s.replace(/\/api$/i, "");
+
+  return s;
 }
 
 function resolveVersatilisConfig(tenantConfig = {}) {
-  const baseUrl = normalizeBaseUrl(
+  const baseUrl = sanitizeVersaBase(
     tenantConfig?.integrations?.versatilis?.baseUrl
   );
   const user = readString(tenantConfig?.integrations?.versatilis?.user);
@@ -44,6 +51,13 @@ function tokenCacheKey(tenantId, baseUrl, user) {
   return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
+function maskToken(token) {
+  if (!token || typeof token !== "string") return "***";
+  return token.length > 16
+    ? `${token.slice(0, 6)}...${token.slice(-4)}`
+    : "***";
+}
+
 export async function versatilisGetToken({ tenantId, tenantConfig }) {
   const { baseUrl, user, pass } = resolveVersatilisConfig(tenantConfig);
 
@@ -51,28 +65,43 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
   const now = Date.now();
   const cached = tokenCache.get(cacheKey);
 
-  if (cached && cached.token && cached.expiresAt > now + 15_000) {
+  if (cached && cached.token && cached.expiresAt > now + 30_000) {
     return cached.token;
   }
 
-  const url = `${baseUrl}/Token`;
-  const body =
-    `username=${encodeURIComponent(user)}` +
-    `&password=${encodeURIComponent(pass)}` +
-    `&grant_type=password`;
+  const body = new URLSearchParams({
+    username: user,
+    password: pass,
+    grant_type: "password",
+  });
 
-  const response = await fetchWithTimeout(
-    url,
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "text/plain",
+  let response;
+
+  try {
+    response = await fetchWithTimeout(
+      `${baseUrl}/Token`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body,
       },
-      body,
-    },
-    15000
-  );
+      15000
+    );
+  } catch (err) {
+    techLog("VERSATILIS_TOKEN_FETCH_TRANSPORT_ERROR", {
+      tenantId: tenantId || null,
+      baseUrlConfigured: !!baseUrl,
+      error: String(err?.message || err),
+      cause: err?.cause ? String(err.cause?.message || err.cause) : null,
+    });
+
+    const e = new Error("Falha de transporte ao obter token Versatilis.");
+    e.code = "VERSATILIS_TOKEN_FETCH_TRANSPORT_ERROR";
+    throw e;
+  }
 
   const text = await response.text().catch(() => "");
   let data;
@@ -129,13 +158,13 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
 
   tokenCache.set(cacheKey, {
     token,
-    expiresAt: now + Math.max(60, expiresIn - 60) * 1000,
+    expiresAt: now + Math.max(60, expiresIn) * 1000,
   });
 
   debugLog("VERSATILIS_TOKEN_FETCH_OK", {
     tenantId: tenantId || null,
     expiresIn,
-    cached: true,
+    tokenMasked: maskToken(token),
   });
 
   return token;
