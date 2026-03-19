@@ -113,5 +113,13 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
           "",
       },
     },
+
+    providers: {
+      provider_default: {
+        baseUrl: defaultVersatilisProvider?.baseUrl || "",
+        user: defaultVersatilisProvider?.username || "",
+        pass: defaultVersatilisProvider?.passwordEncrypted || "",
+      },
+    },
   };
 }
