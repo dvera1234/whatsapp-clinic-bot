@@ -172,7 +172,7 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    const tenantResolved = resolveTenant(phoneNumberId);
+    const tenantResolved = await resolveTenant(phoneNumberId);
 
     if (!tenantResolved?.ok) {
       audit("WEBHOOK_TENANT_NOT_RESOLVED", {
