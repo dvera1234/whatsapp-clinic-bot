@@ -64,26 +64,26 @@ function sanitizeSessionForSave(s) {
     lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
     booking: s?.booking
       ? {
-          planoKey: s.booking?.planoKey ?? null,
-          codColaborador: Number(s.booking?.codColaborador || 0) || null,
-          codUsuario: Number(s.booking?.codUsuario || 0) || null,
-          isoDate: s.booking?.isoDate ?? null,
+          planKey: s.booking?.planKey ?? null,
+          practitionerId: Number(s.booking?.practitionerId || 0) || null,
+          patientId: Number(s.booking?.patientId || 0) || null,
+          appointmentDate: s.booking?.appointmentDate ?? null,
           pageIndex: Number(s.booking?.pageIndex || 0) || 0,
           slots: Array.isArray(s.booking?.slots)
             ? s.booking.slots
                 .map((x) => ({
-                  codHorario: Number(x?.codHorario || 0) || null,
-                  hhmm: x?.hhmm ?? null,
+                  slotId: Number(x?.slotId || 0) || null,
+                  time: x?.time ?? null,
                 }))
-                .filter((x) => x.codHorario && x.hhmm)
+                .filter((x) => x.slotId && x.time)
             : [],
-          isRetorno: !!s.booking?.isRetorno,
+          isReturn: !!s.booking?.isReturn,
         }
       : null,
     portal: s?.portal
       ? {
           step: s.portal?.step ?? null,
-          codUsuario: Number(s.portal?.codUsuario || 0) || null,
+          patientId: Number(s.portal?.patientId || 0) || null,
           exists: !!s.portal?.exists,
           form: s.portal?.form ?? {},
           missing: Array.isArray(s.portal?.missing) ? s.portal.missing : [],
@@ -92,7 +92,7 @@ function sanitizeSessionForSave(s) {
       : null,
     pending: s?.pending
       ? {
-          codHorario: Number(s.pending?.codHorario || 0) || null,
+          slotId: Number(s.pending?.slotId || 0) || null,
         }
       : null,
   };
@@ -196,9 +196,9 @@ async function getSession(tenantId, phone) {
   return ensureSession(tenantId, phone);
 }
 
-async function setBookingPlan(tenantId, phone, planoKey) {
+async function setBookingPlan(tenantId, phone, planKey) {
   return updateSession(tenantId, phone, (s) => {
-    s.booking = { ...(s.booking || {}), planoKey };
+    s.booking = { ...(s.booking || {}), planKey };
   });
 }
 
