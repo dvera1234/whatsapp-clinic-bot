@@ -166,6 +166,14 @@ export function buildTenantRuntime(tenantConfig = {}) {
         patient: patientProvider,
         portal: portalProvider,
         scheduling: schedulingProvider,
+      
+        identity: patientProvider,
+        access: portalProvider,
+        booking: schedulingProvider,
+      
+        patientProvider,
+        portalProvider,
+        schedulingProvider,
       },
       clinic: {
         primaryPractitionerId: codColaborador,
