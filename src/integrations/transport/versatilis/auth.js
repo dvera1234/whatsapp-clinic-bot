@@ -2,14 +2,14 @@ import crypto from "crypto";
 import { fetchWithTimeout } from "../../../utils/time.js";
 import { techLog, debugLog } from "../../../observability/audit.js";
 
-const tokenCache = new Map();
+const accessTokenCache = new Map();
 
 function readString(value) {
   const v = String(value ?? "").trim();
   return v || "";
 }
 
-function sanitizeVersaBase(value) {
+function sanitizeProviderBase(value) {
   let s = readString(value);
 
   if (!s) return "";
@@ -22,32 +22,32 @@ function sanitizeVersaBase(value) {
   return s;
 }
 
-function resolveVersatilisConfig(tenantConfig = {}) {
-  const baseUrl = sanitizeVersaBase(
+function resolveProviderAuthConfig(tenantConfig = {}) {
+  const baseUrl = sanitizeProviderBase(
     tenantConfig?.integrations?.versatilis?.baseUrl
   );
-  const user = readString(tenantConfig?.integrations?.versatilis?.user);
-  const pass = readString(tenantConfig?.integrations?.versatilis?.pass);
+  const username = readString(tenantConfig?.integrations?.versatilis?.user);
+  const password = readString(tenantConfig?.integrations?.versatilis?.pass);
 
   const missing = [];
   if (!baseUrl) missing.push("integrations.versatilis.baseUrl");
-  if (!user) missing.push("integrations.versatilis.user");
-  if (!pass) missing.push("integrations.versatilis.pass");
+  if (!username) missing.push("integrations.versatilis.user");
+  if (!password) missing.push("integrations.versatilis.pass");
 
   if (missing.length) {
     const err = new Error(
-      `Versatilis config incompleta: ${missing.join(", ")}`
+      `Provider auth config incompleta: ${missing.join(", ")}`
     );
-    err.code = "VERSATILIS_CONFIG_INVALID";
+    err.code = "PROVIDER_AUTH_CONFIG_INVALID";
     err.missingFields = missing;
     throw err;
   }
 
-  return { baseUrl, user, pass };
+  return { baseUrl, username, password };
 }
 
-function tokenCacheKey(tenantId, baseUrl, user) {
-  const raw = `${tenantId || ""}|${baseUrl}|${user}`;
+function accessTokenCacheKey(tenantId, baseUrl, username) {
+  const raw = `${tenantId || ""}|${baseUrl}|${username}`;
   return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
@@ -58,20 +58,21 @@ function maskToken(token) {
     : "***";
 }
 
-export async function versatilisGetToken({ tenantId, tenantConfig }) {
-  const { baseUrl, user, pass } = resolveVersatilisConfig(tenantConfig);
+async function getProviderAccessToken({ tenantId, tenantConfig }) {
+  const { baseUrl, username, password } =
+    resolveProviderAuthConfig(tenantConfig);
 
-  const cacheKey = tokenCacheKey(tenantId, baseUrl, user);
+  const cacheKey = accessTokenCacheKey(tenantId, baseUrl, username);
   const now = Date.now();
-  const cached = tokenCache.get(cacheKey);
+  const cached = accessTokenCache.get(cacheKey);
 
   if (cached && cached.token && cached.expiresAt > now + 30_000) {
     return cached.token;
   }
 
   const body = new URLSearchParams({
-    username: user,
-    password: pass,
+    username,
+    password,
     grant_type: "password",
   });
 
@@ -91,15 +92,16 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
       15000
     );
   } catch (err) {
-    techLog("VERSATILIS_TOKEN_FETCH_TRANSPORT_ERROR", {
+    techLog("PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR", {
       tenantId: tenantId || null,
       baseUrlConfigured: !!baseUrl,
       error: String(err?.message || err),
       cause: err?.cause ? String(err.cause?.message || err.cause) : null,
+      provider: "versatilis",
     });
 
-    const e = new Error("Falha de transporte ao obter token Versatilis.");
-    e.code = "VERSATILIS_TOKEN_FETCH_TRANSPORT_ERROR";
+    const e = new Error("Falha de transporte ao obter token do provider.");
+    e.code = "PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR";
     throw e;
   }
 
@@ -113,7 +115,7 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
   }
 
   if (!response.ok) {
-    techLog("VERSATILIS_TOKEN_FETCH_FAILED", {
+    techLog("PROVIDER_ACCESS_TOKEN_FETCH_FAILED", {
       tenantId: tenantId || null,
       status: response.status,
       tokenPath: "/Token",
@@ -122,12 +124,13 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
         : data === null
           ? "null"
           : typeof data,
+      provider: "versatilis",
     });
 
     const err = new Error(
-      `Falha ao obter token Versatilis. HTTP ${response.status}`
+      `Falha ao obter token do provider. HTTP ${response.status}`
     );
-    err.code = "VERSATILIS_TOKEN_FETCH_FAILED";
+    err.code = "PROVIDER_ACCESS_TOKEN_FETCH_FAILED";
     err.httpStatus = response.status;
     throw err;
   }
@@ -139,37 +142,41 @@ export async function versatilisGetToken({ tenantId, tenantConfig }) {
     (typeof data === "string" ? data : null);
 
   if (!token || typeof token !== "string") {
-    techLog("VERSATILIS_TOKEN_INVALID_RESPONSE", {
+    techLog("PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE", {
       tenantId: tenantId || null,
       hasToken: false,
       responseKeys:
         data && typeof data === "object" && !Array.isArray(data)
           ? Object.keys(data).slice(0, 20)
           : [],
+      provider: "versatilis",
     });
 
-    const err = new Error("Resposta de token Versatilis sem token utilizável.");
-    err.code = "VERSATILIS_TOKEN_INVALID_RESPONSE";
+    const err = new Error("Resposta de token do provider sem token utilizável.");
+    err.code = "PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE";
     throw err;
   }
 
   const expiresIn =
     Number(data?.expires_in || data?.expires || 3600) || 3600;
 
-  tokenCache.set(cacheKey, {
+  accessTokenCache.set(cacheKey, {
     token,
     expiresAt: now + Math.max(60, expiresIn) * 1000,
   });
 
-  debugLog("VERSATILIS_TOKEN_FETCH_OK", {
+  debugLog("PROVIDER_ACCESS_TOKEN_FETCH_OK", {
     tenantId: tenantId || null,
     expiresIn,
     tokenMasked: maskToken(token),
+    provider: "versatilis",
   });
 
   return token;
 }
 
-export function clearVersatilisTokenCache() {
-  tokenCache.clear();
+function clearProviderAccessTokenCache() {
+  accessTokenCache.clear();
 }
+
+export { getProviderAccessToken, clearProviderAccessTokenCache };
