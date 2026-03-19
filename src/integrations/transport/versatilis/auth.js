@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { fetchWithTimeout } from "../../../utils/time.js";
 import { techLog, debugLog } from "../../../observability/audit.js";
+import { sanitizeForLog } from "../../../utils/logSanitizer.js";
 
 const accessTokenCache = new Map();
 
@@ -66,6 +67,18 @@ function maskToken(token) {
     : "***";
 }
 
+function maskBaseUrlForLog(baseUrl) {
+  const s = readString(baseUrl);
+  if (!s) return "";
+
+  try {
+    const url = new URL(s);
+    return `${url.protocol}//${url.hostname}`;
+  } catch {
+    return "***";
+  }
+}
+
 async function getProviderAccessToken({ tenantId, tenantConfig }) {
   const { providerKey, baseUrl, username, password } =
     resolveDefaultProviderConfig(tenantConfig);
@@ -106,13 +119,18 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
       15000
     );
   } catch (err) {
-    techLog("PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR", {
-      tenantId: tenantId || null,
-      providerKey,
-      baseUrlConfigured: !!baseUrl,
-      error: String(err?.message || err),
-      cause: err?.cause ? String(err.cause?.message || err.cause) : null,
-    });
+    techLog(
+      "PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR",
+      sanitizeForLog({
+        tenantId: tenantId || null,
+        providerKey,
+        baseUrl: maskBaseUrlForLog(baseUrl),
+        baseUrlConfigured: !!baseUrl,
+        userConfigured: !!username,
+        error: String(err?.message || err),
+        cause: err?.cause ? String(err.cause?.message || err.cause) : null,
+      })
+    );
 
     const e = new Error("Falha de transporte ao obter token do provider.");
     e.code = "PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR";
@@ -129,17 +147,21 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
   }
 
   if (!response.ok) {
-    techLog("PROVIDER_ACCESS_TOKEN_FETCH_FAILED", {
-      tenantId: tenantId || null,
-      providerKey,
-      status: response.status,
-      tokenPath: "/Token",
-      responseType: Array.isArray(data)
-        ? "array"
-        : data === null
-          ? "null"
-          : typeof data,
-    });
+    techLog(
+      "PROVIDER_ACCESS_TOKEN_FETCH_FAILED",
+      sanitizeForLog({
+        tenantId: tenantId || null,
+        providerKey,
+        status: response.status,
+        tokenPath: "/Token",
+        responseType: Array.isArray(data)
+          ? "array"
+          : data === null
+            ? "null"
+            : typeof data,
+        baseUrl: maskBaseUrlForLog(baseUrl),
+      })
+    );
 
     const err = new Error(
       `Falha ao obter token do provider. HTTP ${response.status}`
@@ -156,15 +178,19 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
     (typeof data === "string" ? data : null);
 
   if (!token || typeof token !== "string") {
-    techLog("PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE", {
-      tenantId: tenantId || null,
-      providerKey,
-      hasToken: false,
-      responseKeys:
-        data && typeof data === "object" && !Array.isArray(data)
-          ? Object.keys(data).slice(0, 20)
-          : [],
-    });
+    techLog(
+      "PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE",
+      sanitizeForLog({
+        tenantId: tenantId || null,
+        providerKey,
+        hasToken: false,
+        responseKeys:
+          data && typeof data === "object" && !Array.isArray(data)
+            ? Object.keys(data).slice(0, 20)
+            : [],
+        baseUrl: maskBaseUrlForLog(baseUrl),
+      })
+    );
 
     const err = new Error("Resposta de token do provider sem token utilizável.");
     err.code = "PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE";
@@ -179,12 +205,17 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
     expiresAt: now + Math.max(60, expiresIn) * 1000,
   });
 
-  debugLog("PROVIDER_ACCESS_TOKEN_FETCH_OK", {
-    tenantId: tenantId || null,
-    providerKey,
-    expiresIn,
-    tokenMasked: maskToken(token),
-  });
+  debugLog(
+    "PROVIDER_ACCESS_TOKEN_FETCH_OK",
+    sanitizeForLog({
+      tenantId: tenantId || null,
+      providerKey,
+      expiresIn,
+      tokenMasked: maskToken(token),
+      baseUrl: maskBaseUrlForLog(baseUrl),
+      userConfigured: !!username,
+    })
+  );
 
   return token;
 }
