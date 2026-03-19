@@ -1,11 +1,16 @@
 import { assertPortalAdapter } from "../contracts/portalAdapter.contract.js";
-import { createVersatilisPortalAdapter as createDefaultAccessAdapter } from "../providers/versatilis/portal/versatilisPortalAdapter.js";
+import { createVersatilisPortalAdapter } from "../providers/versatilis/portal/versatilisPortalAdapter.js";
 
 function createPortalAdapter(runtime = {}) {
-  const providerKey = String(runtime?.providers?.accessProvider || "").trim();
+  const providerKey = String(
+    runtime?.providers?.access ||
+      runtime?.providers?.portal ||
+      runtime?.providers?.portalProvider ||
+      ""
+  ).trim();
 
-  if (providerKey === "provider_default") {
-    return assertPortalAdapter(createDefaultAccessAdapter());
+  if (providerKey === "versatilis") {
+    return assertPortalAdapter(createVersatilisPortalAdapter());
   }
 
   throw new Error(`Unsupported access provider: ${providerKey}`);
