@@ -46,39 +46,34 @@ function isDebugVersaShapeEnabled() {
   );
 }
 
+/* =========================
+   INFRA GLOBAL (OBRIGATÓRIO)
+========================= */
+
 const PORT = process.env.PORT || 3000;
 
 const VERIFY_TOKEN = requireEnv("VERIFY_TOKEN");
 const WHATSAPP_TOKEN = requireEnv("WHATSAPP_TOKEN");
-const VERSATILIS_BASE = requireEnv("VERSATILIS_BASE");
-const VERSATILIS_USER = requireEnv("VERSATILIS_USER");
-const VERSATILIS_PASS = requireEnv("VERSATILIS_PASS");
 const UPSTASH_REDIS_REST_URL = requireEnv("UPSTASH_REDIS_REST_URL");
 const UPSTASH_REDIS_REST_TOKEN = requireEnv("UPSTASH_REDIS_REST_TOKEN");
 const APP_SECRET = requireEnv("APP_SECRET");
 
-const COD_PLANO_PARTICULAR = readPositiveIntEnv("COD_PLANO_PARTICULAR", 0);
-const COD_PLANO_MEDSENIOR_SP = readPositiveIntEnv("COD_PLANO_MEDSENIOR_SP", 0);
-
-if (!COD_PLANO_PARTICULAR || !COD_PLANO_MEDSENIOR_SP) {
-  throw new Error(
-    "ENV obrigatória ausente ou inválida: COD_PLANO_PARTICULAR / COD_PLANO_MEDSENIOR_SP"
-  );
-}
-
-const COD_UNIDADE = readPositiveIntEnv("COD_UNIDADE", 0);
-const COD_ESPECIALIDADE = readPositiveIntEnv("COD_ESPECIALIDADE", 0);
-const COD_COLABORADOR = readPositiveIntEnv("COD_COLABORADOR", 0);
-
-if (!COD_UNIDADE || !COD_ESPECIALIDADE || !COD_COLABORADOR) {
-  throw new Error(
-    "ENV obrigatória ausente ou inválida: COD_UNIDADE / COD_ESPECIALIDADE / COD_COLABORADOR"
-  );
-}
+/* =========================
+   OPERACIONAL (OPCIONAL)
+========================= */
 
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900);
 const FLOW_RESET_CODE = String(process.env.FLOW_RESET_CODE || "").trim();
+
+/* =========================
+   DEBUG
+========================= */
+
 const DEBUG_REDIS = String(process.env.DEBUG_REDIS || "0").trim() === "1";
+
+/* =========================
+   EXPORT
+========================= */
 
 export {
   requireEnv,
@@ -90,17 +85,9 @@ export {
   PORT,
   VERIFY_TOKEN,
   WHATSAPP_TOKEN,
-  VERSATILIS_BASE,
-  VERSATILIS_USER,
-  VERSATILIS_PASS,
   UPSTASH_REDIS_REST_URL,
   UPSTASH_REDIS_REST_TOKEN,
   APP_SECRET,
-  COD_PLANO_PARTICULAR,
-  COD_PLANO_MEDSENIOR_SP,
-  COD_UNIDADE,
-  COD_ESPECIALIDADE,
-  COD_COLABORADOR,
   SESSION_TTL_SECONDS,
   FLOW_RESET_CODE,
   DEBUG_REDIS,
