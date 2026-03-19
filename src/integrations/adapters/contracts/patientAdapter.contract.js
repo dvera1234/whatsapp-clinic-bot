@@ -1,28 +1,34 @@
 function assertPatientAdapter(adapter) {
-  if (!adapter || typeof adapter.buscarPacientePorCpf !== "function") {
-    throw new Error("Invalid patient adapter: buscarPacientePorCpf is required");
+  if (!adapter || typeof adapter.findPatientByDocument !== "function") {
+    throw new Error("Invalid patient adapter: findPatientByDocument is required");
   }
 
-  if (typeof adapter.buscarPacientePorCpfComFallback !== "function") {
+  if (typeof adapter.findPatientIdByDocument !== "function") {
     throw new Error(
-      "Invalid patient adapter: buscarPacientePorCpfComFallback is required"
+      "Invalid patient adapter: findPatientIdByDocument is required"
     );
   }
 
-  if (typeof adapter.buscarPerfilPaciente !== "function") {
+  if (typeof adapter.getPatientProfile !== "function") {
     throw new Error(
-      "Invalid patient adapter: buscarPerfilPaciente is required"
+      "Invalid patient adapter: getPatientProfile is required"
     );
   }
 
-  if (typeof adapter.normalizarPlanosAtivos !== "function") {
+  if (typeof adapter.validateRegistrationData !== "function") {
     throw new Error(
-      "Invalid patient adapter: normalizarPlanosAtivos is required"
+      "Invalid patient adapter: validateRegistrationData is required"
     );
   }
 
-  if (typeof adapter.temPlano !== "function") {
-    throw new Error("Invalid patient adapter: temPlano is required");
+  if (typeof adapter.listActivePlans !== "function") {
+    throw new Error(
+      "Invalid patient adapter: listActivePlans is required"
+    );
+  }
+
+  if (typeof adapter.hasPlan !== "function") {
+    throw new Error("Invalid patient adapter: hasPlan is required");
   }
 
   return adapter;
