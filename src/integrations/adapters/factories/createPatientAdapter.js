@@ -1,14 +1,14 @@
 import { assertPatientAdapter } from "../contracts/patientAdapter.contract.js";
-import { createVersatilisPatientAdapter } from "../providers/versatilis/patient/versatilisPatientAdapter.js";
+import { createVersatilisPatientAdapter as createDefaultIdentityAdapter } from "../providers/versatilis/patient/versatilisPatientAdapter.js";
 
 function createPatientAdapter(runtime = {}) {
-  const provider = String(runtime?.providers?.identityProvider || "").trim();
+  const providerKey = String(runtime?.providers?.identityProvider || "").trim();
 
-  if (provider === "versatilis") {
-    return assertPatientAdapter(createVersatilisPatientAdapter());
+  if (providerKey === "provider_default") {
+    return assertPatientAdapter(createDefaultIdentityAdapter());
   }
 
-  throw new Error(`Unsupported identity provider: ${provider}`);
+  throw new Error(`Unsupported identity provider: ${providerKey}`);
 }
 
 export { createPatientAdapter };
