@@ -23,32 +23,29 @@ function sanitizeProviderBase(value) {
   return s;
 }
 
-function resolveDefaultProviderConfig(tenantConfig = {}) {
-  const providerConfig =
-    tenantConfig?.providers?.provider_default ||
-    tenantConfig?.providersConfig?.provider_default ||
-    {};
+function resolveProviderConfig(runtime = {}) {
+  const identity = runtime?.integrations?.identity || {};
 
-  const baseUrl = sanitizeProviderBase(providerConfig?.baseUrl);
-  const username = readString(providerConfig?.user);
-  const password = readString(providerConfig?.pass);
+  const baseUrl = sanitizeProviderBase(identity?.baseUrl);
+  const username = readString(identity?.user);
+  const password = readString(identity?.pass);
 
   const missing = [];
-  if (!baseUrl) missing.push("providers.provider_default.baseUrl");
-  if (!username) missing.push("providers.provider_default.user");
-  if (!password) missing.push("providers.provider_default.pass");
+  if (!baseUrl) missing.push("runtime.integrations.identity.baseUrl");
+  if (!username) missing.push("runtime.integrations.identity.user");
+  if (!password) missing.push("runtime.integrations.identity.pass");
 
   if (missing.length) {
     const err = new Error(
-      `Default provider auth config incompleta: ${missing.join(", ")}`
+      `Provider auth config incompleta: ${missing.join(", ")}`
     );
-    err.code = "DEFAULT_PROVIDER_AUTH_CONFIG_INVALID";
+    err.code = "PROVIDER_AUTH_CONFIG_INVALID";
     err.missingFields = missing;
     throw err;
   }
 
   return {
-    providerKey: "provider_default",
+    providerKey: identity?.key || "identity",
     baseUrl,
     username,
     password,
@@ -79,9 +76,9 @@ function maskBaseUrlForLog(baseUrl) {
   }
 }
 
-async function getProviderAccessToken({ tenantId, tenantConfig }) {
+async function getProviderAccessToken({ tenantId, runtime }) {
   const { providerKey, baseUrl, username, password } =
-    resolveDefaultProviderConfig(tenantConfig);
+    resolveProviderConfig(runtime);
 
   const cacheKey = accessTokenCacheKey(
     tenantId,
@@ -128,7 +125,6 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
         baseUrlConfigured: !!baseUrl,
         userConfigured: !!username,
         error: String(err?.message || err),
-        cause: err?.cause ? String(err.cause?.message || err.cause) : null,
       })
     );
 
@@ -153,12 +149,6 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
         tenantId: tenantId || null,
         providerKey,
         status: response.status,
-        tokenPath: "/Token",
-        responseType: Array.isArray(data)
-          ? "array"
-          : data === null
-            ? "null"
-            : typeof data,
         baseUrl: maskBaseUrlForLog(baseUrl),
       })
     );
@@ -183,11 +173,6 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
       sanitizeForLog({
         tenantId: tenantId || null,
         providerKey,
-        hasToken: false,
-        responseKeys:
-          data && typeof data === "object" && !Array.isArray(data)
-            ? Object.keys(data).slice(0, 20)
-            : [],
         baseUrl: maskBaseUrlForLog(baseUrl),
       })
     );
@@ -213,7 +198,6 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
       expiresIn,
       tokenMasked: maskToken(token),
       baseUrl: maskBaseUrlForLog(baseUrl),
-      userConfigured: !!username,
     })
   );
 
