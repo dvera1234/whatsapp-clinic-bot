@@ -1,4 +1,5 @@
 import { audit, auditOutcome, debugLog } from "../../../../../observability/audit.js";
+import { sanitizeForLog } from "../../../../../utils/logSanitizer.js";
 import { cleanStr, isValidEmail } from "../../../../../utils/validators.js";
 import {
   md5HexLegacyVersatilisOnly,
@@ -107,44 +108,50 @@ function createVersatilisPortalAdapter() {
         })
       );
 
-      debugLog("PATIENT_REGISTRATION_PAYLOAD_SHAPE", {
-        tenantId: runtimeCtx?.tenantId || null,
-        emptyFields,
-        validationErrors,
-        shape,
-      });
+      debugLog(
+        "PATIENT_REGISTRATION_PAYLOAD_SHAPE",
+        sanitizeForLog({
+          tenantId: runtimeCtx?.tenantId || null,
+          traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
+          emptyFields,
+          validationErrors,
+          shape,
+        })
+      );
 
       if (emptyFields.length > 0 || validationErrors.length > 0) {
         audit(
           "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
-          auditOutcome({
-            ...(traceMeta || {}),
-            tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
-            traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
-            tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
-            technicalAccepted: false,
-            functionalResult: "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
-            patientFacingMessage: null,
-            escalationRequired: true,
-            hasRegistrationData: !!registrationData,
-            registrationDataKeys: registrationData
-              ? Object.keys(registrationData).sort()
-              : [],
-            registrationDataShape: registrationData
-              ? Object.fromEntries(
-                  Object.entries(registrationData).map(([k, v]) => {
-                    if (v == null) return [k, "null/undefined"];
-                    if (typeof v === "string") return [k, `string(len=${v.length})`];
-                    if (typeof v === "number") return [k, "number"];
-                    if (typeof v === "boolean") return [k, "boolean"];
-                    if (Array.isArray(v)) return [k, `array(len=${v.length})`];
-                    return [k, typeof v];
-                  })
-                )
-              : {},
-            missingFields: emptyFields,
-            validationErrors,
-          })
+          auditOutcome(
+            sanitizeForLog({
+              ...(traceMeta || {}),
+              tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
+              traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
+              tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
+              technicalAccepted: false,
+              functionalResult: "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
+              patientFacingMessage: null,
+              escalationRequired: true,
+              hasRegistrationData: !!registrationData,
+              registrationDataKeys: registrationData
+                ? Object.keys(registrationData).sort()
+                : [],
+              registrationDataShape: registrationData
+                ? Object.fromEntries(
+                    Object.entries(registrationData).map(([k, v]) => {
+                      if (v == null) return [k, "null/undefined"];
+                      if (typeof v === "string") return [k, `string(len=${v.length})`];
+                      if (typeof v === "number") return [k, "number"];
+                      if (typeof v === "boolean") return [k, "boolean"];
+                      if (Array.isArray(v)) return [k, `array(len=${v.length})`];
+                      return [k, typeof v];
+                    })
+                  )
+                : {},
+              missingFields: emptyFields,
+              validationErrors,
+            })
+          )
         );
 
         return {
@@ -172,21 +179,23 @@ function createVersatilisPortalAdapter() {
 
       audit(
         "PATIENT_REGISTRATION_ATTEMPT",
-        auditOutcome({
-          ...(traceMeta || {}),
-          tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
-          traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
-          tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
-          technicalAccepted: out.ok,
-          httpStatus: out.status,
-          rid: out.rid,
-          functionalResult: out.ok
-            ? "PATIENT_REGISTRATION_CREATED"
-            : "PATIENT_REGISTRATION_FAILED",
-          patientFacingMessage: null,
-          escalationRequired: !out.ok,
-          dataType: typeof out.data,
-        })
+        auditOutcome(
+          sanitizeForLog({
+            ...(traceMeta || {}),
+            tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
+            traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
+            tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
+            technicalAccepted: out.ok,
+            httpStatus: out.status,
+            rid: out.rid,
+            functionalResult: out.ok
+              ? "PATIENT_REGISTRATION_CREATED"
+              : "PATIENT_REGISTRATION_FAILED",
+            patientFacingMessage: null,
+            escalationRequired: !out.ok,
+            dataType: typeof out.data,
+          })
+        )
       );
 
       if (!out.ok) {
