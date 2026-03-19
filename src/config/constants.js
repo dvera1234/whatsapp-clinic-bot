@@ -6,7 +6,7 @@ import {
   SESSION_TTL_SECONDS,
 } from "./env.js";
 
-const INACTIVITY_WARN_MS = (14 * 60 * 1000) + (50 * 1000);
+const INACTIVITY_WARN_MS = 14 * 60 * 1000 + 50 * 1000;
 const MIN_LEAD_HOURS = 12;
 const TZ_OFFSET = "-03:00";
 const SUPPORT_WA = "5519933005596";
@@ -16,8 +16,8 @@ const PLAN_KEYS = {
   MEDSENIOR_SP: "MEDSENIOR_SP",
 };
 
-function resolveCodPlano(planoKey) {
-  return planoKey === PLAN_KEYS.MEDSENIOR_SP
+function resolvePlanId(planKey) {
+  return planKey === PLAN_KEYS.MEDSENIOR_SP
     ? COD_PLANO_MEDSENIOR_SP
     : COD_PLANO_PARTICULAR;
 }
@@ -42,7 +42,8 @@ const MSG = {
   PLAN_DIVERGENCIA: `Notei uma divergência no convênio do seu cadastro.\n\nPor gentileza, qual convênio você quer usar nesta consulta?`,
   BTN_PLAN_PART: "Particular",
   BTN_PLAN_MED: "MedSênior SP",
-  PORTAL_NEED_DATA: (faltas) => `Para prosseguir, preciso completar seu cadastro do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
+  PORTAL_NEED_DATA: (faltas) =>
+    `Para prosseguir, preciso completar seu cadastro do Portal do Paciente.\n\nFaltam:\n${faltas}\n\nVamos continuar.`,
   PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO: (faltas) =>
     `Encontrei seu cadastro ✅, porém ele está incompleto no Portal do Paciente.\n\nPor segurança, o agendamento por aqui fica bloqueado neste caso.\n\nFaltam:\n${faltas}\n\n✅  Precisaria entrar em contato com um atendente para regularizar seu cadastro.`,
   BTN_FALAR_ATENDENTE: `Falar com atendente`,
@@ -85,7 +86,7 @@ export {
   TZ_OFFSET,
   SUPPORT_WA,
   PLAN_KEYS,
-  resolveCodPlano,
+  resolvePlanId,
   PORTAL_URL,
   MSG,
   LGPD_TEXT_VERSION,
