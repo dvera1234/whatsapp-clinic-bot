@@ -2,12 +2,18 @@ import { assertSchedulingAdapter } from "../contracts/schedulingAdapter.contract
 import { createVersatilisSchedulingAdapter } from "../providers/versatilis/scheduling/versatilisSchedulingAdapter.js";
 
 function createSchedulingAdapter(runtime = {}) {
-  const providerKey = String(
+  const explicitProvider = String(
     runtime?.providers?.booking ||
       runtime?.providers?.scheduling ||
       runtime?.providers?.schedulingProvider ||
       ""
   ).trim();
+
+  const inferredProvider = runtime?.integrations?.versatilis?.baseUrl
+    ? "versatilis"
+    : "";
+
+  const providerKey = explicitProvider || inferredProvider;
 
   if (providerKey === "versatilis") {
     return assertSchedulingAdapter(createVersatilisSchedulingAdapter());
