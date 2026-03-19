@@ -1,13 +1,13 @@
 function assertPortalAdapter(adapter) {
-  if (!adapter || typeof adapter.validarCadastroCompleto !== "function") {
+  if (!adapter || typeof adapter.validateRegistrationData !== "function") {
     throw new Error(
-      "Invalid portal adapter: validarCadastroCompleto is required"
+      "Invalid portal adapter: validateRegistrationData is required"
     );
   }
 
-  if (typeof adapter.criarCadastroCompleto !== "function") {
+  if (typeof adapter.createPatientRegistration !== "function") {
     throw new Error(
-      "Invalid portal adapter: criarCadastroCompleto is required"
+      "Invalid portal adapter: createPatientRegistration is required"
     );
   }
 
