@@ -1,12 +1,11 @@
-import { tenantRegistry } from "./tenantRegistry.js";
-import { tenantConfigs } from "./tenantConfig.js";
+import { loadTenantConfigByPhoneNumberId } from "../db/loadTenantConfigByPhoneNumberId.js";
 
 function readString(value) {
   const v = String(value ?? "").trim();
   return v || "";
 }
 
-export function resolveTenant(channelId) {
+export async function resolveTenant(channelId) {
   const safeChannelId = readString(channelId);
 
   if (!safeChannelId) {
@@ -19,9 +18,9 @@ export function resolveTenant(channelId) {
     };
   }
 
-  const tenantId = tenantRegistry[safeChannelId];
+  const tenantConfig = await loadTenantConfigByPhoneNumberId(safeChannelId);
 
-  if (!tenantId) {
+  if (!tenantConfig) {
     return {
       ok: false,
       reason: "TENANT_NOT_FOUND_FOR_CHANNEL_ID",
@@ -31,22 +30,10 @@ export function resolveTenant(channelId) {
     };
   }
 
-  const tenantConfig = tenantConfigs[tenantId];
-
-  if (!tenantConfig) {
-    return {
-      ok: false,
-      reason: "TENANT_CONFIG_NOT_FOUND",
-      tenantId,
-      tenantConfig: null,
-      channelId: safeChannelId,
-    };
-  }
-
   return {
     ok: true,
     reason: null,
-    tenantId,
+    tenantId: tenantConfig.tenantId,
     tenantConfig,
     channelId: safeChannelId,
   };
