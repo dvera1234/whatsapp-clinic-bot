@@ -28,44 +28,44 @@ function pushIfMissing(list, condition, fieldName) {
   if (condition) list.push(fieldName);
 }
 
-function isSupportedPatientProvider(value) {
+function isSupportedIdentityProvider(value) {
   return ["versatilis"].includes(value);
 }
 
-function isSupportedPortalProvider(value) {
+function isSupportedAccessProvider(value) {
   return ["versatilis"].includes(value);
 }
 
-function isSupportedSchedulingProvider(value) {
+function isSupportedBookingProvider(value) {
   return ["versatilis", "google_calendar"].includes(value);
 }
 
 export function buildTenantRuntime(tenantConfig = {}) {
   const tenantId = readString(tenantConfig?.tenantId);
 
-  const patientProvider = readString(
-    tenantConfig?.integrations?.patientProvider || "versatilis"
+  const identityProvider = readString(
+    tenantConfig?.integrations?.identityProvider || "versatilis"
   );
 
-  const portalProvider = readString(
-    tenantConfig?.integrations?.portalProvider || "versatilis"
+  const accessProvider = readString(
+    tenantConfig?.integrations?.accessProvider || "versatilis"
   );
 
-  const schedulingProvider = readString(
-    tenantConfig?.integrations?.schedulingProvider || "versatilis"
+  const bookingProvider = readString(
+    tenantConfig?.integrations?.bookingProvider || "versatilis"
   );
 
-  const codColaborador = readNumber(tenantConfig?.clinic?.codColaborador);
-  const codUnidade = readNumber(tenantConfig?.clinic?.codUnidade);
-  const codEspecialidade = readNumber(tenantConfig?.clinic?.codEspecialidade);
-
-  const codPlanoParticular = readNumber(
-    tenantConfig?.plans?.codPlanoParticular
+  const primaryPractitionerId = readNumber(
+    tenantConfig?.clinic?.primaryPractitionerId
   );
 
-  const codPlanoMedSeniorSp = readNumber(
-    tenantConfig?.plans?.codPlanoMedSeniorSp
+  const defaultUnitId = readNumber(tenantConfig?.clinic?.defaultUnitId);
+  const defaultSpecialtyId = readNumber(
+    tenantConfig?.clinic?.defaultSpecialtyId
   );
+
+  const privatePlanId = readNumber(tenantConfig?.plans?.privatePlanId);
+  const insuredPlanId = readNumber(tenantConfig?.plans?.insuredPlanId);
 
   const portalUrl = readHttpsUrl(tenantConfig?.portal?.url);
   const supportWa = readDigits(tenantConfig?.support?.waNumber);
@@ -89,23 +89,27 @@ export function buildTenantRuntime(tenantConfig = {}) {
 
   pushIfMissing(missing, !tenantId, "tenantId");
 
-  if (!isSupportedPatientProvider(patientProvider)) {
-    invalid.push("integrations.patientProvider");
+  if (!isSupportedIdentityProvider(identityProvider)) {
+    invalid.push("integrations.identityProvider");
   }
 
-  if (!isSupportedPortalProvider(portalProvider)) {
-    invalid.push("integrations.portalProvider");
+  if (!isSupportedAccessProvider(accessProvider)) {
+    invalid.push("integrations.accessProvider");
   }
 
-  if (!isSupportedSchedulingProvider(schedulingProvider)) {
-    invalid.push("integrations.schedulingProvider");
+  if (!isSupportedBookingProvider(bookingProvider)) {
+    invalid.push("integrations.bookingProvider");
   }
 
-  pushIfMissing(missing, !codColaborador, "clinic.codColaborador");
-  pushIfMissing(missing, !codUnidade, "clinic.codUnidade");
-  pushIfMissing(missing, !codEspecialidade, "clinic.codEspecialidade");
-  pushIfMissing(missing, !codPlanoParticular, "plans.codPlanoParticular");
-  pushIfMissing(missing, !codPlanoMedSeniorSp, "plans.codPlanoMedSeniorSp");
+  pushIfMissing(
+    missing,
+    !primaryPractitionerId,
+    "clinic.primaryPractitionerId"
+  );
+  pushIfMissing(missing, !defaultUnitId, "clinic.defaultUnitId");
+  pushIfMissing(missing, !defaultSpecialtyId, "clinic.defaultSpecialtyId");
+  pushIfMissing(missing, !privatePlanId, "plans.privatePlanId");
+  pushIfMissing(missing, !insuredPlanId, "plans.insuredPlanId");
   pushIfMissing(
     missing,
     !supportWa || supportWa.length < 10,
@@ -113,9 +117,9 @@ export function buildTenantRuntime(tenantConfig = {}) {
   );
 
   const needsVersatilis =
-    patientProvider === "versatilis" ||
-    portalProvider === "versatilis" ||
-    schedulingProvider === "versatilis";
+    identityProvider === "versatilis" ||
+    accessProvider === "versatilis" ||
+    bookingProvider === "versatilis";
 
   if (needsVersatilis) {
     pushIfMissing(
@@ -135,7 +139,7 @@ export function buildTenantRuntime(tenantConfig = {}) {
     );
   }
 
-  if (schedulingProvider === "google_calendar") {
+  if (bookingProvider === "google_calendar") {
     pushIfMissing(
       missing,
       !googleCalendarId,
@@ -157,20 +161,20 @@ export function buildTenantRuntime(tenantConfig = {}) {
       tenantId,
 
       providers: {
-        patientProvider,
-        portalProvider,
-        schedulingProvider,
+        identityProvider,
+        accessProvider,
+        bookingProvider,
       },
 
       clinic: {
-        codColaborador,
-        codUnidade,
-        codEspecialidade,
+        primaryPractitionerId,
+        defaultUnitId,
+        defaultSpecialtyId,
       },
 
       plans: {
-        codPlanoParticular,
-        codPlanoMedSeniorSp,
+        privatePlanId,
+        insuredPlanId,
       },
 
       portal: {
@@ -182,6 +186,15 @@ export function buildTenantRuntime(tenantConfig = {}) {
       },
 
       integrations: {
+        identity: {
+          provider: identityProvider,
+        },
+        access: {
+          provider: accessProvider,
+        },
+        booking: {
+          provider: bookingProvider,
+        },
         versatilis: {
           baseUrl: versatilisBaseUrl,
           user: versatilisUser,
