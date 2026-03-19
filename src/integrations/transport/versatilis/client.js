@@ -14,8 +14,13 @@ function readString(value) {
   return v || "";
 }
 
-function resolveProviderBaseUrl(tenantConfig = {}) {
-  const base = readString(tenantConfig?.integrations?.versatilis?.baseUrl);
+function resolveDefaultProviderBaseUrl(tenantConfig = {}) {
+  const providerConfig =
+    tenantConfig?.providers?.provider_default ||
+    tenantConfig?.providersConfig?.provider_default ||
+    {};
+
+  const base = readString(providerConfig?.baseUrl);
   if (!base) return "";
   return base.endsWith("/") ? base.slice(0, -1) : base;
 }
@@ -76,7 +81,8 @@ async function providerFetch(
   } = {}
 ) {
   const requestId = crypto.randomUUID();
-  const baseUrl = resolveProviderBaseUrl(tenantConfig);
+  const providerKey = "provider_default";
+  const baseUrl = resolveDefaultProviderBaseUrl(tenantConfig);
 
   if (!tenantId) {
     const err = new Error("tenantId ausente em providerFetch");
@@ -120,7 +126,8 @@ async function providerFetch(
   );
 
   const durationMs = Date.now() - startedAt;
-  const allow = response.headers.get("allow") || response.headers.get("Allow") || null;
+  const allow =
+    response.headers.get("allow") || response.headers.get("Allow") || null;
   const contentType = response.headers.get("content-type") || null;
 
   const text = await response.text().catch(() => "");
@@ -161,7 +168,7 @@ async function providerFetch(
     technicalResult,
     ...(traceMeta ? traceMeta : {}),
     tenantId,
-    provider: "versatilis",
+    providerKey,
   };
 
   if (response.ok) {
