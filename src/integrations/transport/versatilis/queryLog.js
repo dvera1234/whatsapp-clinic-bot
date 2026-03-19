@@ -17,7 +17,10 @@ function sanitizeQueryForLog(queryObj) {
         out[k] = `${u}@${domain || "***"}`;
       } else {
         const digits = s.replace(/\D+/g, "");
-        out[k] = digits.length >= 6 ? `${digits.slice(0, 2)}***${digits.slice(-2)}` : "***";
+        out[k] =
+          digits.length >= 6
+            ? `${digits.slice(0, 2)}***${digits.slice(-2)}`
+            : "***";
       }
 
       continue;
@@ -27,7 +30,8 @@ function sanitizeQueryForLog(queryObj) {
       key === "dtnasc" ||
       key === "datanascimento" ||
       key === "usercpf" ||
-      key === "cpf"
+      key === "cpf" ||
+      key === "email"
     ) {
       out[k] = "***";
       continue;
