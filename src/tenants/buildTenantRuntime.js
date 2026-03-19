@@ -28,60 +28,60 @@ function pushIfMissing(list, condition, fieldName) {
   if (condition) list.push(fieldName);
 }
 
-function isSupportedIdentityProvider(value) {
-  return ["provider_default"].includes(value);
+function isSupportedPatientProvider(value) {
+  return ["versatilis"].includes(value);
 }
 
-function isSupportedAccessProvider(value) {
-  return ["provider_default"].includes(value);
+function isSupportedPortalProvider(value) {
+  return ["versatilis"].includes(value);
 }
 
-function isSupportedBookingProvider(value) {
-  return ["provider_default", "calendar_default"].includes(value);
+function isSupportedSchedulingProvider(value) {
+  return ["versatilis", "google_calendar"].includes(value);
 }
 
 export function buildTenantRuntime(tenantConfig = {}) {
   const tenantId = readString(tenantConfig?.tenantId);
 
-  const identityProviderKey = readString(
-    tenantConfig?.services?.identity?.providerKey || "provider_default"
+  const patientProvider = readString(
+    tenantConfig?.integrations?.patientProvider || "versatilis"
   );
 
-  const accessProviderKey = readString(
-    tenantConfig?.services?.access?.providerKey || "provider_default"
+  const portalProvider = readString(
+    tenantConfig?.integrations?.portalProvider || "versatilis"
   );
 
-  const bookingProviderKey = readString(
-    tenantConfig?.services?.booking?.providerKey || "provider_default"
+  const schedulingProvider = readString(
+    tenantConfig?.integrations?.schedulingProvider || "versatilis"
   );
 
-  const primaryPractitionerId = readNumber(
-    tenantConfig?.clinic?.primaryPractitionerId
+  const codColaborador = readNumber(tenantConfig?.clinic?.codColaborador);
+  const codUnidade = readNumber(tenantConfig?.clinic?.codUnidade);
+  const codEspecialidade = readNumber(tenantConfig?.clinic?.codEspecialidade);
+
+  const codPlanoParticular = readNumber(
+    tenantConfig?.plans?.codPlanoParticular
   );
 
-  const defaultUnitId = readNumber(tenantConfig?.clinic?.defaultUnitId);
-  const defaultSpecialtyId = readNumber(
-    tenantConfig?.clinic?.defaultSpecialtyId
+  const codPlanoMedSeniorSp = readNumber(
+    tenantConfig?.plans?.codPlanoMedSeniorSp
   );
-
-  const privatePlanId = readNumber(tenantConfig?.plans?.privatePlanId);
-  const insuredPlanId = readNumber(tenantConfig?.plans?.insuredPlanId);
 
   const portalUrl = readHttpsUrl(tenantConfig?.portal?.url);
-  const supportWa = readDigits(tenantConfig?.support?.waNumber);
+  const supportWaNumber = readDigits(tenantConfig?.support?.waNumber);
 
-  const defaultProviderBaseUrl = readString(
-    tenantConfig?.providers?.provider_default?.baseUrl
+  const versatilisBaseUrl = readHttpsUrl(
+    tenantConfig?.integrations?.versatilis?.baseUrl
   );
-  const defaultProviderUser = readString(
-    tenantConfig?.providers?.provider_default?.user
+  const versatilisUser = readString(
+    tenantConfig?.integrations?.versatilis?.user
   );
-  const defaultProviderPass = readString(
-    tenantConfig?.providers?.provider_default?.pass
+  const versatilisPass = readString(
+    tenantConfig?.integrations?.versatilis?.pass
   );
 
-  const defaultCalendarId = readString(
-    tenantConfig?.providers?.calendar_default?.calendarId
+  const googleCalendarId = readString(
+    tenantConfig?.integrations?.googleCalendar?.calendarId
   );
 
   const missing = [];
@@ -89,65 +89,68 @@ export function buildTenantRuntime(tenantConfig = {}) {
 
   pushIfMissing(missing, !tenantId, "tenantId");
 
-  if (!isSupportedIdentityProvider(identityProviderKey)) {
-    invalid.push("services.identity.providerKey");
+  if (!patientProvider) missing.push("integrations.patientProvider");
+  if (!portalProvider) missing.push("integrations.portalProvider");
+  if (!schedulingProvider) missing.push("integrations.schedulingProvider");
+
+  if (patientProvider && !isSupportedPatientProvider(patientProvider)) {
+    invalid.push("integrations.patientProvider");
   }
 
-  if (!isSupportedAccessProvider(accessProviderKey)) {
-    invalid.push("services.access.providerKey");
+  if (portalProvider && !isSupportedPortalProvider(portalProvider)) {
+    invalid.push("integrations.portalProvider");
   }
 
-  if (!isSupportedBookingProvider(bookingProviderKey)) {
-    invalid.push("services.booking.providerKey");
+  if (schedulingProvider && !isSupportedSchedulingProvider(schedulingProvider)) {
+    invalid.push("integrations.schedulingProvider");
   }
+
+  pushIfMissing(missing, codColaborador === null, "clinic.codColaborador");
+  pushIfMissing(missing, codUnidade === null, "clinic.codUnidade");
+  pushIfMissing(missing, codEspecialidade === null, "clinic.codEspecialidade");
 
   pushIfMissing(
     missing,
-    !primaryPractitionerId,
-    "clinic.primaryPractitionerId"
+    codPlanoParticular === null,
+    "plans.codPlanoParticular"
   );
-  pushIfMissing(missing, !defaultUnitId, "clinic.defaultUnitId");
-  pushIfMissing(missing, !defaultSpecialtyId, "clinic.defaultSpecialtyId");
-  pushIfMissing(missing, !privatePlanId, "plans.privatePlanId");
-  pushIfMissing(missing, !insuredPlanId, "plans.insuredPlanId");
+
   pushIfMissing(
     missing,
-    !supportWa || supportWa.length < 10,
-    "support.waNumber"
+    codPlanoMedSeniorSp === null,
+    "plans.codPlanoMedSeniorSp"
   );
 
-  const needsDefaultProvider =
-    identityProviderKey === "provider_default" ||
-    accessProviderKey === "provider_default" ||
-    bookingProviderKey === "provider_default";
+  pushIfMissing(missing, !supportWaNumber, "support.waNumber");
 
-  if (needsDefaultProvider) {
+  if (tenantConfig?.portal?.url && !portalUrl) {
+    invalid.push("portal.url");
+  }
+
+  const needsVersatilis =
+    patientProvider === "versatilis" ||
+    portalProvider === "versatilis" ||
+    schedulingProvider === "versatilis";
+
+  if (needsVersatilis) {
     pushIfMissing(
       missing,
-      !defaultProviderBaseUrl,
-      "providers.provider_default.baseUrl"
+      !versatilisBaseUrl,
+      "integrations.versatilis.baseUrl"
     );
+    pushIfMissing(missing, !versatilisUser, "integrations.versatilis.user");
+    pushIfMissing(missing, !versatilisPass, "integrations.versatilis.pass");
+  }
+
+  if (schedulingProvider === "google_calendar") {
     pushIfMissing(
       missing,
-      !defaultProviderUser,
-      "providers.provider_default.user"
-    );
-    pushIfMissing(
-      missing,
-      !defaultProviderPass,
-      "providers.provider_default.pass"
+      !googleCalendarId,
+      "integrations.googleCalendar.calendarId"
     );
   }
 
-  if (bookingProviderKey === "calendar_default") {
-    pushIfMissing(
-      missing,
-      !defaultCalendarId,
-      "providers.calendar_default.calendarId"
-    );
-  }
-
-  if (invalid.length || missing.length) {
+  if (missing.length || invalid.length) {
     return {
       ok: false,
       missing,
@@ -159,52 +162,34 @@ export function buildTenantRuntime(tenantConfig = {}) {
     ok: true,
     value: {
       tenantId,
-
       providers: {
-        identityProvider: identityProviderKey,
-        accessProvider: accessProviderKey,
-        bookingProvider: bookingProviderKey,
+        patient: patientProvider,
+        portal: portalProvider,
+        scheduling: schedulingProvider,
       },
-
       clinic: {
-        primaryPractitionerId,
-        defaultUnitId,
-        defaultSpecialtyId,
+        primaryPractitionerId: codColaborador,
+        defaultUnitId: codUnidade,
+        defaultSpecialtyId: codEspecialidade,
       },
-
       plans: {
-        privatePlanId,
-        insuredPlanId,
+        privatePlanId: codPlanoParticular,
+        insuredPlanId: codPlanoMedSeniorSp,
       },
-
       portal: {
         url: portalUrl,
       },
-
       support: {
-        waNumber: supportWa,
+        waNumber: supportWaNumber,
       },
-
-      services: {
-        identity: {
-          providerKey: identityProviderKey,
+      integrations: {
+        versatilis: {
+          baseUrl: versatilisBaseUrl,
+          user: versatilisUser,
+          pass: versatilisPass,
         },
-        access: {
-          providerKey: accessProviderKey,
-        },
-        booking: {
-          providerKey: bookingProviderKey,
-        },
-      },
-
-      providersConfig: {
-        provider_default: {
-          baseUrl: defaultProviderBaseUrl,
-          user: defaultProviderUser,
-          pass: defaultProviderPass,
-        },
-        calendar_default: {
-          calendarId: defaultCalendarId,
+        googleCalendar: {
+          calendarId: googleCalendarId,
         },
       },
     },
