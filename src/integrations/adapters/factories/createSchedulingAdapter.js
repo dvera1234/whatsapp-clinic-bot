@@ -2,13 +2,13 @@ import { assertSchedulingAdapter } from "../contracts/schedulingAdapter.contract
 import { createVersatilisSchedulingAdapter } from "../providers/versatilis/scheduling/versatilisSchedulingAdapter.js";
 
 function createSchedulingAdapter(runtime = {}) {
-  const provider = String(runtime?.providers?.schedulingProvider || "").trim();
+  const provider = String(runtime?.providers?.bookingProvider || "").trim();
 
   if (provider === "versatilis") {
     return assertSchedulingAdapter(createVersatilisSchedulingAdapter());
   }
 
-  throw new Error(`Unsupported scheduling provider: ${provider}`);
+  throw new Error(`Unsupported booking provider: ${provider}`);
 }
 
 export { createSchedulingAdapter };
