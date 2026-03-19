@@ -68,6 +68,23 @@ function shouldPreserveKey(key) {
   );
 }
 
+function sanitizePrimitiveByValue(value) {
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+
+  if (/^\d{11}$/.test(onlyDigits(trimmed))) {
+    return maskCpf(trimmed);
+  }
+
+  if (trimmed.includes("@")) {
+    return maskEmail(trimmed);
+  }
+
+  return value;
+}
+
 function sanitizePrimitiveByKey(key, value) {
   const k = String(key || "").toLowerCase();
 
@@ -98,6 +115,7 @@ function sanitizePrimitiveByKey(key, value) {
     k.includes("phone") ||
     k.includes("telefone") ||
     k.includes("cel") ||
+    k.includes("celular") ||
     k.includes("whatsapp")
   ) {
     return maskPhone(value);
@@ -111,7 +129,7 @@ function sanitizePrimitiveByKey(key, value) {
     k.includes("login") ||
     k.includes("usuario") ||
     k.includes("username") ||
-    k.includes("user")
+    k === "user"
   ) {
     return maskString(value, 2, 2);
   }
@@ -129,10 +147,7 @@ function sanitizePrimitiveByKey(key, value) {
     return maskString(value, 0, 3);
   }
 
-  if (
-    k.includes("name") ||
-    k.includes("nome")
-  ) {
+  if (k.includes("name") || k.includes("nome")) {
     return maskName(value);
   }
 
@@ -142,30 +157,13 @@ function sanitizePrimitiveByKey(key, value) {
     k.includes("logradouro") ||
     k.includes("bairro") ||
     k.includes("cidade") ||
-    k.includes("uf") ||
+    k === "uf" ||
     k.includes("numero")
   ) {
     return "***";
   }
 
   return sanitizePrimitiveByValue(value);
-}
-
-function sanitizePrimitiveByValue(value) {
-  if (typeof value !== "string") return value;
-
-  const trimmed = value.trim();
-  if (!trimmed) return value;
-
-  if (/^\d{11}$/.test(onlyDigits(trimmed))) {
-    return maskCpf(trimmed);
-  }
-
-  if (trimmed.includes("@")) {
-    return maskEmail(trimmed);
-  }
-
-  return value;
 }
 
 export function sanitizeForLog(input, depth = 0) {
