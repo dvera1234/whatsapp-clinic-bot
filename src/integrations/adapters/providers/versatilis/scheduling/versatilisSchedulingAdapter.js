@@ -1,5 +1,8 @@
 import { audit, auditOutcome } from "../../../../../observability/audit.js";
-import { mergeTraceMeta, versatilisFetch } from "../../../../transport/versatilis/client.js";
+import {
+  mergeTraceMeta,
+  versatilisFetch,
+} from "../../../../transport/versatilis/client.js";
 
 function toHHMM(hora) {
   const s = String(hora || "").trim();
@@ -11,12 +14,12 @@ function toHHMM(hora) {
 
 function createVersatilisSchedulingAdapter() {
   return {
-    async verificarRetorno30Dias({ codUsuario, runtimeCtx = {} }) {
-      if (!codUsuario) return false;
+    async checkReturnEligibility({ patientId, runtimeCtx = {} }) {
+      if (!patientId) return false;
 
       const out = await versatilisFetch(
         `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(
-          codUsuario
+          patientId
         )}`,
         {
           tenantId: runtimeCtx?.tenantId || null,
@@ -28,8 +31,8 @@ function createVersatilisSchedulingAdapter() {
               tracePhone: runtimeCtx?.tracePhone || null,
             },
             {
-              flow: "RETURN_CHECK_LAST_30_DAYS",
-              codUsuario: Number(codUsuario) || null,
+              flow: "CHECK_RETURN_ELIGIBILITY_LAST_30_DAYS",
+              patientId: Number(patientId) || null,
             }
           ),
         }
@@ -37,16 +40,16 @@ function createVersatilisSchedulingAdapter() {
 
       if (!out.ok || !Array.isArray(out.data)) {
         audit(
-          "RETURN_CHECK_HISTORY_UNAVAILABLE",
+          "RETURN_ELIGIBILITY_HISTORY_UNAVAILABLE",
           auditOutcome({
             tenantId: runtimeCtx?.tenantId || null,
             traceId: runtimeCtx?.traceId || null,
             tracePhone: runtimeCtx?.tracePhone || null,
-            codUsuario: Number(codUsuario) || null,
+            patientId: Number(patientId) || null,
             technicalAccepted: !!out?.ok,
             httpStatus: out?.status || null,
             rid: out?.rid || null,
-            functionalResult: "RETURN_CHECK_UNAVAILABLE",
+            functionalResult: "RETURN_ELIGIBILITY_UNAVAILABLE",
             patientFacingMessage: null,
             escalationRequired: false,
           })
@@ -57,10 +60,10 @@ function createVersatilisSchedulingAdapter() {
       const now = Date.now();
       const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-      for (const ag of out.data) {
-        if (!ag?.Data) continue;
+      for (const appointment of out.data) {
+        if (!appointment?.Data) continue;
 
-        const parts = ag.Data.split("/");
+        const parts = appointment.Data.split("/");
         if (parts.length !== 3) continue;
 
         const [dd, mm, yyyy] = parts;
@@ -70,14 +73,14 @@ function createVersatilisSchedulingAdapter() {
 
         if (now - dateMs <= THIRTY_DAYS_MS) {
           audit(
-            "RETURN_CHECK_POSITIVE_LAST_30_DAYS",
+            "RETURN_ELIGIBILITY_POSITIVE_LAST_30_DAYS",
             auditOutcome({
               tenantId: runtimeCtx?.tenantId || null,
               traceId: runtimeCtx?.traceId || null,
               tracePhone: runtimeCtx?.tracePhone || null,
-              codUsuario: Number(codUsuario) || null,
+              patientId: Number(patientId) || null,
               technicalAccepted: true,
-              functionalResult: "RETURN_CHECK_POSITIVE",
+              functionalResult: "RETURN_ELIGIBILITY_POSITIVE",
               patientFacingMessage: null,
               escalationRequired: false,
             })
@@ -87,14 +90,14 @@ function createVersatilisSchedulingAdapter() {
       }
 
       audit(
-        "RETURN_CHECK_NEGATIVE_LAST_30_DAYS",
+        "RETURN_ELIGIBILITY_NEGATIVE_LAST_30_DAYS",
         auditOutcome({
           tenantId: runtimeCtx?.tenantId || null,
           traceId: runtimeCtx?.traceId || null,
           tracePhone: runtimeCtx?.tracePhone || null,
-          codUsuario: Number(codUsuario) || null,
+          patientId: Number(patientId) || null,
           technicalAccepted: true,
-          functionalResult: "RETURN_CHECK_NEGATIVE",
+          functionalResult: "RETURN_ELIGIBILITY_NEGATIVE",
           patientFacingMessage: null,
           escalationRequired: false,
           historyCount: out.data.length,
@@ -104,18 +107,18 @@ function createVersatilisSchedulingAdapter() {
       return false;
     },
 
-    async buscarSlotsDoDia({
+    async findSlotsByDate({
       tenantId,
       tenantConfig,
       traceId = null,
-      codColaborador,
-      codUsuario,
+      providerId,
+      patientId,
       isoDate,
       tracePhone = null,
     }) {
       const path =
-        `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(codColaborador)}` +
-        `&CodUsuario=${encodeURIComponent(codUsuario)}` +
+        `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(providerId)}` +
+        `&CodUsuario=${encodeURIComponent(patientId)}` +
         `&DataInicial=${encodeURIComponent(isoDate)}` +
         `&DataFinal=${encodeURIComponent(isoDate)}`;
 
@@ -125,10 +128,10 @@ function createVersatilisSchedulingAdapter() {
         traceMeta: {
           tenantId,
           traceId,
-          flow: "FETCH_SLOTS_DO_DIA",
+          flow: "FIND_SLOTS_BY_DATE",
           tracePhone,
-          codColaborador,
-          codUsuario,
+          providerId,
+          patientId,
           isoDate,
         },
       });
@@ -142,23 +145,40 @@ function createVersatilisSchedulingAdapter() {
       }
 
       const slots = out.data
-        .filter((h) => h && h.PermiteConsulta === true && h.CodHorario != null)
-        .map((h) => ({
-          codHorario: Number(h.CodHorario),
-          hhmm: toHHMM(h.Hora),
+        .filter(
+          (item) =>
+            item &&
+            item.PermiteConsulta === true &&
+            item.CodHorario != null
+        )
+        .map((item) => ({
+          slotId: Number(item.CodHorario),
+          time: toHHMM(item.Hora),
         }))
-        .filter((x) => x.codHorario && x.hhmm)
-        .sort((a, b) => a.hhmm.localeCompare(b.hhmm));
+        .filter((x) => x.slotId && x.time)
+        .sort((a, b) => a.time.localeCompare(b.time));
 
       return { ok: true, slots };
     },
 
-    async confirmarAgendamento({
+    async confirmBooking({
       tenantId,
       tenantConfig,
-      payload,
+      bookingRequest,
       traceMeta,
     }) {
+      const payload = {
+        CodUnidade: bookingRequest?.unitId,
+        CodEspecialidade: bookingRequest?.specialtyId,
+        CodPlano: bookingRequest?.planId,
+        CodHorario: bookingRequest?.slotId,
+        CodUsuario: bookingRequest?.patientId,
+        CodColaborador: bookingRequest?.providerId,
+        BitTelemedicina: !!bookingRequest?.isTelemedicine,
+        Confirmada:
+          bookingRequest?.shouldConfirm !== false,
+      };
+
       return await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
         tenantId,
         tenantConfig,
