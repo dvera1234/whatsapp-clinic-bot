@@ -66,14 +66,14 @@ function buildTenantConfig({
     },
 
     clinic: {
-      codUnidade: readNumber(env.COD_UNIDADE),
-      codEspecialidade: readNumber(env.COD_ESPECIALIDADE),
-      codColaborador: readNumber(env.COD_COLABORADOR),
+      defaultUnitId: readNumber(env.COD_UNIDADE),
+      defaultSpecialtyId: readNumber(env.COD_ESPECIALIDADE),
+      primaryPractitionerId: readNumber(env.COD_COLABORADOR),
     },
 
     plans: {
-      codPlanoParticular: readNumber(env.COD_PLANO_PARTICULAR),
-      codPlanoMedSeniorSp: readNumber(env.COD_PLANO_MEDSENIOR_SP),
+      privatePlanId: readNumber(env.COD_PLANO_PARTICULAR),
+      insuredPlanId: readNumber(env.COD_PLANO_MEDSENIOR_SP),
     },
 
     portal: {
@@ -85,9 +85,9 @@ function buildTenantConfig({
     },
 
     integrations: {
-      patientProvider: "versatilis",
-      portalProvider: "versatilis",
-      schedulingProvider: "versatilis",
+      identityProvider: "versatilis",
+      accessProvider: "versatilis",
+      bookingProvider: "versatilis",
 
       versatilis: {
         baseUrl: readString(env.VERSATILIS_BASE),
@@ -138,9 +138,9 @@ export const tenantConfigs = {
   //   },
   //   overrides: {
   //     integrations: {
-  //       patientProvider: "versatilis",
-  //       portalProvider: "versatilis",
-  //       schedulingProvider: "versatilis",
+  //       identityProvider: "versatilis",
+  //       accessProvider: "versatilis",
+  //       bookingProvider: "versatilis",
   //     },
   //   },
   // }),
@@ -150,9 +150,9 @@ export const tenantConfigs = {
   //   tenantId: "clinica_hibrida",
   //   overrides: {
   //     integrations: {
-  //       patientProvider: "versatilis",
-  //       portalProvider: "versatilis",
-  //       schedulingProvider: "google_calendar",
+  //       identityProvider: "versatilis",
+  //       accessProvider: "versatilis",
+  //       bookingProvider: "google_calendar",
   //     },
   //   },
   // }),
