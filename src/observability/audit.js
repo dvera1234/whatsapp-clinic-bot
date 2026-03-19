@@ -1,16 +1,19 @@
 import { nowIso } from "../utils/time.js";
 import { safeJson, safeConsoleWrite, canLog } from "./logger.js";
+import { sanitizeForLog } from "../utils/logSanitizer.js";
 
 function baseAuditPayload(event, payload = {}) {
   return {
     event,
-    ...payload,
+    ...sanitizeForLog(payload),
   };
 }
 
 function writeLog(tag, event, payload = {}) {
   const ts = nowIso();
-  safeConsoleWrite(`[${ts}] [${tag}] ${safeJson(baseAuditPayload(event, payload))}`);
+  safeConsoleWrite(
+    `[${ts}] [${tag}] ${safeJson(baseAuditPayload(event, payload))}`
+  );
 }
 
 function audit(event, payload = {}) {
@@ -36,7 +39,7 @@ function debugLog(event, payload = {}) {
 }
 
 function auditOutcome(payload = {}) {
-  return {
+  return sanitizeForLog({
     ...payload,
     traceId: payload.traceId || null,
     tracePhone: payload.tracePhone || null,
@@ -46,7 +49,7 @@ function auditOutcome(payload = {}) {
     functionalResult: payload.functionalResult || null,
     patientFacingMessage: payload.patientFacingMessage || null,
     escalationRequired: !!payload.escalationRequired,
-  };
+  });
 }
 
 export {
