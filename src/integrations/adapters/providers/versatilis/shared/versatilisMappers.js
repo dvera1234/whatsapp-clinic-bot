@@ -87,7 +87,11 @@ function validatePatientRegistrationData(profile = {}) {
   const addressNumber = pickFirst(profile, ["Numero", "Número", "numero"]);
   const district = pickFirst(profile, ["Bairro", "bairro"]);
   const city = pickFirst(profile, ["Cidade", "cidade"]);
+
+  // Continua resolvendo UF caso seja útil em outros pontos,
+  // mas NÃO entra mais como bloqueio de agendamento.
   const stateCode = resolveProfileStateCode(profile);
+  void stateCode;
 
   if (!hasMinText(fullName, 5)) missing.push("nome completo");
   if (onlyDigits(document).length !== 11) missing.push("CPF");
@@ -99,7 +103,12 @@ function validatePatientRegistrationData(profile = {}) {
   if (!hasMinText(addressNumber, 1)) missing.push("número");
   if (!hasMinText(district, 2)) missing.push("bairro");
   if (!hasMinText(city, 2)) missing.push("cidade");
-  if (!hasValidStateCode(stateCode)) missing.push("estado (UF)");
+
+  // REGRA FORMAL DO PROJETO:
+  // UF pode ser obrigatória no cadastro/wizard,
+  // mas ausência de UF no profile retornado pelo endpoint
+  // NÃO bloqueia agendamento de paciente já existente.
+  // Portanto, não incluir "estado (UF)" em missing bloqueante aqui.
 
   return {
     ok: missing.length === 0,
@@ -195,13 +204,16 @@ function parseExternalPatientIdFromAny(data) {
 
 function composeAddressComplement(addressComplement, stateCode) {
   const cleanComplement = cleanStr(addressComplement);
-  const normalizedStateCode = cleanStr(stateCode).toUpperCase();
-  const base = `UF:${normalizedStateCode}`;
 
-  if (!cleanComplement || cleanComplement === "0") return base;
-  if (cleanComplement.toUpperCase().includes("UF:")) return cleanComplement;
+  // REGRA FORMAL DO PROJETO:
+  // UF NÃO deve mais ser gravada no campo Complemento.
+  // O complemento deve conter apenas o complemento informado pelo paciente.
+  // Se vier vazio, retorna string vazia para não poluir payload.
+  void stateCode;
 
-  return `${base} | ${cleanComplement}`;
+  if (!cleanComplement || cleanComplement === "0") return "";
+
+  return cleanComplement;
 }
 
 export {
@@ -212,4 +224,6 @@ export {
   parseExternalPatientIdFromAny,
   composeAddressComplement,
   validatePatientRegistrationData,
+  resolveProfileStateCode,
+  hasValidStateCode,
 };
