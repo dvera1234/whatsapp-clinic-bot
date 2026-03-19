@@ -15,13 +15,8 @@ function readString(value) {
   return v || "";
 }
 
-function resolveDefaultProviderBaseUrl(tenantConfig = {}) {
-  const providerConfig =
-    tenantConfig?.providers?.provider_default ||
-    tenantConfig?.providersConfig?.provider_default ||
-    {};
-
-  const base = readString(providerConfig?.baseUrl);
+function resolveProviderBaseUrl(runtime = {}) {
+  const base = readString(runtime?.integrations?.identity?.baseUrl);
   if (!base) return "";
   return base.endsWith("/") ? base.slice(0, -1) : base;
 }
@@ -39,6 +34,7 @@ function sanitizePathForLog(path) {
 
   try {
     const fakeUrl = new URL(raw, "https://sanitizer.local");
+
     const sensitiveKeys = new Set([
       "cpf",
       "usercpf",
@@ -59,12 +55,9 @@ function sanitizePathForLog(path) {
     return `${fakeUrl.pathname}${fakeUrl.search}`;
   } catch {
     return raw
-      .replace(/(CPF=)[^&]+/gi, "$1***")
       .replace(/(cpf=)[^&]+/gi, "$1***")
-      .replace(/(UserCPF=)[^&]+/gi, "$1***")
       .replace(/(usercpf=)[^&]+/gi, "$1***")
-      .replace(/(dtNasc=)[^&]+/gi, "$1***")
-      .replace(/(dataNascimento=)[^&]+/gi, "$1***")
+      .replace(/(dtnasc=)[^&]+/gi, "$1***")
       .replace(/(login=)[^&]+/gi, "$1***")
       .replace(/(email=)[^&]+/gi, "$1***");
   }
@@ -78,26 +71,36 @@ async function providerFetch(
     extraHeaders,
     traceMeta,
     tenantId,
-    tenantConfig,
+    runtime,
   } = {}
 ) {
   const requestId = crypto.randomUUID();
-  const providerKey = "provider_default";
-  const baseUrl = resolveDefaultProviderBaseUrl(tenantConfig);
 
   if (!tenantId) {
     const err = new Error("tenantId ausente em providerFetch");
-    err.code = "TENANT_ID_MISSING_IN_PROVIDER_FETCH";
+    err.code = "TENANT_ID_MISSING";
     throw err;
   }
 
+  if (!runtime) {
+    const err = new Error("runtime ausente em providerFetch");
+    err.code = "RUNTIME_MISSING";
+    throw err;
+  }
+
+  const baseUrl = resolveProviderBaseUrl(runtime);
+
   if (!baseUrl) {
-    const err = new Error("Base URL do provider ausente no tenantConfig");
+    const err = new Error("Base URL do provider ausente no runtime");
     err.code = "PROVIDER_BASE_URL_MISSING";
     throw err;
   }
 
-  const accessToken = await getProviderAccessToken({ tenantId, tenantConfig });
+  const accessToken = await getProviderAccessToken({
+    tenantId,
+    runtime,
+  });
+
   const url = `${baseUrl}${path}`;
   const startedAt = Date.now();
 
@@ -105,9 +108,7 @@ async function providerFetch(
   try {
     const u = new URL(url);
     query = Object.fromEntries(u.searchParams.entries());
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   const safeQuery = sanitizeQueryForLog(query);
 
@@ -119,7 +120,7 @@ async function providerFetch(
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
         ...(jsonBody ? { "Content-Type": "application/json" } : {}),
-        ...(extraHeaders ? extraHeaders : {}),
+        ...(extraHeaders || {}),
       },
       body: jsonBody ? JSON.stringify(jsonBody) : undefined,
     },
@@ -127,8 +128,10 @@ async function providerFetch(
   );
 
   const durationMs = Date.now() - startedAt;
+
   const allow =
     response.headers.get("allow") || response.headers.get("Allow") || null;
+
   const contentType = response.headers.get("content-type") || null;
 
   const text = await response.text().catch(() => "");
@@ -145,16 +148,18 @@ async function providerFetch(
 
   const isExpected404 =
     response.status === 404 &&
-    (normalizedText.includes("não foram encontradas") ||
+    (
+      normalizedText.includes("não foram encontradas") ||
       normalizedText.includes("não foram encontrados") ||
       normalizedText.includes("usuário não encontrado") ||
-      normalizedText.includes("agendamento não encontrado"));
+      normalizedText.includes("agendamento não encontrado")
+    );
 
   const technicalResult = response.ok
     ? "API_ACCEPTED"
     : isExpected404
-      ? "EXPECTED_EMPTY_RESULT"
-      : "API_REJECTED";
+    ? "EXPECTED_EMPTY_RESULT"
+    : "API_REJECTED";
 
   const safePath = sanitizePathForLog(path);
 
@@ -167,9 +172,8 @@ async function providerFetch(
     query: safeQuery,
     hasBody: !!jsonBody,
     technicalResult,
-    ...(traceMeta ? traceMeta : {}),
+    ...(traceMeta || {}),
     tenantId,
-    providerKey,
   };
 
   const baseLog = sanitizeForLog(baseLogRaw);
@@ -178,12 +182,13 @@ async function providerFetch(
     debugLog("PROVIDER_CALL_OK", baseLog);
   } else if (isExpected404) {
     const rateLimitKey = `expected404:${tenantId}:${method}:${path.split("?")[0]}`;
+
     logRateLimited(
       "DEBUG",
       rateLimitKey,
       "PROVIDER_CALL_EXPECTED_EMPTY",
       baseLog,
-      60_000
+      60000
     );
   } else {
     techLog(
@@ -213,8 +218,8 @@ async function providerFetch(
         dataType: Array.isArray(data)
           ? "array"
           : data === null
-            ? "null"
-            : typeof data,
+          ? "null"
+          : typeof data,
         responseTopLevelKeys,
       })
     );
@@ -270,4 +275,8 @@ async function providerFetch(
   };
 }
 
-export { mergeTraceMeta, providerFetch, providerFetch as versatilisFetch };
+export {
+  mergeTraceMeta,
+  providerFetch,
+  providerFetch as versatilisFetch,
+};
