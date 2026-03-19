@@ -1,19 +1,19 @@
 function assertSchedulingAdapter(adapter) {
-  if (!adapter || typeof adapter.verificarRetorno30Dias !== "function") {
+  if (!adapter || typeof adapter.checkReturnEligibility !== "function") {
     throw new Error(
-      "Invalid scheduling adapter: verificarRetorno30Dias is required"
+      "Invalid scheduling adapter: checkReturnEligibility is required"
     );
   }
 
-  if (typeof adapter.buscarSlotsDoDia !== "function") {
+  if (typeof adapter.findSlotsByDate !== "function") {
     throw new Error(
-      "Invalid scheduling adapter: buscarSlotsDoDia is required"
+      "Invalid scheduling adapter: findSlotsByDate is required"
     );
   }
 
-  if (typeof adapter.confirmarAgendamento !== "function") {
+  if (typeof adapter.confirmBooking !== "function") {
     throw new Error(
-      "Invalid scheduling adapter: confirmarAgendamento is required"
+      "Invalid scheduling adapter: confirmBooking is required"
     );
   }
 
