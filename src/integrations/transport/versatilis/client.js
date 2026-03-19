@@ -6,6 +6,7 @@ import {
   logRateLimited,
 } from "../../../observability/logger.js";
 import { fetchWithTimeout } from "../../../utils/time.js";
+import { sanitizeForLog } from "../../../utils/logSanitizer.js";
 import { getProviderAccessToken } from "./auth.js";
 import { sanitizeQueryForLog } from "./queryLog.js";
 
@@ -157,7 +158,7 @@ async function providerFetch(
 
   const safePath = sanitizePathForLog(path);
 
-  const baseLog = {
+  const baseLogRaw = {
     rid: requestId,
     method,
     path: safePath,
@@ -171,6 +172,8 @@ async function providerFetch(
     providerKey,
   };
 
+  const baseLog = sanitizeForLog(baseLogRaw);
+
   if (response.ok) {
     debugLog("PROVIDER_CALL_OK", baseLog);
   } else if (isExpected404) {
@@ -183,12 +186,15 @@ async function providerFetch(
       60_000
     );
   } else {
-    techLog("PROVIDER_CALL_FAIL", {
-      ...baseLog,
-      allow,
-      contentType,
-      textLen,
-    });
+    techLog(
+      "PROVIDER_CALL_FAIL",
+      sanitizeForLog({
+        ...baseLog,
+        allow,
+        contentType,
+        textLen,
+      })
+    );
   }
 
   if (!response.ok && !isExpected404 && canLog("DEBUG")) {
@@ -198,17 +204,20 @@ async function providerFetch(
       responseTopLevelKeys = Object.keys(data).slice(0, 20);
     }
 
-    debugLog("PROVIDER_BODY_METADATA", {
-      ...baseLog,
-      contentType,
-      textLen,
-      dataType: Array.isArray(data)
-        ? "array"
-        : data === null
-          ? "null"
-          : typeof data,
-      responseTopLevelKeys,
-    });
+    debugLog(
+      "PROVIDER_BODY_METADATA",
+      sanitizeForLog({
+        ...baseLog,
+        contentType,
+        textLen,
+        dataType: Array.isArray(data)
+          ? "array"
+          : data === null
+            ? "null"
+            : typeof data,
+        responseTopLevelKeys,
+      })
+    );
   }
 
   if (response.status === 405 && canLog("DEBUG")) {
@@ -230,16 +239,24 @@ async function providerFetch(
         optionsResponse.headers.get("Allow") ||
         null;
 
-      log("DEBUG", "PROVIDER_OPTIONS", {
-        ...baseLog,
-        optionsStatus: optionsResponse.status,
-        allow: allow2,
-      });
+      log(
+        "DEBUG",
+        "PROVIDER_OPTIONS",
+        sanitizeForLog({
+          ...baseLog,
+          optionsStatus: optionsResponse.status,
+          allow: allow2,
+        })
+      );
     } catch (e) {
-      log("DEBUG", "PROVIDER_OPTIONS", {
-        ...baseLog,
-        error: String(e?.message || e),
-      });
+      log(
+        "DEBUG",
+        "PROVIDER_OPTIONS",
+        sanitizeForLog({
+          ...baseLog,
+          error: String(e?.message || e),
+        })
+      );
     }
   }
 
