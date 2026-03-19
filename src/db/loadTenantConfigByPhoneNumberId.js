@@ -27,53 +27,35 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       p.extra_config_json
 
     FROM tenants t
-    JOIN tenant_channels tc
-      ON tc.tenant_id = t.tenant_id
-    JOIN tenant_clinic_settings cs
-      ON cs.tenant_id = t.tenant_id
-    JOIN tenant_plan_settings ps
-      ON ps.tenant_id = t.tenant_id
-    JOIN tenant_provider_settings p
-      ON p.tenant_id = t.tenant_id
+    JOIN tenant_channels tc ON tc.tenant_id = t.tenant_id
+    JOIN tenant_clinic_settings cs ON cs.tenant_id = t.tenant_id
+    JOIN tenant_plan_settings ps ON ps.tenant_id = t.tenant_id
+    JOIN tenant_provider_settings p ON p.tenant_id = t.tenant_id
     WHERE tc.phone_number_id = $1
       AND t.status = 'active'
-    ORDER BY p.capability ASC
   `;
 
   const { rows } = await db.query(sql, [String(phoneNumberId)]);
-
-  if (!rows.length) {
-    return null;
-  }
+  if (!rows.length) return null;
 
   const first = rows[0];
 
-  const providersByCapability = {};
+  const providers = {};
   for (const row of rows) {
-    providersByCapability[row.capability] = {
-      providerKey: row.provider_key,
+    providers[row.capability] = {
+      key: row.provider_key,
       baseUrl: row.base_url,
-      username: row.username,
-      passwordEncrypted: row.password_encrypted,
-      extraConfig: row.extra_config_json || {},
+      user: row.username,
+      pass: row.password_encrypted,
+      extra: row.extra_config_json || {},
     };
   }
 
-  const identityProvider = providersByCapability.identity || null;
-  const accessProvider = providersByCapability.access || null;
-  const bookingProvider = providersByCapability.booking || null;
-
-  const defaultVersatilisProvider =
-    identityProvider || accessProvider || bookingProvider || null;
-
   return {
     tenantId: first.tenant_id,
-    name: first.name,
-    status: first.status,
 
     channels: {
       phoneNumberId: first.phone_number_id,
-      whatsappBusinessAccountId: first.whatsapp_business_account_id,
     },
 
     clinic: {
@@ -95,31 +77,6 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       waNumber: first.support_wa_number,
     },
 
-    integrations: {
-      patientProvider: identityProvider?.providerKey || null,
-      portalProvider: accessProvider?.providerKey || null,
-      schedulingProvider: bookingProvider?.providerKey || null,
-
-      versatilis: {
-        baseUrl: defaultVersatilisProvider?.baseUrl || "",
-        user: defaultVersatilisProvider?.username || "",
-        pass: defaultVersatilisProvider?.passwordEncrypted || "",
-      },
-
-      googleCalendar: {
-        calendarId:
-          bookingProvider?.extraConfig?.calendarId ||
-          bookingProvider?.extraConfig?.calendar_id ||
-          "",
-      },
-    },
-
-    providers: {
-      provider_default: {
-        baseUrl: defaultVersatilisProvider?.baseUrl || "",
-        user: defaultVersatilisProvider?.username || "",
-        pass: defaultVersatilisProvider?.passwordEncrypted || "",
-      },
-    },
+    providers,
   };
 }
