@@ -6,28 +6,28 @@ function readString(value) {
   return v || "";
 }
 
-export function resolveTenant(phoneNumberId) {
-  const safePhoneNumberId = readString(phoneNumberId);
+export function resolveTenant(channelId) {
+  const safeChannelId = readString(channelId);
 
-  if (!safePhoneNumberId) {
+  if (!safeChannelId) {
     return {
       ok: false,
-      reason: "PHONE_NUMBER_ID_MISSING",
+      reason: "CHANNEL_ID_MISSING",
       tenantId: null,
       tenantConfig: null,
-      phoneNumberId: "",
+      channelId: "",
     };
   }
 
-  const tenantId = tenantRegistry[safePhoneNumberId];
+  const tenantId = tenantRegistry[safeChannelId];
 
   if (!tenantId) {
     return {
       ok: false,
-      reason: "TENANT_NOT_FOUND_FOR_PHONE_NUMBER_ID",
+      reason: "TENANT_NOT_FOUND_FOR_CHANNEL_ID",
       tenantId: null,
       tenantConfig: null,
-      phoneNumberId: safePhoneNumberId,
+      channelId: safeChannelId,
     };
   }
 
@@ -39,7 +39,7 @@ export function resolveTenant(phoneNumberId) {
       reason: "TENANT_CONFIG_NOT_FOUND",
       tenantId,
       tenantConfig: null,
-      phoneNumberId: safePhoneNumberId,
+      channelId: safeChannelId,
     };
   }
 
@@ -48,6 +48,6 @@ export function resolveTenant(phoneNumberId) {
     reason: null,
     tenantId,
     tenantConfig,
-    phoneNumberId: safePhoneNumberId,
+    channelId: safeChannelId,
   };
 }
