@@ -22,32 +22,40 @@ function sanitizeProviderBase(value) {
   return s;
 }
 
-function resolveProviderAuthConfig(tenantConfig = {}) {
-  const baseUrl = sanitizeProviderBase(
-    tenantConfig?.integrations?.versatilis?.baseUrl
-  );
-  const username = readString(tenantConfig?.integrations?.versatilis?.user);
-  const password = readString(tenantConfig?.integrations?.versatilis?.pass);
+function resolveDefaultProviderConfig(tenantConfig = {}) {
+  const providerConfig =
+    tenantConfig?.providers?.provider_default ||
+    tenantConfig?.providersConfig?.provider_default ||
+    {};
+
+  const baseUrl = sanitizeProviderBase(providerConfig?.baseUrl);
+  const username = readString(providerConfig?.user);
+  const password = readString(providerConfig?.pass);
 
   const missing = [];
-  if (!baseUrl) missing.push("integrations.versatilis.baseUrl");
-  if (!username) missing.push("integrations.versatilis.user");
-  if (!password) missing.push("integrations.versatilis.pass");
+  if (!baseUrl) missing.push("providers.provider_default.baseUrl");
+  if (!username) missing.push("providers.provider_default.user");
+  if (!password) missing.push("providers.provider_default.pass");
 
   if (missing.length) {
     const err = new Error(
-      `Provider auth config incompleta: ${missing.join(", ")}`
+      `Default provider auth config incompleta: ${missing.join(", ")}`
     );
-    err.code = "PROVIDER_AUTH_CONFIG_INVALID";
+    err.code = "DEFAULT_PROVIDER_AUTH_CONFIG_INVALID";
     err.missingFields = missing;
     throw err;
   }
 
-  return { baseUrl, username, password };
+  return {
+    providerKey: "provider_default",
+    baseUrl,
+    username,
+    password,
+  };
 }
 
-function accessTokenCacheKey(tenantId, baseUrl, username) {
-  const raw = `${tenantId || ""}|${baseUrl}|${username}`;
+function accessTokenCacheKey(tenantId, providerKey, baseUrl, username) {
+  const raw = `${tenantId || ""}|${providerKey}|${baseUrl}|${username}`;
   return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
@@ -59,10 +67,16 @@ function maskToken(token) {
 }
 
 async function getProviderAccessToken({ tenantId, tenantConfig }) {
-  const { baseUrl, username, password } =
-    resolveProviderAuthConfig(tenantConfig);
+  const { providerKey, baseUrl, username, password } =
+    resolveDefaultProviderConfig(tenantConfig);
 
-  const cacheKey = accessTokenCacheKey(tenantId, baseUrl, username);
+  const cacheKey = accessTokenCacheKey(
+    tenantId,
+    providerKey,
+    baseUrl,
+    username
+  );
+
   const now = Date.now();
   const cached = accessTokenCache.get(cacheKey);
 
@@ -94,10 +108,10 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
   } catch (err) {
     techLog("PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR", {
       tenantId: tenantId || null,
+      providerKey,
       baseUrlConfigured: !!baseUrl,
       error: String(err?.message || err),
       cause: err?.cause ? String(err.cause?.message || err.cause) : null,
-      provider: "versatilis",
     });
 
     const e = new Error("Falha de transporte ao obter token do provider.");
@@ -117,6 +131,7 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
   if (!response.ok) {
     techLog("PROVIDER_ACCESS_TOKEN_FETCH_FAILED", {
       tenantId: tenantId || null,
+      providerKey,
       status: response.status,
       tokenPath: "/Token",
       responseType: Array.isArray(data)
@@ -124,7 +139,6 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
         : data === null
           ? "null"
           : typeof data,
-      provider: "versatilis",
     });
 
     const err = new Error(
@@ -144,12 +158,12 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
   if (!token || typeof token !== "string") {
     techLog("PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE", {
       tenantId: tenantId || null,
+      providerKey,
       hasToken: false,
       responseKeys:
         data && typeof data === "object" && !Array.isArray(data)
           ? Object.keys(data).slice(0, 20)
           : [],
-      provider: "versatilis",
     });
 
     const err = new Error("Resposta de token do provider sem token utilizável.");
@@ -167,9 +181,9 @@ async function getProviderAccessToken({ tenantId, tenantConfig }) {
 
   debugLog("PROVIDER_ACCESS_TOKEN_FETCH_OK", {
     tenantId: tenantId || null,
+    providerKey,
     expiresIn,
     tokenMasked: maskToken(token),
-    provider: "versatilis",
   });
 
   return token;
