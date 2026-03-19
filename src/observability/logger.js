@@ -1,5 +1,5 @@
 import { nowIso } from "../utils/time.js";
-import { maskPhone, maskIp } from "../utils/mask.js";
+import { sanitizeForLog } from "../utils/logSanitizer.js";
 
 const LOG_LEVEL = String(process.env.LOG_LEVEL || "INFO").toUpperCase();
 const LOG_RANK = { DEBUG: 10, INFO: 20, WARN: 30, ERROR: 40 };
@@ -22,57 +22,7 @@ function safeConsoleWrite(line) {
 }
 
 function deepSanitizeForLog(value, depth = 0) {
-  if (depth > 6) return "[max-depth]";
-  if (value == null) return value;
-
-  if (typeof value === "string") return value;
-
-  if (Array.isArray(value)) {
-    return value.map((v) => deepSanitizeForLog(v, depth + 1));
-  }
-
-  if (typeof value === "object") {
-    const out = {};
-
-    for (const [k, v] of Object.entries(value)) {
-      const key = String(k || "").toLowerCase();
-
-      if (
-        key.includes("cpf") ||
-        key.includes("dtnasc") ||
-        key.includes("datanascimento") ||
-        key.includes("senha") ||
-        key.includes("password") ||
-        key.includes("token") ||
-        key.includes("authorization") ||
-        key.includes("secret") ||
-        key.includes("email")
-      ) {
-        out[k] = "***";
-        continue;
-      }
-
-      if (
-        key.includes("phone") ||
-        key.includes("telefone") ||
-        key.includes("celular")
-      ) {
-        out[k] = typeof v === "string" ? maskPhone(v) : "***";
-        continue;
-      }
-
-      if (key.includes("ip")) {
-        out[k] = typeof v === "string" ? maskIp(v) : "***";
-        continue;
-      }
-
-      out[k] = deepSanitizeForLog(v, depth + 1);
-    }
-
-    return out;
-  }
-
-  return value;
+  return sanitizeForLog(value, depth);
 }
 
 function safeJson(obj) {
