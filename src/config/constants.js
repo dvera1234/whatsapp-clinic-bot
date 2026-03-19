@@ -1,7 +1,5 @@
 import { hashText } from "../utils/crypto.js";
 import {
-  COD_PLANO_PARTICULAR,
-  COD_PLANO_MEDSENIOR_SP,
   FLOW_RESET_CODE,
   SESSION_TTL_SECONDS,
 } from "./env.js";
@@ -16,25 +14,13 @@ const PLAN_KEYS = {
   MEDSENIOR_SP: "MEDSENIOR_SP",
 };
 
-function resolvePlanId(planKey) {
+function resolvePlanId(planKey, runtime) {
+  if (!runtime?.plans) return null;
+
   return planKey === PLAN_KEYS.MEDSENIOR_SP
-    ? COD_PLANO_MEDSENIOR_SP
-    : COD_PLANO_PARTICULAR;
+    ? runtime.plans.insuredPlanId
+    : runtime.plans.privatePlanId;
 }
-
-function normalizeHttpsUrlOrEmpty(value) {
-  const s = String(value || "").trim();
-  if (!s) return "";
-  try {
-    const u = new URL(s);
-    if (u.protocol !== "https:") return "";
-    return u.toString();
-  } catch {
-    return "";
-  }
-}
-
-const PORTAL_URL = normalizeHttpsUrlOrEmpty(process.env.PORTAL_URL);
 
 const MSG = {
   ASK_CPF_PORTAL: `Para prosseguir com o agendamento, preciso confirmar seu cadastro.\n\nEnvie seu CPF (somente números).`,
@@ -87,7 +73,6 @@ export {
   SUPPORT_WA,
   PLAN_KEYS,
   resolvePlanId,
-  PORTAL_URL,
   MSG,
   LGPD_TEXT_VERSION,
   LGPD_TEXT_HASH,
