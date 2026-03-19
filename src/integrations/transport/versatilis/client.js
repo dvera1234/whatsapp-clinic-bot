@@ -6,7 +6,7 @@ import {
   logRateLimited,
 } from "../../../observability/logger.js";
 import { fetchWithTimeout } from "../../../utils/time.js";
-import { versatilisGetToken } from "./auth.js";
+import { getProviderAccessToken } from "./auth.js";
 import { sanitizeQueryForLog } from "./queryLog.js";
 
 function readString(value) {
@@ -14,7 +14,7 @@ function readString(value) {
   return v || "";
 }
 
-function resolveVersatilisBaseUrl(tenantConfig = {}) {
+function resolveProviderBaseUrl(tenantConfig = {}) {
   const base = readString(tenantConfig?.integrations?.versatilis?.baseUrl);
   if (!base) return "";
   return base.endsWith("/") ? base.slice(0, -1) : base;
@@ -42,15 +42,11 @@ function sanitizePathForLog(path) {
       "email",
     ]);
 
-    for (const [key, value] of fakeUrl.searchParams.entries()) {
+    for (const [key] of fakeUrl.searchParams.entries()) {
       const lower = String(key || "").toLowerCase();
 
       if (sensitiveKeys.has(lower)) {
-        if (lower === "login") {
-          fakeUrl.searchParams.set(key, "***");
-        } else {
-          fakeUrl.searchParams.set(key, "***");
-        }
+        fakeUrl.searchParams.set(key, "***");
       }
     }
 
@@ -68,7 +64,7 @@ function sanitizePathForLog(path) {
   }
 }
 
-async function versatilisFetch(
+async function providerFetch(
   path,
   {
     method = "GET",
@@ -79,24 +75,24 @@ async function versatilisFetch(
     tenantConfig,
   } = {}
 ) {
-  const rid = crypto.randomUUID();
-  const baseUrl = resolveVersatilisBaseUrl(tenantConfig);
+  const requestId = crypto.randomUUID();
+  const baseUrl = resolveProviderBaseUrl(tenantConfig);
 
   if (!tenantId) {
-    const err = new Error("tenantId ausente em versatilisFetch");
-    err.code = "TENANT_ID_MISSING_IN_VERSATILIS_FETCH";
+    const err = new Error("tenantId ausente em providerFetch");
+    err.code = "TENANT_ID_MISSING_IN_PROVIDER_FETCH";
     throw err;
   }
 
   if (!baseUrl) {
-    const err = new Error("Base URL do Versatilis ausente no tenantConfig");
-    err.code = "VERSATILIS_BASE_URL_MISSING";
+    const err = new Error("Base URL do provider ausente no tenantConfig");
+    err.code = "PROVIDER_BASE_URL_MISSING";
     throw err;
   }
 
-  const token = await versatilisGetToken({ tenantId, tenantConfig });
+  const accessToken = await getProviderAccessToken({ tenantId, tenantConfig });
   const url = `${baseUrl}${path}`;
-  const t0 = Date.now();
+  const startedAt = Date.now();
 
   let query = null;
   try {
@@ -108,12 +104,12 @@ async function versatilisFetch(
 
   const safeQuery = sanitizeQueryForLog(query);
 
-  const r = await fetchWithTimeout(
+  const response = await fetchWithTimeout(
     url,
     {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
         ...(jsonBody ? { "Content-Type": "application/json" } : {}),
         ...(extraHeaders ? extraHeaders : {}),
@@ -123,11 +119,11 @@ async function versatilisFetch(
     15000
   );
 
-  const ms = Date.now() - t0;
-  const allow = r.headers.get("allow") || r.headers.get("Allow") || null;
-  const contentType = r.headers.get("content-type") || null;
+  const durationMs = Date.now() - startedAt;
+  const allow = response.headers.get("allow") || response.headers.get("Allow") || null;
+  const contentType = response.headers.get("content-type") || null;
 
-  const text = await r.text().catch(() => "");
+  const text = await response.text().catch(() => "");
   const textLen = text ? text.length : 0;
 
   let data;
@@ -140,13 +136,13 @@ async function versatilisFetch(
   const normalizedText = typeof data === "string" ? data.toLowerCase() : "";
 
   const isExpected404 =
-    r.status === 404 &&
+    response.status === 404 &&
     (normalizedText.includes("não foram encontradas") ||
       normalizedText.includes("não foram encontrados") ||
       normalizedText.includes("usuário não encontrado") ||
       normalizedText.includes("agendamento não encontrado"));
 
-  const technicalResult = r.ok
+  const technicalResult = response.ok
     ? "API_ACCEPTED"
     : isExpected404
       ? "EXPECTED_EMPTY_RESULT"
@@ -155,31 +151,32 @@ async function versatilisFetch(
   const safePath = sanitizePathForLog(path);
 
   const baseLog = {
-    rid,
+    rid: requestId,
     method,
     path: safePath,
-    status: r.status,
-    ms,
+    status: response.status,
+    ms: durationMs,
     query: safeQuery,
     hasBody: !!jsonBody,
     technicalResult,
     ...(traceMeta ? traceMeta : {}),
     tenantId,
+    provider: "versatilis",
   };
 
-  if (r.ok) {
-    debugLog("VERSATILIS_CALL_OK", baseLog);
+  if (response.ok) {
+    debugLog("PROVIDER_CALL_OK", baseLog);
   } else if (isExpected404) {
     const rateLimitKey = `expected404:${tenantId}:${method}:${path.split("?")[0]}`;
     logRateLimited(
       "DEBUG",
       rateLimitKey,
-      "VERSATILIS_CALL_EXPECTED_EMPTY",
+      "PROVIDER_CALL_EXPECTED_EMPTY",
       baseLog,
       60_000
     );
   } else {
-    techLog("VERSATILIS_CALL_FAIL", {
+    techLog("PROVIDER_CALL_FAIL", {
       ...baseLog,
       allow,
       contentType,
@@ -187,14 +184,14 @@ async function versatilisFetch(
     });
   }
 
-  if (!r.ok && !isExpected404 && canLog("DEBUG")) {
+  if (!response.ok && !isExpected404 && canLog("DEBUG")) {
     let responseTopLevelKeys = null;
 
     if (data && typeof data === "object" && !Array.isArray(data)) {
       responseTopLevelKeys = Object.keys(data).slice(0, 20);
     }
 
-    debugLog("VERSATILIS_BODY_METADATA", {
+    debugLog("PROVIDER_BODY_METADATA", {
       ...baseLog,
       contentType,
       textLen,
@@ -207,36 +204,46 @@ async function versatilisFetch(
     });
   }
 
-  if (r.status === 405 && canLog("DEBUG")) {
+  if (response.status === 405 && canLog("DEBUG")) {
     try {
-      const ro = await fetchWithTimeout(
+      const optionsResponse = await fetchWithTimeout(
         url,
         {
           method: "OPTIONS",
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${accessToken}`,
             Accept: "application/json",
           },
         },
         10000
       );
 
-      const allow2 = ro.headers.get("allow") || ro.headers.get("Allow") || null;
+      const allow2 =
+        optionsResponse.headers.get("allow") ||
+        optionsResponse.headers.get("Allow") ||
+        null;
 
-      log("DEBUG", "VERSATILIS_OPTIONS", {
+      log("DEBUG", "PROVIDER_OPTIONS", {
         ...baseLog,
-        optionsStatus: ro.status,
+        optionsStatus: optionsResponse.status,
         allow: allow2,
       });
     } catch (e) {
-      log("DEBUG", "VERSATILIS_OPTIONS", {
+      log("DEBUG", "PROVIDER_OPTIONS", {
         ...baseLog,
         error: String(e?.message || e),
       });
     }
   }
 
-  return { ok: r.ok, status: r.status, data, rid, allow, contentType };
+  return {
+    ok: response.ok,
+    status: response.status,
+    data,
+    rid: requestId,
+    allow,
+    contentType,
+  };
 }
 
-export { mergeTraceMeta, versatilisFetch };
+export { mergeTraceMeta, providerFetch, providerFetch as versatilisFetch };
