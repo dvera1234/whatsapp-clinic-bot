@@ -8,13 +8,13 @@ function buildTenantRegistry(entries = []) {
 
   for (const entry of entries) {
     const tenantId = readString(entry?.tenantId);
-    const phoneNumberId = readString(entry?.phoneNumberId);
+    const channelId = readString(entry?.channelId);
 
-    if (!tenantId || !phoneNumberId) {
+    if (!tenantId || !channelId) {
       continue;
     }
 
-    registry[phoneNumberId] = tenantId;
+    registry[channelId] = tenantId;
   }
 
   return Object.freeze(registry);
@@ -23,12 +23,12 @@ function buildTenantRegistry(entries = []) {
 export const tenantRegistry = buildTenantRegistry([
   {
     tenantId: "dr_davidvera_campinas",
-    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    channelId: process.env.WHATSAPP_PHONE_NUMBER_ID,
   },
 
   // Exemplo futuro:
   // {
   //   tenantId: "clinica_sp",
-  //   phoneNumberId: process.env.CLINICA_SP_WHATSAPP_PHONE_NUMBER_ID,
+  //   channelId: process.env.CLINICA_SP_WHATSAPP_PHONE_NUMBER_ID,
   // },
 ]);
