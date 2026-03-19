@@ -29,6 +29,7 @@ import {
   normalizeCEP,
 } from "../utils/validators.js";
 
+import { sanitizeForLog } from "../utils/logSanitizer.js";
 import { parseBRDateToISO } from "../utils/time.js";
 import { audit, debugLog } from "../observability/audit.js";
 import { maskPhone, maskCpf } from "../utils/mask.js";
@@ -124,13 +125,16 @@ async function handleInbound({
   const currentState = (await getState(tenantId, phone)) || "MAIN";
   const ctx = currentState;
 
-  debugLog("FLOW_INBOUND_RECEIVED", {
-    tenantId,
-    traceId,
-    phoneMasked: maskPhone(phone),
-    state: currentState,
-    inboundKind: digits ? "digits-or-button" : "text",
-  });
+  debugLog(
+    "FLOW_INBOUND_RECEIVED",
+    sanitizeForLog({
+      tenantId,
+      traceId,
+      phoneMasked: maskPhone(phone),
+      state: currentState,
+      inboundKind: digits ? "digits-or-button" : "text",
+    })
+  );
 
   {
     const code = String(FLOW_RESET_CODE || "").trim();
@@ -695,27 +699,30 @@ async function handleInbound({
           },
         });
 
-        audit("BOOKING_CONFIRM_FLOW", {
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          patientId: bookingRequest.patientId || null,
-          slotId: bookingRequest.slotId || null,
-          planId: bookingRequest.planId || null,
-          providerId: bookingRequest.providerId || null,
-          appointmentDate: s?.booking?.appointmentDate || null,
-          appointmentTime: chosen?.time || null,
-          rid: out?.rid || null,
-          httpStatus: out?.status || null,
-          technicalAccepted: !!out?.ok,
-          functionalResult: !!out?.ok
-            ? "BOOKING_PRESUMED_CREATED"
-            : "BOOKING_NOT_CONFIRMED",
-          patientFacingMessage: !!out?.ok
-            ? "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE"
-            : "BOOKING_FAILURE_RETRY_OR_SUPPORT",
-          escalationRequired: !out?.ok,
-        });
+        audit(
+          "BOOKING_CONFIRM_FLOW",
+          sanitizeForLog({
+            tenantId,
+            traceId,
+            tracePhone: maskPhone(phone),
+            patientId: bookingRequest.patientId || null,
+            slotId: bookingRequest.slotId || null,
+            planId: bookingRequest.planId || null,
+            providerId: bookingRequest.providerId || null,
+            appointmentDate: s?.booking?.appointmentDate || null,
+            appointmentTime: chosen?.time || null,
+            rid: out?.rid || null,
+            httpStatus: out?.status || null,
+            technicalAccepted: !!out?.ok,
+            functionalResult: !!out?.ok
+              ? "BOOKING_PRESUMED_CREATED"
+              : "BOOKING_NOT_CONFIRMED",
+            patientFacingMessage: !!out?.ok
+              ? "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE"
+              : "BOOKING_FAILURE_RETRY_OR_SUPPORT",
+            escalationRequired: !out?.ok,
+          })
+        );
 
         if (!out.ok) {
           await updateSession(tenantId, phone, (sess) => {
@@ -730,18 +737,21 @@ async function handleInbound({
             phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
-          audit("BOOKING_CONFIRM_PATIENT_RESPONSE", {
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            rid: out?.rid || null,
-            httpStatus: out?.status || null,
-            technicalAccepted: false,
-            functionalResult: "BOOKING_NOT_CONFIRMED",
-            patientFacingMessage: "BOOKING_FAILURE_RETRY_OR_SUPPORT",
-            patientMessageSent: true,
-            escalationRequired: true,
-          });
+          audit(
+            "BOOKING_CONFIRM_PATIENT_RESPONSE",
+            sanitizeForLog({
+              tenantId,
+              traceId,
+              tracePhone: maskPhone(phone),
+              rid: out?.rid || null,
+              httpStatus: out?.status || null,
+              technicalAccepted: false,
+              functionalResult: "BOOKING_NOT_CONFIRMED",
+              patientFacingMessage: "BOOKING_FAILURE_RETRY_OR_SUPPORT",
+              patientMessageSent: true,
+              escalationRequired: true,
+            })
+          );
 
           const slots = s?.booking?.slots || [];
           await showSlotsPage({
@@ -814,7 +824,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             });
           }
 
-          audit("BOOKING_CONFIRM_PATIENT_RESPONSE", {
+          audit(
+          "BOOKING_CONFIRM_PATIENT_RESPONSE",
+          sanitizeForLog({
             tenantId,
             traceId,
             tracePhone: maskPhone(phone),
@@ -826,7 +838,8 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             patientMessageMainSent: !!sentMainSuccess,
             patientMessagePortalLinkSent: !!sentPortalLink,
             escalationRequired: false,
-          });
+          })
+        );
         } catch {
           audit("BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE", {
             tenantId,
@@ -847,18 +860,20 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             phoneNumberIdFallback: effectivePhoneNumberId,
           });
 
-          audit("BOOKING_CONFIRM_PATIENT_RESPONSE", {
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            rid: out?.rid || null,
-            httpStatus: out?.status || null,
-            technicalAccepted: true,
-            functionalResult: "BOOKING_PRESUMED_CREATED",
-            patientFacingMessage: "BOOKING_SUCCESS_FALLBACK_MESSAGE",
-            patientMessageFallbackSent: !!fallbackSent,
-            escalationRequired: false,
-          });
+          audit(
+            "BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE",
+            sanitizeForLog({
+              tenantId,
+              traceId,
+              tracePhone: maskPhone(phone),
+              rid: out?.rid || null,
+              httpStatus: out?.status || null,
+              technicalAccepted: true,
+              functionalResult: "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
+              patientFacingMessage: "BOOKING_SUCCESS_FALLBACK_MESSAGE",
+              escalationRequired: false,
+            })
+          );
         }
 
         return;
@@ -981,26 +996,32 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         timestamp: new Date().toISOString(),
       });
 
-      debugLog("PATIENT_DOCUMENT_RECEIVED_FOR_IDENTIFICATION", {
-        tenantId,
-        traceId,
-        tracePhone: maskPhone(phone),
-        documentMasked: "***",
-      });
+      debugLog(
+        "PATIENT_DOCUMENT_RECEIVED_FOR_IDENTIFICATION",
+        sanitizeForLog({
+          tenantId,
+          traceId,
+          tracePhone: maskPhone(phone),
+          documentMasked: "***",
+        })
+      );
 
       const patientId = await patientAdapter.findPatientIdByDocument({
         document,
         runtimeCtx,
       });
 
-      debugLog("PATIENT_DOCUMENT_IDENTIFICATION_RESULT", {
-        tenantId,
-        traceId,
-        tracePhone: maskPhone(phone),
-        documentMasked: "***",
-        patientIdFound: !!patientId,
-        patientId: patientId || null,
-      });
+      debugLog(
+        "PATIENT_DOCUMENT_IDENTIFICATION_RESULT",
+        sanitizeForLog({
+          tenantId,
+          traceId,
+          tracePhone: maskPhone(phone),
+          documentMasked: "***",
+          patientIdFound: !!patientId,
+          patientId: patientId || null,
+        })
+      );
 
       if (!patientId) {
         await updateSession(tenantId, phone, (s) => {
@@ -1192,17 +1213,20 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             };
           });
 
-          audit("PLAN_INCONSISTENCY_INSURED_PLAN_NOT_ENABLED", {
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            patientId: Number(patientId) || null,
-            flowPlanKey,
-            planIdsDetected: Array.isArray(planIds)
-              ? planIds.map(Number)
-              : [],
-            escalationRequired: true,
-          });
+          audit(
+            "PLAN_INCONSISTENCY_INSURED_PLAN_NOT_ENABLED",
+            sanitizeForLog({
+              tenantId,
+              traceId,
+              tracePhone: maskPhone(phone),
+              patientId: Number(patientId) || null,
+              flowPlanKey,
+              planIdsDetected: Array.isArray(planIds)
+                ? planIds.map(Number)
+                : [],
+              escalationRequired: true,
+            })
+          );
 
           await sendButtons({
             tenantId,
@@ -1254,14 +1278,17 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
         sess.portal.missing = validation.missing;
       });
 
-      audit("EXISTING_PATIENT_BLOCKED_INCOMPLETE_REGISTRATION", {
-        tenantId,
-        traceId,
-        tracePhone: maskPhone(phone),
-        patientId: patientId || null,
-        missingFields: Array.isArray(validation.missing) ? validation.missing : [],
-        escalationRequired: true,
-      });
+      audit(
+        "EXISTING_PATIENT_BLOCKED_INCOMPLETE_REGISTRATION",
+        sanitizeForLog({
+          tenantId,
+          traceId,
+          tracePhone: maskPhone(phone),
+          patientId: patientId || null,
+          missingFields: Array.isArray(validation.missing) ? validation.missing : [],
+          escalationRequired: true,
+        })
+      );
 
       await sendButtons({
         tenantId,
