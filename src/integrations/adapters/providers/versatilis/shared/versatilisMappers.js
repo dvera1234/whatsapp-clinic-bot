@@ -1,28 +1,130 @@
 import { PLAN_KEYS } from "../../../../../config/constants.js";
 import { cleanStr, parsePositiveInt } from "../../../../../utils/validators.js";
 
-function resolveCodPlanoFromRuntime(planKey, runtime = {}) {
-  const particular =
-    Number(runtime?.codPlanoParticular) ||
-    Number(runtime?.tenantConfig?.plans?.codPlanoParticular) ||
-    null;
-
-  const medSenior =
-    Number(runtime?.codPlanoMedSeniorSp) ||
-    Number(runtime?.tenantConfig?.plans?.codPlanoMedSeniorSp) ||
-    null;
-
-  if (planKey === PLAN_KEYS.PARTICULAR) return particular;
-  if (planKey === PLAN_KEYS.MEDSENIOR_SP) return medSenior;
-
-  return particular;
+function readString(value) {
+  const v = String(value ?? "").trim();
+  return v || "";
 }
 
-function codPlanoFromPlanKey(planKey, runtime = {}) {
-  return resolveCodPlanoFromRuntime(planKey, runtime);
+function onlyDigits(value) {
+  return String(value ?? "").replace(/\D+/g, "");
 }
 
-function normalizePlanListFromProfile(profile) {
+function hasMinText(value, min = 1) {
+  return readString(value).length >= min;
+}
+
+function hasValidEmail(value) {
+  const v = readString(value);
+  if (!v) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+function hasValidPostalCode(value) {
+  return onlyDigits(value).length === 8;
+}
+
+function hasValidStateCode(value) {
+  return /^[A-Z]{2}$/.test(readString(value).toUpperCase());
+}
+
+function hasDateLike(value) {
+  const v = readString(value);
+  if (!v) return false;
+
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(v) || /^\d{4}-\d{2}-\d{2}/.test(v);
+}
+
+function pickFirst(obj, keys = []) {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
+function resolveProfileStateCode(profile = {}) {
+  return pickFirst(profile, [
+    "UF",
+    "Uf",
+    "uf",
+    "EstadoUF",
+    "estadoUf",
+    "estadoUF",
+    "SiglaUF",
+    "siglaUf",
+    "siglaUF",
+    "CdUF",
+    "cdUf",
+    "cdUF",
+  ]);
+}
+
+function validatePatientRegistrationData(profile = {}) {
+  const missing = [];
+
+  const fullName = pickFirst(profile, ["Nome", "nome"]);
+  const document = pickFirst(profile, ["CPF", "Cpf", "cpf"]);
+  const birthDate = pickFirst(profile, [
+    "DtNasc",
+    "DataNascimento",
+    "Nascimento",
+    "dtNasc",
+    "dataNascimento",
+  ]);
+  const email = pickFirst(profile, ["Email", "email"]);
+  const mobilePhone = pickFirst(profile, ["Celular", "celular"]);
+  const postalCode = pickFirst(profile, ["CEP", "Cep", "cep"]);
+  const streetAddress = pickFirst(profile, [
+    "Endereco",
+    "Endereço",
+    "Logradouro",
+    "endereco",
+    "logradouro",
+  ]);
+  const addressNumber = pickFirst(profile, ["Numero", "Número", "numero"]);
+  const district = pickFirst(profile, ["Bairro", "bairro"]);
+  const city = pickFirst(profile, ["Cidade", "cidade"]);
+  const stateCode = resolveProfileStateCode(profile);
+
+  if (!hasMinText(fullName, 5)) missing.push("nome completo");
+  if (onlyDigits(document).length !== 11) missing.push("CPF");
+  if (!hasDateLike(birthDate)) missing.push("data de nascimento");
+  if (!hasValidEmail(email)) missing.push("e-mail");
+  if (onlyDigits(mobilePhone).length < 10) missing.push("celular");
+  if (!hasValidPostalCode(postalCode)) missing.push("cep");
+  if (!hasMinText(streetAddress, 3)) missing.push("endereço");
+  if (!hasMinText(addressNumber, 1)) missing.push("número");
+  if (!hasMinText(district, 2)) missing.push("bairro");
+  if (!hasMinText(city, 2)) missing.push("cidade");
+  if (!hasValidStateCode(stateCode)) missing.push("estado (UF)");
+
+  return {
+    ok: missing.length === 0,
+    missing,
+  };
+}
+
+function resolvePlanIdFromPlanKey(planKey, runtime = {}) {
+  const privatePlanId =
+    Number(runtime?.privatePlanId) ||
+    Number(runtime?.tenantConfig?.plans?.privatePlanId) ||
+    null;
+
+  const insuredPlanId =
+    Number(runtime?.insuredPlanId) ||
+    Number(runtime?.tenantConfig?.plans?.insuredPlanId) ||
+    null;
+
+  if (planKey === PLAN_KEYS.PARTICULAR) return privatePlanId;
+  if (planKey === PLAN_KEYS.MEDSENIOR_SP) return insuredPlanId;
+
+  return privatePlanId;
+}
+
+function listPlanIdsFromProfile(profile) {
   const list = [];
 
   if (Array.isArray(profile?.CodPlanos)) {
@@ -32,18 +134,18 @@ function normalizePlanListFromProfile(profile) {
     }
   }
 
-  const one = parsePositiveInt(profile?.CodPlano);
-  if (one) list.push(one);
+  const singlePlanId = parsePositiveInt(profile?.CodPlano);
+  if (singlePlanId) list.push(singlePlanId);
 
   return Array.from(new Set(list));
 }
 
-function hasPlanKey(plansCodList, planKey, runtime = {}) {
-  const want = codPlanoFromPlanKey(planKey, runtime);
-  return (plansCodList || []).some((x) => Number(x) === Number(want));
+function hasPlanByDomainKey(planIds, planKey, runtime = {}) {
+  const expectedPlanId = resolvePlanIdFromPlanKey(planKey, runtime);
+  return (planIds || []).some((x) => Number(x) === Number(expectedPlanId));
 }
 
-function findCodUsuarioDeep(obj, depth = 0, maxDepth = 6, seen = new Set()) {
+function findExternalPatientIdDeep(obj, depth = 0, maxDepth = 6, seen = new Set()) {
   if (obj == null) return null;
 
   const direct = parsePositiveInt(obj);
@@ -57,7 +159,7 @@ function findCodUsuarioDeep(obj, depth = 0, maxDepth = 6, seen = new Set()) {
 
   if (Array.isArray(obj)) {
     for (const it of obj) {
-      const found = findCodUsuarioDeep(it, depth + 1, maxDepth, seen);
+      const found = findExternalPatientIdDeep(it, depth + 1, maxDepth, seen);
       if (found) return found;
     }
     return null;
@@ -74,40 +176,40 @@ function findCodUsuarioDeep(obj, depth = 0, maxDepth = 6, seen = new Set()) {
       const n = parsePositiveInt(v);
       if (n) return n;
 
-      const deep = findCodUsuarioDeep(v, depth + 1, maxDepth, seen);
+      const deep = findExternalPatientIdDeep(v, depth + 1, maxDepth, seen);
       if (deep) return deep;
     }
   }
 
   for (const v of Object.values(obj)) {
-    const found = findCodUsuarioDeep(v, depth + 1, maxDepth, seen);
+    const found = findExternalPatientIdDeep(v, depth + 1, maxDepth, seen);
     if (found) return found;
   }
 
   return null;
 }
 
-function parseCodUsuarioFromAny(data) {
-  return findCodUsuarioDeep(data);
+function parseExternalPatientIdFromAny(data) {
+  return findExternalPatientIdDeep(data);
 }
 
-function mergeComplementoWithUF(complementoUser, uf) {
-  const c = cleanStr(complementoUser);
-  const U = cleanStr(uf).toUpperCase();
-  const base = `UF:${U}`;
+function composeAddressComplement(addressComplement, stateCode) {
+  const cleanComplement = cleanStr(addressComplement);
+  const normalizedStateCode = cleanStr(stateCode).toUpperCase();
+  const base = `UF:${normalizedStateCode}`;
 
-  if (!c || c === "0") return base;
-  if (c.toUpperCase().includes("UF:")) return c;
+  if (!cleanComplement || cleanComplement === "0") return base;
+  if (cleanComplement.toUpperCase().includes("UF:")) return cleanComplement;
 
-  return `${base} | ${c}`;
+  return `${base} | ${cleanComplement}`;
 }
 
 export {
-  resolveCodPlanoFromRuntime,
-  codPlanoFromPlanKey,
-  normalizePlanListFromProfile,
-  hasPlanKey,
-  findCodUsuarioDeep,
-  parseCodUsuarioFromAny,
-  mergeComplementoWithUF,
+  resolvePlanIdFromPlanKey,
+  listPlanIdsFromProfile,
+  hasPlanByDomainKey,
+  findExternalPatientIdDeep,
+  parseExternalPatientIdFromAny,
+  composeAddressComplement,
+  validatePatientRegistrationData,
 };
