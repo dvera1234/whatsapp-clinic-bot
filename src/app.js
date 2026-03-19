@@ -6,6 +6,8 @@ import webhookRouter from "./routes/webhook.js";
 import healthRouter from "./routes/health.js";
 import { errLog } from "./observability/audit.js";
 import { maskIp } from "./utils/mask.js";
+import { configureInactivityHandler } from "./session/redisSession.js";
+import { sendText } from "./whatsapp/sender.js";
 
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -32,6 +34,8 @@ const debugLimiter = rateLimit({
 });
 
 const app = express();
+
+configureInactivityHandler({ sendText });
 
 app.use(globalLimiter);
 app.use("/webhook", webhookLimiter);
