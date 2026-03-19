@@ -1,79 +1,65 @@
 import { audit, auditOutcome, debugLog } from "../../../../../observability/audit.js";
-import {
-  cleanStr,
-  isValidEmail,
-} from "../../../../../utils/validators.js";
+import { cleanStr, isValidEmail } from "../../../../../utils/validators.js";
 import {
   md5HexLegacyVersatilisOnly,
   generateTempPassword,
 } from "../../../../../utils/crypto.js";
-import { mergeTraceMeta, versatilisFetch } from "../../../../transport/versatilis/client.js";
 import {
-  resolveCodPlanoFromRuntime,
-  mergeComplementoWithUF,
-  parseCodUsuarioFromAny,
+  mergeTraceMeta,
+  versatilisFetch,
+} from "../../../../transport/versatilis/client.js";
+import {
+  resolvePlanIdFromPlanKey,
+  composeAddressComplement,
+  parseExternalPatientIdFromAny,
+  validatePatientRegistrationData,
 } from "../shared/versatilisMappers.js";
 
 function createVersatilisPortalAdapter() {
-  function validarCadastroCompleto({ perfil }) {
-    const missing = [];
-
-    const CPF = cleanStr(perfil?.CPF).replace(/\D+/g, "");
-    const Email = cleanStr(perfil?.Email);
-    const Celular = cleanStr(perfil?.Celular).replace(/\D+/g, "");
-    const CEP = cleanStr(perfil?.CEP).replace(/\D+/g, "");
-    const Endereco = cleanStr(perfil?.Endereco);
-    const Numero = cleanStr(perfil?.Numero);
-    const Bairro = cleanStr(perfil?.Bairro);
-    const Cidade = cleanStr(perfil?.Cidade);
-    const Complemento = cleanStr(perfil?.Complemento);
-    const DtNasc = cleanStr(perfil?.DtNasc);
-
-    if (!cleanStr(perfil?.Nome)) missing.push("nome completo");
-    if (CPF.length !== 11) missing.push("CPF");
-    if (!isValidEmail(Email)) missing.push("e-mail");
-    if (Celular.length < 10) missing.push("celular");
-    if (CEP.length !== 8) missing.push("CEP");
-    if (!Endereco) missing.push("endereço");
-    if (!Numero) missing.push("número");
-    if (!Bairro) missing.push("bairro");
-    if (!Cidade) missing.push("cidade");
-    if (!DtNasc) missing.push("data de nascimento");
-
-    const hasUF = /\bUF:\s*[A-Z]{2}\b/.test(Complemento.toUpperCase());
-    if (!hasUF) missing.push("estado (UF)");
-
-    return { ok: missing.length === 0, missing };
-  }
-
   return {
-    validarCadastroCompleto,
+    validateRegistrationData({ profile }) {
+      return validatePatientRegistrationData(profile);
+    },
 
-    async criarCadastroCompleto({ form, traceMeta = {}, runtimeCtx = {} }) {
-      const codPlano = resolveCodPlanoFromRuntime(form?.planoKey, runtimeCtx);
-      const senhaMD5 = md5HexLegacyVersatilisOnly(generateTempPassword(10));
-      const dtNascISO = cleanStr(form?.dtNascISO);
+    async createPatientRegistration({ registrationData, traceMeta = {}, runtimeCtx = {} }) {
+      const resolvedPlanId = resolvePlanIdFromPlanKey(
+        registrationData?.planKey,
+        runtimeCtx
+      );
+
+      const temporaryPasswordHash = md5HexLegacyVersatilisOnly(
+        generateTempPassword(10)
+      );
+
+      const birthDateISO = cleanStr(registrationData?.birthDateISO);
 
       const payload = {
-        Nome: form?.nome,
-        CPF: form?.cpf,
-        Email: form?.email,
-        DtNasc: dtNascISO,
-        Celular: form?.celular,
-        Telefone: form?.telefone || form?.celular || "",
-        CEP: form?.cep,
-        Endereco: form?.endereco,
-        Numero: form?.numero,
-        Complemento: mergeComplementoWithUF(form?.complemento, form?.uf),
-        Bairro: form?.bairro,
-        Cidade: form?.cidade,
-        CodPlano: String(codPlano),
-        CodPlanos: codPlano ? [codPlano] : [],
-        Senha: senhaMD5,
+        Nome: registrationData?.fullName,
+        CPF: registrationData?.document,
+        Email: registrationData?.email,
+        DtNasc: birthDateISO,
+        Celular: registrationData?.mobilePhone,
+        Telefone:
+          registrationData?.phone || registrationData?.mobilePhone || "",
+        CEP: registrationData?.postalCode,
+        Endereco: registrationData?.streetAddress,
+        Numero: registrationData?.addressNumber,
+        Complemento: composeAddressComplement(
+          registrationData?.addressComplement,
+          registrationData?.stateCode
+        ),
+        Bairro: registrationData?.district,
+        Cidade: registrationData?.city,
+        CodPlano: String(resolvedPlanId),
+        CodPlanos: resolvedPlanId ? [resolvedPlanId] : [],
+        Senha: temporaryPasswordHash,
       };
 
-      if (form?.sexoOpt === "M" || form?.sexoOpt === "F") {
-        payload.Sexo = form.sexoOpt;
+      if (
+        registrationData?.gender === "M" ||
+        registrationData?.gender === "F"
+      ) {
+        payload.Sexo = registrationData.gender;
       }
 
       function isEmpty(v) {
@@ -83,7 +69,7 @@ function createVersatilisPortalAdapter() {
         return false;
       }
 
-      const empties = Object.entries(payload)
+      const emptyFields = Object.entries(payload)
         .filter(([_, v]) => isEmpty(v))
         .map(([k]) => k);
 
@@ -91,20 +77,25 @@ function createVersatilisPortalAdapter() {
 
       if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5)
         validationErrors.push("Nome");
+
       if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, "")))
         validationErrors.push("CPF");
+
       if (!isValidEmail(payload.Email)) validationErrors.push("Email");
+
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || "")))
         validationErrors.push("DtNasc");
+
       if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, "")))
         validationErrors.push("CEP");
+
       if (!cleanStr(payload.Endereco)) validationErrors.push("Endereco");
       if (!cleanStr(payload.Numero)) validationErrors.push("Numero");
       if (!cleanStr(payload.Bairro)) validationErrors.push("Bairro");
       if (!cleanStr(payload.Cidade)) validationErrors.push("Cidade");
       if (!cleanStr(payload.Celular)) validationErrors.push("Celular");
       if (!cleanStr(payload.Senha)) validationErrors.push("Senha");
-      if (!codPlano) validationErrors.push("CodPlano");
+      if (!resolvedPlanId) validationErrors.push("CodPlano");
 
       const shape = Object.fromEntries(
         Object.entries(payload).map(([k, v]) => {
@@ -116,30 +107,32 @@ function createVersatilisPortalAdapter() {
         })
       );
 
-      debugLog("PORTAL_CREATE_PAYLOAD_SHAPE", {
+      debugLog("PATIENT_REGISTRATION_PAYLOAD_SHAPE", {
         tenantId: runtimeCtx?.tenantId || null,
-        empties,
+        emptyFields,
         validationErrors,
         shape,
       });
 
-      if (empties.length > 0 || validationErrors.length > 0) {
+      if (emptyFields.length > 0 || validationErrors.length > 0) {
         audit(
-          "PORTAL_CREATE_BLOCKED_INVALID_PAYLOAD",
+          "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
           auditOutcome({
             ...(traceMeta || {}),
             tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
             traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
             tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
             technicalAccepted: false,
-            functionalResult: "PORTAL_CREATE_BLOCKED_INVALID_PAYLOAD",
+            functionalResult: "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
             patientFacingMessage: null,
             escalationRequired: true,
-            hasForm: !!form,
-            formKeys: form ? Object.keys(form).sort() : [],
-            formShape: form
+            hasRegistrationData: !!registrationData,
+            registrationDataKeys: registrationData
+              ? Object.keys(registrationData).sort()
+              : [],
+            registrationDataShape: registrationData
               ? Object.fromEntries(
-                  Object.entries(form).map(([k, v]) => {
+                  Object.entries(registrationData).map(([k, v]) => {
                     if (v == null) return [k, "null/undefined"];
                     if (typeof v === "string") return [k, `string(len=${v.length})`];
                     if (typeof v === "number") return [k, "number"];
@@ -149,7 +142,7 @@ function createVersatilisPortalAdapter() {
                   })
                 )
               : {},
-            missingFields: empties,
+            missingFields: emptyFields,
             validationErrors,
           })
         );
@@ -157,7 +150,7 @@ function createVersatilisPortalAdapter() {
         return {
           ok: false,
           stage: "blocked_missing_fields",
-          missing: empties,
+          missing: emptyFields,
           validationErrors,
           hint: "Wizard não preencheu dados obrigatórios. Corrigir fluxo WZ_*.",
         };
@@ -172,13 +165,13 @@ function createVersatilisPortalAdapter() {
           tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
           traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
           tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
-          flow: "PORTAL_USER_CREATE",
-          cpfMasked: "***",
+          flow: "CREATE_PATIENT_REGISTRATION",
+          documentMasked: "***",
         }),
       });
 
       audit(
-        "PORTAL_USER_CREATE_ATTEMPT",
+        "PATIENT_REGISTRATION_ATTEMPT",
         auditOutcome({
           ...(traceMeta || {}),
           tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
@@ -188,8 +181,8 @@ function createVersatilisPortalAdapter() {
           httpStatus: out.status,
           rid: out.rid,
           functionalResult: out.ok
-            ? "PORTAL_USER_CREATED"
-            : "PORTAL_USER_CREATE_FAILED",
+            ? "PATIENT_REGISTRATION_CREATED"
+            : "PATIENT_REGISTRATION_FAILED",
           patientFacingMessage: null,
           escalationRequired: !out.ok,
           dataType: typeof out.data,
@@ -197,17 +190,17 @@ function createVersatilisPortalAdapter() {
       );
 
       if (!out.ok) {
-        return { ok: false, stage: "cadastrar", out };
+        return { ok: false, stage: "create_registration", out };
       }
 
-      const codUsuario =
-        parseCodUsuarioFromAny(out.data) ||
+      const patientId =
+        parseExternalPatientIdFromAny(out.data) ||
         Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
 
       return {
         ok: true,
-        codUsuario: Number.isFinite(Number(codUsuario))
-          ? Number(codUsuario)
+        patientId: Number.isFinite(Number(patientId))
+          ? Number(patientId)
           : null,
       };
     },
