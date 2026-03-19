@@ -84,18 +84,26 @@ function buildTenantConfig({
       waNumber: readDigits(env.SUPPORT_WA_NUMBER),
     },
 
-    integrations: {
-      identityProvider: "versatilis",
-      accessProvider: "versatilis",
-      bookingProvider: "versatilis",
+    services: {
+      identity: {
+        providerKey: "provider_default",
+      },
+      access: {
+        providerKey: "provider_default",
+      },
+      booking: {
+        providerKey: "provider_default",
+      },
+    },
 
-      versatilis: {
+    providers: {
+      provider_default: {
         baseUrl: readString(env.VERSATILIS_BASE),
         user: readString(env.VERSATILIS_USER),
         pass: readString(env.VERSATILIS_PASS),
       },
 
-      googleCalendar: {
+      calendar_default: {
         calendarId: readString(env.GOOGLE_CALENDAR_ID),
       },
     },
@@ -136,23 +144,16 @@ export const tenantConfigs = {
   //     VERSATILIS_PASS: process.env.CLINICA_SP_VERSATILIS_PASS,
   //     GOOGLE_CALENDAR_ID: process.env.CLINICA_SP_GOOGLE_CALENDAR_ID,
   //   },
-  //   overrides: {
-  //     integrations: {
-  //       identityProvider: "versatilis",
-  //       accessProvider: "versatilis",
-  //       bookingProvider: "versatilis",
-  //     },
-  //   },
   // }),
 
   // Exemplo futuro híbrido:
   // clinica_hibrida: buildTenantConfig({
   //   tenantId: "clinica_hibrida",
   //   overrides: {
-  //     integrations: {
-  //       identityProvider: "versatilis",
-  //       accessProvider: "versatilis",
-  //       bookingProvider: "google_calendar",
+  //     services: {
+  //       identity: { providerKey: "provider_default" },
+  //       access: { providerKey: "provider_default" },
+  //       booking: { providerKey: "calendar_default" },
   //     },
   //   },
   // }),
