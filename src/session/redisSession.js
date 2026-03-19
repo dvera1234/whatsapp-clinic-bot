@@ -1,12 +1,25 @@
 import { getRedisClient } from "../redis.js";
 import { DEBUG_REDIS, SESSION_TTL_SECONDS } from "../config/env.js";
-import { INACTIVITY_WARN_MS } from "../config/constants.js";
+import { INACTIVITY_WARN_MS, MSG } from "../config/constants.js";
 import { audit, errLog, techLog } from "../observability/audit.js";
 import { safeConsoleWrite, safeJson } from "../observability/logger.js";
 import { maskKey, maskPhone } from "../utils/mask.js";
 
 const redis = getRedisClient();
 const inactivityTimers = new Map();
+
+// 🔴 handler global de envio (NÃO depende mais do fluxo)
+let inactivityHandler = {
+  sendText: null,
+  getMessage: () => MSG?.INACTIVITY_TIMEOUT || "Sessão encerrada por inatividade.",
+};
+
+export function configureInactivityHandler({ sendText, getMessage }) {
+  inactivityHandler.sendText = sendText;
+  if (typeof getMessage === "function") {
+    inactivityHandler.getMessage = getMessage;
+  }
+}
 
 function logRedis(tag, obj) {
   if (!DEBUG_REDIS) return;
@@ -202,50 +215,40 @@ async function clearSession(tenantId, phone) {
   await deleteSession(tenantId, phone);
 }
 
-function scheduleInactivityWarning({
-  tenantId,
-  phone,
-  phoneNumberIdFallback,
-  sendText,
-  msgEncerramento,
-}) {
+function scheduleInactivityWarning({ tenantId, phone }) {
   const normalizedPhone = normalizePhone(phone);
-  const timerKey = inactivityTimerKey(tenantId, normalizedPhone);
-
-  if (!tenantId || !normalizedPhone) return;
+  const key = inactivityTimerKey(tenantId, normalizedPhone);
 
   clearInactivityTimer(tenantId, normalizedPhone);
 
-  if (typeof sendText !== "function" || !msgEncerramento) {
-    return;
-  }
+  if (!inactivityHandler.sendText) return;
 
   const timer = setTimeout(async () => {
     try {
       const s = await loadSession(tenantId, normalizedPhone);
 
       if (!s) {
-        inactivityTimers.delete(timerKey);
+        inactivityTimers.delete(key);
         return;
       }
 
       const idleMs = Date.now() - Number(s.lastUserTs || 0);
 
       if (idleMs < INACTIVITY_WARN_MS - 2000) {
-        inactivityTimers.delete(timerKey);
+        inactivityTimers.delete(key);
         return;
       }
 
-      await sendText({
+      const msg = inactivityHandler.getMessage();
+
+      await inactivityHandler.sendText({
         tenantId,
         to: normalizedPhone,
-        body: msgEncerramento,
-        phoneNumberIdFallback:
-          s.lastPhoneNumberIdFallback || phoneNumberIdFallback || "",
+        body: msg,
+        phoneNumberIdFallback: s.lastPhoneNumberIdFallback || "",
       });
 
       await clearSession(tenantId, normalizedPhone);
-      inactivityTimers.delete(timerKey);
 
       audit("FLOW_INACTIVITY_TIMEOUT", {
         tenantId,
@@ -253,13 +256,8 @@ function scheduleInactivityWarning({
         inactivityMs: idleMs,
         ttlSeconds: SESSION_TTL_SECONDS,
         warningMs: INACTIVITY_WARN_MS,
-        functionalResult: "SESSION_CLEARED_AFTER_INACTIVITY",
-        patientFacingMessage: "INACTIVITY_CLOSURE_MESSAGE_SENT",
-        escalationRequired: false,
       });
     } catch (e) {
-      inactivityTimers.delete(timerKey);
-
       errLog("FLOW_INACTIVITY_TIMEOUT_ERROR", {
         tenantId,
         tracePhone: maskPhone(normalizedPhone),
@@ -268,52 +266,22 @@ function scheduleInactivityWarning({
     }
   }, INACTIVITY_WARN_MS);
 
-  inactivityTimers.set(timerKey, timer);
+  inactivityTimers.set(key, timer);
 }
 
-async function touchUser(arg1, arg2) {
-  let tenantId;
-  let phone;
-  let phoneNumberIdFallback;
-  let sendText;
-  let msgEncerramento;
-
-  if (typeof arg1 === "object" && arg1 !== null) {
-    tenantId = arg1.tenantId;
-    phone = arg1.phone;
-    phoneNumberIdFallback = arg1.phoneNumberIdFallback;
-    sendText = arg1.sendText;
-    msgEncerramento = arg1.msgEncerramento;
-  } else {
-    tenantId = arg1;
-    phone = arg2;
-  }
-
+async function touchUser(tenantId, phone) {
   const s = await updateSession(tenantId, phone, (sess) => {
     sess.lastUserTs = Date.now();
-    if (phoneNumberIdFallback) {
-      sess.lastPhoneNumberIdFallback = phoneNumberIdFallback;
-    }
   });
 
-  scheduleInactivityWarning({
-    tenantId,
-    phone,
-    phoneNumberIdFallback,
-    sendText,
-    msgEncerramento,
-  });
+  scheduleInactivityWarning({ tenantId, phone });
 
   return s;
 }
 
 export {
   redis,
-  inactivityTimers,
-  logRedis,
   sessionKey,
-  detectUnexpectedSessionKeys,
-  sanitizeSessionForSave,
   loadSession,
   saveSession,
   deleteSession,
@@ -323,8 +291,6 @@ export {
   getState,
   getSession,
   setBookingPlan,
-  clearInactivityTimer,
   clearSession,
-  scheduleInactivityWarning,
   touchUser,
 };
