@@ -1,4 +1,5 @@
 import { audit, auditOutcome } from "../../../../../observability/audit.js";
+import { sanitizeForLog } from "../../../../../utils/logSanitizer.js";
 import {
   mergeTraceMeta,
   versatilisFetch,
@@ -24,16 +25,18 @@ function createVersatilisSchedulingAdapter() {
         {
           tenantId: runtimeCtx?.tenantId || null,
           tenantConfig: runtimeCtx?.tenantConfig || null,
-          traceMeta: mergeTraceMeta(
-            {
-              tenantId: runtimeCtx?.tenantId || null,
-              traceId: runtimeCtx?.traceId || null,
-              tracePhone: runtimeCtx?.tracePhone || null,
-            },
-            {
-              flow: "CHECK_RETURN_ELIGIBILITY_LAST_30_DAYS",
-              patientId: Number(patientId) || null,
-            }
+          traceMeta: sanitizeForLog(
+            mergeTraceMeta(
+              {
+                tenantId: runtimeCtx?.tenantId || null,
+                traceId: runtimeCtx?.traceId || null,
+                tracePhone: runtimeCtx?.tracePhone || null,
+              },
+              {
+                flow: "CHECK_RETURN_ELIGIBILITY_LAST_30_DAYS",
+                patientId: Number(patientId) || null,
+              }
+            )
           ),
         }
       );
@@ -41,18 +44,20 @@ function createVersatilisSchedulingAdapter() {
       if (!out.ok || !Array.isArray(out.data)) {
         audit(
           "RETURN_ELIGIBILITY_HISTORY_UNAVAILABLE",
-          auditOutcome({
-            tenantId: runtimeCtx?.tenantId || null,
-            traceId: runtimeCtx?.traceId || null,
-            tracePhone: runtimeCtx?.tracePhone || null,
-            patientId: Number(patientId) || null,
-            technicalAccepted: !!out?.ok,
-            httpStatus: out?.status || null,
-            rid: out?.rid || null,
-            functionalResult: "RETURN_ELIGIBILITY_UNAVAILABLE",
-            patientFacingMessage: null,
-            escalationRequired: false,
-          })
+          auditOutcome(
+            sanitizeForLog({
+              tenantId: runtimeCtx?.tenantId || null,
+              traceId: runtimeCtx?.traceId || null,
+              tracePhone: runtimeCtx?.tracePhone || null,
+              patientId: Number(patientId) || null,
+              technicalAccepted: !!out?.ok,
+              httpStatus: out?.status || null,
+              rid: out?.rid || null,
+              functionalResult: "RETURN_ELIGIBILITY_UNAVAILABLE",
+              patientFacingMessage: null,
+              escalationRequired: false,
+            })
+          )
         );
         return false;
       }
@@ -74,16 +79,18 @@ function createVersatilisSchedulingAdapter() {
         if (now - dateMs <= THIRTY_DAYS_MS) {
           audit(
             "RETURN_ELIGIBILITY_POSITIVE_LAST_30_DAYS",
-            auditOutcome({
-              tenantId: runtimeCtx?.tenantId || null,
-              traceId: runtimeCtx?.traceId || null,
-              tracePhone: runtimeCtx?.tracePhone || null,
-              patientId: Number(patientId) || null,
-              technicalAccepted: true,
-              functionalResult: "RETURN_ELIGIBILITY_POSITIVE",
-              patientFacingMessage: null,
-              escalationRequired: false,
-            })
+            auditOutcome(
+              sanitizeForLog({
+                tenantId: runtimeCtx?.tenantId || null,
+                traceId: runtimeCtx?.traceId || null,
+                tracePhone: runtimeCtx?.tracePhone || null,
+                patientId: Number(patientId) || null,
+                technicalAccepted: true,
+                functionalResult: "RETURN_ELIGIBILITY_POSITIVE",
+                patientFacingMessage: null,
+                escalationRequired: false,
+              })
+            )
           );
           return true;
         }
@@ -91,17 +98,19 @@ function createVersatilisSchedulingAdapter() {
 
       audit(
         "RETURN_ELIGIBILITY_NEGATIVE_LAST_30_DAYS",
-        auditOutcome({
-          tenantId: runtimeCtx?.tenantId || null,
-          traceId: runtimeCtx?.traceId || null,
-          tracePhone: runtimeCtx?.tracePhone || null,
-          patientId: Number(patientId) || null,
-          technicalAccepted: true,
-          functionalResult: "RETURN_ELIGIBILITY_NEGATIVE",
-          patientFacingMessage: null,
-          escalationRequired: false,
-          historyCount: out.data.length,
-        })
+        auditOutcome(
+          sanitizeForLog({
+            tenantId: runtimeCtx?.tenantId || null,
+            traceId: runtimeCtx?.traceId || null,
+            tracePhone: runtimeCtx?.tracePhone || null,
+            patientId: Number(patientId) || null,
+            technicalAccepted: true,
+            functionalResult: "RETURN_ELIGIBILITY_NEGATIVE",
+            patientFacingMessage: null,
+            escalationRequired: false,
+            historyCount: out.data.length,
+          })
+        )
       );
 
       return false;
@@ -125,7 +134,7 @@ function createVersatilisSchedulingAdapter() {
       const out = await versatilisFetch(path, {
         tenantId,
         tenantConfig,
-        traceMeta: {
+        traceMeta: sanitizeForLog({
           tenantId,
           traceId,
           flow: "FIND_SLOTS_BY_DATE",
@@ -133,7 +142,7 @@ function createVersatilisSchedulingAdapter() {
           providerId,
           patientId,
           isoDate,
-        },
+        }),
       });
 
       if (out.status === 404) {
@@ -184,7 +193,7 @@ function createVersatilisSchedulingAdapter() {
         tenantConfig,
         method: "POST",
         jsonBody: payload,
-        traceMeta,
+        traceMeta: sanitizeForLog(traceMeta || {}),
       });
     },
   };
