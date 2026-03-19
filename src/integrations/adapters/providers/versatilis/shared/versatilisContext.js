@@ -1,4 +1,4 @@
-function getVersaCtx(runtime = {}) {
+function getProviderRuntimeContext(runtime = {}) {
   return {
     tenantId: runtime?.tenantId || null,
     tenantConfig: runtime?.tenantConfig || null,
@@ -7,4 +7,4 @@ function getVersaCtx(runtime = {}) {
   };
 }
 
-export { getVersaCtx };
+export { getProviderRuntimeContext };
