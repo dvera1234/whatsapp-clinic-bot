@@ -59,32 +59,59 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     };
   }
 
+  const identityProvider = providersByCapability.identity || null;
+  const accessProvider = providersByCapability.access || null;
+  const bookingProvider = providersByCapability.booking || null;
+
+  const defaultVersatilisProvider =
+    identityProvider || accessProvider || bookingProvider || null;
+
   return {
     tenantId: first.tenant_id,
     name: first.name,
     status: first.status,
+
     channels: {
       phoneNumberId: first.phone_number_id,
       whatsappBusinessAccountId: first.whatsapp_business_account_id,
     },
+
     clinic: {
-      defaultUnitId: first.default_unit_id,
-      defaultSpecialtyId: first.default_specialty_id,
-      primaryPractitionerId: first.primary_practitioner_id,
-      supportWaNumber: first.support_wa_number,
+      codUnidade: first.default_unit_id,
+      codEspecialidade: first.default_specialty_id,
+      codColaborador: first.primary_practitioner_id,
     },
+
     plans: {
-      privatePlanId: first.private_plan_id,
-      insuredPlanId: first.insured_plan_id,
+      codPlanoParticular: first.private_plan_id,
+      codPlanoMedSeniorSp: first.insured_plan_id,
     },
+
     portal: {
       url: first.portal_url,
     },
+
+    support: {
+      waNumber: first.support_wa_number,
+    },
+
     integrations: {
-      patientProvider: providersByCapability.identity?.providerKey || null,
-      portalProvider: providersByCapability.access?.providerKey || null,
-      schedulingProvider: providersByCapability.booking?.providerKey || null,
-      providers: providersByCapability,
+      patientProvider: identityProvider?.providerKey || null,
+      portalProvider: accessProvider?.providerKey || null,
+      schedulingProvider: bookingProvider?.providerKey || null,
+
+      versatilis: {
+        baseUrl: defaultVersatilisProvider?.baseUrl || "",
+        user: defaultVersatilisProvider?.username || "",
+        pass: defaultVersatilisProvider?.passwordEncrypted || "",
+      },
+
+      googleCalendar: {
+        calendarId:
+          bookingProvider?.extraConfig?.calendarId ||
+          bookingProvider?.extraConfig?.calendar_id ||
+          "",
+      },
     },
   };
 }
