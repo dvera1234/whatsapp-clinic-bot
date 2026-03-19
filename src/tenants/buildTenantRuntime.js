@@ -29,30 +29,30 @@ function pushIfMissing(list, condition, fieldName) {
 }
 
 function isSupportedIdentityProvider(value) {
-  return ["versatilis"].includes(value);
+  return ["provider_default"].includes(value);
 }
 
 function isSupportedAccessProvider(value) {
-  return ["versatilis"].includes(value);
+  return ["provider_default"].includes(value);
 }
 
 function isSupportedBookingProvider(value) {
-  return ["versatilis", "google_calendar"].includes(value);
+  return ["provider_default", "calendar_default"].includes(value);
 }
 
 export function buildTenantRuntime(tenantConfig = {}) {
   const tenantId = readString(tenantConfig?.tenantId);
 
-  const identityProvider = readString(
-    tenantConfig?.integrations?.identityProvider || "versatilis"
+  const identityProviderKey = readString(
+    tenantConfig?.services?.identity?.providerKey || "provider_default"
   );
 
-  const accessProvider = readString(
-    tenantConfig?.integrations?.accessProvider || "versatilis"
+  const accessProviderKey = readString(
+    tenantConfig?.services?.access?.providerKey || "provider_default"
   );
 
-  const bookingProvider = readString(
-    tenantConfig?.integrations?.bookingProvider || "versatilis"
+  const bookingProviderKey = readString(
+    tenantConfig?.services?.booking?.providerKey || "provider_default"
   );
 
   const primaryPractitionerId = readNumber(
@@ -70,18 +70,18 @@ export function buildTenantRuntime(tenantConfig = {}) {
   const portalUrl = readHttpsUrl(tenantConfig?.portal?.url);
   const supportWa = readDigits(tenantConfig?.support?.waNumber);
 
-  const versatilisBaseUrl = readString(
-    tenantConfig?.integrations?.versatilis?.baseUrl
+  const defaultProviderBaseUrl = readString(
+    tenantConfig?.providers?.provider_default?.baseUrl
   );
-  const versatilisUser = readString(
-    tenantConfig?.integrations?.versatilis?.user
+  const defaultProviderUser = readString(
+    tenantConfig?.providers?.provider_default?.user
   );
-  const versatilisPass = readString(
-    tenantConfig?.integrations?.versatilis?.pass
+  const defaultProviderPass = readString(
+    tenantConfig?.providers?.provider_default?.pass
   );
 
-  const googleCalendarId = readString(
-    tenantConfig?.integrations?.googleCalendar?.calendarId
+  const defaultCalendarId = readString(
+    tenantConfig?.providers?.calendar_default?.calendarId
   );
 
   const missing = [];
@@ -89,16 +89,16 @@ export function buildTenantRuntime(tenantConfig = {}) {
 
   pushIfMissing(missing, !tenantId, "tenantId");
 
-  if (!isSupportedIdentityProvider(identityProvider)) {
-    invalid.push("integrations.identityProvider");
+  if (!isSupportedIdentityProvider(identityProviderKey)) {
+    invalid.push("services.identity.providerKey");
   }
 
-  if (!isSupportedAccessProvider(accessProvider)) {
-    invalid.push("integrations.accessProvider");
+  if (!isSupportedAccessProvider(accessProviderKey)) {
+    invalid.push("services.access.providerKey");
   }
 
-  if (!isSupportedBookingProvider(bookingProvider)) {
-    invalid.push("integrations.bookingProvider");
+  if (!isSupportedBookingProvider(bookingProviderKey)) {
+    invalid.push("services.booking.providerKey");
   }
 
   pushIfMissing(
@@ -116,34 +116,34 @@ export function buildTenantRuntime(tenantConfig = {}) {
     "support.waNumber"
   );
 
-  const needsVersatilis =
-    identityProvider === "versatilis" ||
-    accessProvider === "versatilis" ||
-    bookingProvider === "versatilis";
+  const needsDefaultProvider =
+    identityProviderKey === "provider_default" ||
+    accessProviderKey === "provider_default" ||
+    bookingProviderKey === "provider_default";
 
-  if (needsVersatilis) {
+  if (needsDefaultProvider) {
     pushIfMissing(
       missing,
-      !versatilisBaseUrl,
-      "integrations.versatilis.baseUrl"
+      !defaultProviderBaseUrl,
+      "providers.provider_default.baseUrl"
     );
     pushIfMissing(
       missing,
-      !versatilisUser,
-      "integrations.versatilis.user"
+      !defaultProviderUser,
+      "providers.provider_default.user"
     );
     pushIfMissing(
       missing,
-      !versatilisPass,
-      "integrations.versatilis.pass"
+      !defaultProviderPass,
+      "providers.provider_default.pass"
     );
   }
 
-  if (bookingProvider === "google_calendar") {
+  if (bookingProviderKey === "calendar_default") {
     pushIfMissing(
       missing,
-      !googleCalendarId,
-      "integrations.googleCalendar.calendarId"
+      !defaultCalendarId,
+      "providers.calendar_default.calendarId"
     );
   }
 
@@ -161,9 +161,9 @@ export function buildTenantRuntime(tenantConfig = {}) {
       tenantId,
 
       providers: {
-        identityProvider,
-        accessProvider,
-        bookingProvider,
+        identityProvider: identityProviderKey,
+        accessProvider: accessProviderKey,
+        bookingProvider: bookingProviderKey,
       },
 
       clinic: {
@@ -185,23 +185,26 @@ export function buildTenantRuntime(tenantConfig = {}) {
         waNumber: supportWa,
       },
 
-      integrations: {
+      services: {
         identity: {
-          provider: identityProvider,
+          providerKey: identityProviderKey,
         },
         access: {
-          provider: accessProvider,
+          providerKey: accessProviderKey,
         },
         booking: {
-          provider: bookingProvider,
+          providerKey: bookingProviderKey,
         },
-        versatilis: {
-          baseUrl: versatilisBaseUrl,
-          user: versatilisUser,
-          pass: versatilisPass,
+      },
+
+      providersConfig: {
+        provider_default: {
+          baseUrl: defaultProviderBaseUrl,
+          user: defaultProviderUser,
+          pass: defaultProviderPass,
         },
-        googleCalendar: {
-          calendarId: googleCalendarId,
+        calendar_default: {
+          calendarId: defaultCalendarId,
         },
       },
     },
