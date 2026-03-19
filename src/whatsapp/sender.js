@@ -1,10 +1,12 @@
 import { errLog } from "../observability/audit.js";
 import { maskPhone } from "../utils/mask.js";
 import { fetchWithTimeout } from "../utils/time.js";
-import { resolveTenant } from "../tenants/resolveTenant.js";
+import { WHATSAPP_TOKEN } from "../config/env.js";
 
 function getSendConfig({ tenantId, phoneNumberIdFallback }) {
   const safeTenantId = String(tenantId || "").trim();
+  const token = String(WHATSAPP_TOKEN || "").trim();
+  const phoneNumberId = String(phoneNumberIdFallback || "").trim();
 
   if (!safeTenantId) {
     errLog("WHATSAPP_SEND_CONFIG_MISSING_TENANT_ID", {
@@ -12,24 +14,6 @@ function getSendConfig({ tenantId, phoneNumberIdFallback }) {
     });
     return null;
   }
-
-  const tenantResolved = resolveTenant(String(phoneNumberIdFallback || "").trim());
-
-  const tenantConfig =
-    tenantResolved?.tenantId === safeTenantId
-      ? tenantResolved.tenantConfig
-      : null;
-
-  if (!tenantConfig) {
-    errLog("WHATSAPP_SEND_CONFIG_TENANT_NOT_RESOLVED", {
-      tenantId: safeTenantId,
-      hasPhoneNumberIdFallback: !!phoneNumberIdFallback,
-    });
-    return null;
-  }
-
-  const token = String(tenantConfig?.channel?.whatsappToken || "").trim();
-  const phoneNumberId = String(tenantConfig?.channel?.phoneNumberId || "").trim();
 
   if (!token) {
     errLog("WHATSAPP_SEND_CONFIG_MISSING_TOKEN", {
