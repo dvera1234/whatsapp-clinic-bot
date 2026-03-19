@@ -47,6 +47,7 @@ function maskName(value) {
 
 function shouldPreserveKey(key) {
   const k = String(key || "").toLowerCase();
+
   return (
     k === "traceid" ||
     k === "rid" ||
@@ -64,11 +65,24 @@ function shouldPreserveKey(key) {
     k === "providerid" ||
     k === "codcolaborador" ||
     k === "endpoint" ||
-    k === "method"
+    k === "method" ||
+    k === "technicalaccepted" ||
+    k === "functionalresult" ||
+    k === "patientfacingmessage" ||
+    k === "escalationrequired" ||
+    k === "hasbody" ||
+    k === "ms" ||
+    k === "status" ||
+    k === "statustext" ||
+    k === "datatype" ||
+    k === "isarray" ||
+    k === "flow"
   );
 }
 
 function sanitizePrimitiveByValue(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value;
   if (typeof value !== "string") return value;
 
   const trimmed = value.trim();
@@ -92,13 +106,16 @@ function sanitizePrimitiveByKey(key, value) {
     return value;
   }
 
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value;
+  if (value == null) return value;
+
   if (
     k.includes("token") ||
     k.includes("secret") ||
     k.includes("password") ||
     k.includes("passwd") ||
-    k.includes("authorization") ||
-    k.includes("auth")
+    k.includes("authorization")
   ) {
     return "***";
   }
@@ -127,9 +144,9 @@ function sanitizePrimitiveByKey(key, value) {
 
   if (
     k.includes("login") ||
-    k.includes("usuario") ||
     k.includes("username") ||
-    k === "user"
+    k === "user" ||
+    k === "usuario"
   ) {
     return maskString(value, 2, 2);
   }
@@ -170,6 +187,9 @@ export function sanitizeForLog(input, depth = 0) {
   if (depth > 6) return "[MaxDepth]";
 
   if (input == null) return input;
+
+  if (typeof input === "boolean") return input;
+  if (typeof input === "number") return input;
 
   if (Array.isArray(input)) {
     return input.map((item) => sanitizeForLog(item, depth + 1));
