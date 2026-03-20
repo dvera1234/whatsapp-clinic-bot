@@ -6,14 +6,14 @@ const MIN_LEAD_HOURS = 12;
 const TZ_OFFSET = "-03:00";
 
 const PLAN_KEYS = {
-  PARTICULAR: "PARTICULAR",
-  MEDSENIOR_SP: "MEDSENIOR_SP",
+  PRIVATE: "PRIVATE",
+  INSURED: "INSURED",
 };
 
 function resolvePlanIdFromRuntime(planKey, runtime) {
   if (!runtime?.plans) return null;
 
-  return planKey === PLAN_KEYS.MEDSENIOR_SP
+  return planKey === PLAN_KEYS.INSURED
     ? runtime.plans.insuredPlanId
     : runtime.plans.privatePlanId;
 }
