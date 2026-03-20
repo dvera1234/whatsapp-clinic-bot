@@ -3,8 +3,22 @@ export function buildTenantRuntime(config = {}) {
   const access = config.providers?.access;
   const booking = config.providers?.booking;
 
-  if (!identity || !identity.baseUrl) {
-    return { ok: false, missing: ["providers.identity"] };
+  const missing = [];
+
+  if (!identity?.key) missing.push("providers.identity.key");
+  if (!identity?.baseUrl) missing.push("providers.identity.baseUrl");
+
+  if (!access?.key) missing.push("providers.access.key");
+  if (!access?.baseUrl) missing.push("providers.access.baseUrl");
+
+  if (!booking?.key) missing.push("providers.booking.key");
+  if (!booking?.baseUrl) missing.push("providers.booking.baseUrl");
+
+  if (missing.length) {
+    return {
+      ok: false,
+      missing,
+    };
   }
 
   return {
@@ -13,28 +27,28 @@ export function buildTenantRuntime(config = {}) {
       tenantId: config.tenantId,
 
       clinic: {
-        primaryPractitionerId: config.clinic.codColaborador,
-        defaultUnitId: config.clinic.codUnidade,
-        defaultSpecialtyId: config.clinic.codEspecialidade,
+        primaryPractitionerId: config.clinic?.codColaborador ?? null,
+        defaultUnitId: config.clinic?.codUnidade ?? null,
+        defaultSpecialtyId: config.clinic?.codEspecialidade ?? null,
       },
 
       plans: {
-        privatePlanId: config.plans.codPlanoParticular,
-        insuredPlanId: config.plans.codPlanoMedSeniorSp,
+        privatePlanId: config.plans?.codPlanoParticular ?? null,
+        insuredPlanId: config.plans?.codPlanoMedSeniorSp ?? null,
       },
 
       portal: {
-        url: config.portal.url,
+        url: config.portal?.url || "",
       },
 
       support: {
-        waNumber: config.support.waNumber,
+        waNumber: config.support?.waNumber || "",
       },
 
       providers: {
         identity: identity.key,
-        access: access?.key,
-        booking: booking?.key,
+        access: access.key,
+        booking: booking.key,
       },
 
       integrations: {
