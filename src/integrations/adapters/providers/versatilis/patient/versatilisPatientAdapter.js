@@ -57,6 +57,7 @@ function createVersatilisPatientAdapter() {
     if (cpfDigits.length !== 11) return null;
 
     const ctx = getProviderRuntimeContext(runtimeCtx);
+    const runtime = ctx.runtime || ctx.tenantRuntime || null;
     const cpfMask = formatCPFMask(cpfDigits);
 
     const candidates = [
@@ -75,7 +76,7 @@ function createVersatilisPatientAdapter() {
 
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
-        tenantConfig: ctx.tenantConfig,
+        runtime,
         traceMeta: {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
@@ -149,6 +150,7 @@ function createVersatilisPatientAdapter() {
     if (cpfDigits.length !== 11) return null;
 
     const ctx = getProviderRuntimeContext(runtimeCtx);
+    const runtime = ctx.runtime || ctx.tenantRuntime || null;
     const cpfMask = formatCPFMask(cpfDigits);
 
     const candidates = [
@@ -163,7 +165,7 @@ function createVersatilisPatientAdapter() {
 
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
-        tenantConfig: ctx.tenantConfig,
+        runtime,
         traceMeta: {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
@@ -247,6 +249,7 @@ function createVersatilisPatientAdapter() {
 
     async getPatientProfile({ patientId, runtimeCtx = {} }) {
       const ctx = getProviderRuntimeContext(runtimeCtx);
+      const runtime = ctx.runtime || ctx.tenantRuntime || null;
       const externalPatientId = Number(patientId);
 
       if (!Number.isFinite(externalPatientId) || externalPatientId <= 0) {
@@ -260,7 +263,7 @@ function createVersatilisPatientAdapter() {
 
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
-        tenantConfig: ctx.tenantConfig,
+        runtime,
         traceMeta: {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
