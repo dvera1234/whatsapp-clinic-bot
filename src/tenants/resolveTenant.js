@@ -39,10 +39,10 @@ export async function resolveTenant(channelId) {
     return {
       ok: false,
       reason: "TENANT_RUNTIME_INVALID",
-      tenantId: tenantConfig.tenantId || null,
+      tenantId: tenantConfig?.tenantId || null,
       runtime: null,
       channelId: safeChannelId,
-      missing: built?.missing || [],
+      missing: Array.isArray(built?.missing) ? built.missing : [],
     };
   }
 
