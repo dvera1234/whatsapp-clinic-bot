@@ -24,32 +24,45 @@ function sanitizeProviderBase(value) {
 }
 
 function resolveProviderConfig(runtime = {}) {
-  const identity = runtime?.integrations?.identity || {};
+  const candidates = [
+    { key: "identity", cfg: runtime?.integrations?.identity || {} },
+    { key: "access", cfg: runtime?.integrations?.access || {} },
+    { key: "booking", cfg: runtime?.integrations?.booking || {} },
+  ];
 
-  const baseUrl = sanitizeProviderBase(identity?.baseUrl);
-  const username = readString(identity?.user);
-  const password = readString(identity?.pass);
+  for (const candidate of candidates) {
+    const cfg = candidate.cfg || {};
+    const baseUrl = sanitizeProviderBase(cfg?.baseUrl);
+    const username = readString(cfg?.user);
+    const password = readString(cfg?.pass);
 
-  const missing = [];
-  if (!baseUrl) missing.push("runtime.integrations.identity.baseUrl");
-  if (!username) missing.push("runtime.integrations.identity.user");
-  if (!password) missing.push("runtime.integrations.identity.pass");
-
-  if (missing.length) {
-    const err = new Error(
-      `Provider auth config incompleta: ${missing.join(", ")}`
-    );
-    err.code = "PROVIDER_AUTH_CONFIG_INVALID";
-    err.missingFields = missing;
-    throw err;
+    if (baseUrl && username && password) {
+      return {
+        providerKey: cfg?.key || candidate.key,
+        baseUrl,
+        username,
+        password,
+      };
+    }
   }
 
-  return {
-    providerKey: identity?.key || "identity",
-    baseUrl,
-    username,
-    password,
-  };
+  const missing = [];
+  if (!sanitizeProviderBase(runtime?.integrations?.identity?.baseUrl)) {
+    missing.push("runtime.integrations.identity.baseUrl");
+  }
+  if (!readString(runtime?.integrations?.identity?.user)) {
+    missing.push("runtime.integrations.identity.user");
+  }
+  if (!readString(runtime?.integrations?.identity?.pass)) {
+    missing.push("runtime.integrations.identity.pass");
+  }
+
+  const err = new Error(
+    `Provider auth config incompleta: ${missing.join(", ")}`
+  );
+  err.code = "PROVIDER_AUTH_CONFIG_INVALID";
+  err.missingFields = missing;
+  throw err;
 }
 
 function accessTokenCacheKey(tenantId, providerKey, baseUrl, username) {
@@ -77,6 +90,18 @@ function maskBaseUrlForLog(baseUrl) {
 }
 
 async function getProviderAccessToken({ tenantId, runtime }) {
+  if (!tenantId) {
+    const err = new Error("tenantId ausente em getProviderAccessToken");
+    err.code = "TENANT_ID_MISSING";
+    throw err;
+  }
+
+  if (!runtime) {
+    const err = new Error("runtime ausente em getProviderAccessToken");
+    err.code = "RUNTIME_MISSING";
+    throw err;
+  }
+
   const { providerKey, baseUrl, username, password } =
     resolveProviderConfig(runtime);
 
