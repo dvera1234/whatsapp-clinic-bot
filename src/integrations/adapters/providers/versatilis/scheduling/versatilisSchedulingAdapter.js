@@ -18,13 +18,16 @@ function createVersatilisSchedulingAdapter() {
     async checkReturnEligibility({ patientId, runtimeCtx = {} }) {
       if (!patientId) return false;
 
+      const runtime =
+        runtimeCtx?.runtime || runtimeCtx?.tenantRuntime || null;
+
       const out = await versatilisFetch(
         `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(
           patientId
         )}`,
         {
           tenantId: runtimeCtx?.tenantId || null,
-          tenantConfig: runtimeCtx?.tenantConfig || null,
+          runtime,
           traceMeta: sanitizeForLog(
             mergeTraceMeta(
               {
@@ -118,7 +121,7 @@ function createVersatilisSchedulingAdapter() {
 
     async findSlotsByDate({
       tenantId,
-      tenantConfig,
+      runtime,
       traceId = null,
       providerId,
       patientId,
@@ -133,7 +136,7 @@ function createVersatilisSchedulingAdapter() {
 
       const out = await versatilisFetch(path, {
         tenantId,
-        tenantConfig,
+        runtime: runtime || null,
         traceMeta: sanitizeForLog({
           tenantId,
           traceId,
@@ -172,7 +175,7 @@ function createVersatilisSchedulingAdapter() {
 
     async confirmBooking({
       tenantId,
-      tenantConfig,
+      runtime,
       bookingRequest,
       traceMeta,
     }) {
@@ -184,13 +187,12 @@ function createVersatilisSchedulingAdapter() {
         CodUsuario: bookingRequest?.patientId,
         CodColaborador: bookingRequest?.providerId,
         BitTelemedicina: !!bookingRequest?.isTelemedicine,
-        Confirmada:
-          bookingRequest?.shouldConfirm !== false,
+        Confirmada: bookingRequest?.shouldConfirm !== false,
       };
 
       return await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
         tenantId,
-        tenantConfig,
+        runtime: runtime || null,
         method: "POST",
         jsonBody: payload,
         traceMeta: sanitizeForLog(traceMeta || {}),
