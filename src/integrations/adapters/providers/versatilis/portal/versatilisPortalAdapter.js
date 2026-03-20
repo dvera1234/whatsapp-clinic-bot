@@ -22,7 +22,14 @@ function createVersatilisPortalAdapter() {
       return validatePatientRegistrationData(profile);
     },
 
-    async createPatientRegistration({ registrationData, traceMeta = {}, runtimeCtx = {} }) {
+    async createPatientRegistration({
+      registrationData,
+      traceMeta = {},
+      runtimeCtx = {},
+    }) {
+      const runtime =
+        runtimeCtx?.runtime || runtimeCtx?.tenantRuntime || null;
+
       const resolvedPlanId = resolvePlanIdFromPlanKey(
         registrationData?.planKey,
         runtimeCtx
@@ -76,19 +83,23 @@ function createVersatilisPortalAdapter() {
 
       const validationErrors = [];
 
-      if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5)
+      if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5) {
         validationErrors.push("Nome");
+      }
 
-      if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, "")))
+      if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, ""))) {
         validationErrors.push("CPF");
+      }
 
       if (!isValidEmail(payload.Email)) validationErrors.push("Email");
 
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || "")))
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || ""))) {
         validationErrors.push("DtNasc");
+      }
 
-      if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, "")))
+      if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, ""))) {
         validationErrors.push("CEP");
+      }
 
       if (!cleanStr(payload.Endereco)) validationErrors.push("Endereco");
       if (!cleanStr(payload.Numero)) validationErrors.push("Numero");
@@ -127,7 +138,8 @@ function createVersatilisPortalAdapter() {
               ...(traceMeta || {}),
               tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
               traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
-              tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
+              tracePhone:
+                runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
               technicalAccepted: false,
               functionalResult: "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
               patientFacingMessage: null,
@@ -140,7 +152,9 @@ function createVersatilisPortalAdapter() {
                 ? Object.fromEntries(
                     Object.entries(registrationData).map(([k, v]) => {
                       if (v == null) return [k, "null/undefined"];
-                      if (typeof v === "string") return [k, `string(len=${v.length})`];
+                      if (typeof v === "string") {
+                        return [k, `string(len=${v.length})`];
+                      }
                       if (typeof v === "number") return [k, "number"];
                       if (typeof v === "boolean") return [k, "boolean"];
                       if (Array.isArray(v)) return [k, `array(len=${v.length})`];
@@ -165,7 +179,7 @@ function createVersatilisPortalAdapter() {
 
       const out = await versatilisFetch("/api/Login/CadastrarUsuario", {
         tenantId: runtimeCtx?.tenantId || null,
-        tenantConfig: runtimeCtx?.tenantConfig || null,
+        runtime,
         method: "POST",
         jsonBody: payload,
         traceMeta: mergeTraceMeta(traceMeta, {
@@ -184,7 +198,8 @@ function createVersatilisPortalAdapter() {
             ...(traceMeta || {}),
             tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
             traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
-            tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
+            tracePhone:
+              runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
             technicalAccepted: out.ok,
             httpStatus: out.status,
             rid: out.rid,
