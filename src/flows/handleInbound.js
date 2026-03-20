@@ -297,7 +297,7 @@ async function handleInbound({
       return;
     }
 
-    if (upper !== "PL_USE_PART" && upper !== "PL_USE_MED") {
+    if (upper !== "PLAN_USE_PRIVATE" && upper !== "PLAN_USE_INSURED") {
       await sendText({
         tenantId,
         to: phone,
@@ -308,7 +308,7 @@ async function handleInbound({
     }
 
     const chosenKey =
-      upper === "PL_USE_MED" ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
+      upper === "PLAN_USE_INSURED" ? PLAN_KEYS.INSURED : PLAN_KEYS.PRIVATE;
 
     await updateSession(tenantId, phone, (sess) => {
       sess.booking = sess.booking || {};
@@ -345,6 +345,7 @@ async function handleInbound({
       practitionerId,
       privatePlanId,
       insuredPlanId,
+      MSG,
     });
 
     return;
@@ -529,8 +530,8 @@ async function handleInbound({
         to: phone,
         body: MSG.BOOKING_SLOT_CONFIRM,
         buttons: [
-          { id: "CONFIRMAR", title: "Confirmar" },
-          { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
+          { id: "CONFIRMAR", title: MSG.ACTION_CONFIRM },
+          { id: "ESCOLHER_OUTRO", title: MSG.ACTION_PICK_OTHER },
         ],
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
@@ -579,7 +580,7 @@ async function handleInbound({
       const s = await getSession(tenantId, phone);
       const slotId = Number(s?.pending?.slotId);
       const selectedPlanId = resolvePlanIdFromRuntime(
-        s?.booking?.planKey || PLAN_KEYS.PARTICULAR,
+        s?.booking?.planKey || PLAN_KEYS.PRIVATE,
         {
           plans: {
             privatePlanId,
@@ -900,8 +901,8 @@ async function handleInbound({
       to: phone,
       body: MSG.BUTTONS_ONLY_WARNING,
       buttons: [
-        { id: "CONFIRMAR", title: "Confirmar" },
-        { id: "ESCOLHER_OUTRO", title: "Escolher outro" },
+        { id: "CONFIRMAR", title: MSG.ACTION_CONFIRM },
+        { id: "ESCOLHER_OUTRO", title: MSG.ACTION_PICK_OTHER },
       ],
       phoneNumberIdFallback: effectivePhoneNumberId,
     });
@@ -1158,20 +1159,20 @@ async function handleInbound({
 
       if (validation.ok) {
         const sCurrent = await getSession(tenantId, phone);
-        const flowPlanKey = sCurrent?.booking?.planKey || PLAN_KEYS.PARTICULAR;
+        const flowPlanKey = sCurrent?.booking?.planKey || PLAN_KEYS.PRIVATE;
         const planIds = patientAdapter.listActivePlans({
           profile: profileResult.data,
         });
 
         const hasPrivatePlan = patientAdapter.hasPlan({
           planIds,
-          planKey: PLAN_KEYS.PARTICULAR,
+          planKey: PLAN_KEYS.PRIVATE,
           runtimeCtx,
         });
 
         const hasInsuredPlan = patientAdapter.hasPlan({
           planIds,
-          planKey: PLAN_KEYS.MEDSENIOR_SP,
+          planKey: PLAN_KEYS.INSURED,
           runtimeCtx,
         });
 
@@ -1183,7 +1184,7 @@ async function handleInbound({
         if (
           hasPrivatePlan &&
           !hasInsuredPlan &&
-          flowPlanKey === PLAN_KEYS.PARTICULAR
+          flowPlanKey === PLAN_KEYS.PRIVATE
         ) {
           await finishWizardAndGoToDates({
             schedulingAdapter,
@@ -1197,6 +1198,7 @@ async function handleInbound({
             practitionerId,
             privatePlanId,
             insuredPlanId,
+            MSG,
           });
           return;
         }
@@ -1204,7 +1206,7 @@ async function handleInbound({
         if (
           !hasPrivatePlan &&
           hasInsuredPlan &&
-          flowPlanKey === PLAN_KEYS.MEDSENIOR_SP
+          flowPlanKey === PLAN_KEYS.INSURED
         ) {
           await finishWizardAndGoToDates({
             schedulingAdapter,
@@ -1218,6 +1220,7 @@ async function handleInbound({
             practitionerId,
             privatePlanId,
             insuredPlanId,
+            MSG,
           });
           return;
         }
@@ -1225,14 +1228,14 @@ async function handleInbound({
         if (
           hasPrivatePlan &&
           !hasInsuredPlan &&
-          flowPlanKey === PLAN_KEYS.MEDSENIOR_SP
+          flowPlanKey === PLAN_KEYS.INSURED
         ) {
           await updateSession(tenantId, phone, (sess) => {
             sess.portal = sess.portal || {};
             sess.portal.issue = {
               type: "PLAN_NOT_ENABLED",
-              wantedPlan: "MEDSENIOR_SP",
-              note: "Paciente possui apenas plano particular ativo no cadastro.",
+              wantedPlan: PLAN_KEYS.INSURED,
+              note: "Paciente possui apenas plano privado ativo no cadastro.",
               patientId: Number(patientId) || null,
               planIdsDetected: Array.isArray(planIds)
                 ? planIds.map(Number)
@@ -1260,7 +1263,7 @@ async function handleInbound({
             to: phone,
             body: MSG.PLAN_NOT_ENABLED_MESSAGE,
             buttons: [
-              { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
+              { id: "PLAN_USE_PRIVATE", title: MSG.BTN_PLAN_PRIVATE },
               { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
             ],
             phoneNumberIdFallback: effectivePhoneNumberId,
@@ -1273,15 +1276,15 @@ async function handleInbound({
         if (
           !hasPrivatePlan &&
           hasInsuredPlan &&
-          flowPlanKey === PLAN_KEYS.PARTICULAR
+          flowPlanKey === PLAN_KEYS.PRIVATE
         ) {
           await sendButtons({
             tenantId,
             to: phone,
             body: MSG.PLAN_DIVERGENCIA,
             buttons: [
-              { id: "PL_USE_PART", title: MSG.BTN_PLAN_PART },
-              { id: "PL_USE_MED", title: MSG.BTN_PLAN_MED },
+              { id: "PLAN_USE_PRIVATE", title: MSG.BTN_PLAN_PRIVATE },
+              { id: "PLAN_USE_INSURED", title: MSG.BTN_PLAN_INSURED },
             ],
             phoneNumberIdFallback: effectivePhoneNumberId,
           });
@@ -1411,8 +1414,8 @@ async function handleInbound({
         to: phone,
         body: MSG.PLAN_SELECTION_PROMPT,
         buttons: [
-          { id: "PL_PART", title: MSG.PLAN_OPTION_PART },
-          { id: "PL_MED", title: MSG.PLAN_OPTION_MED },
+          { id: "PLAN_PRIVATE", title: MSG.PLAN_OPTION_PRIVATE },
+          { id: "PLAN_INSURED", title: MSG.PLAN_OPTION_INSURED },
         ],
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
@@ -1421,7 +1424,7 @@ async function handleInbound({
     }
 
     if (ctx === "WZ_PLANO") {
-      if (upper !== "PL_PART" && upper !== "PL_MED") {
+      if (upper !== "PLAN_PRIVATE" && upper !== "PLAN_INSURED") {
         await sendText({
           tenantId,
           to: phone,
@@ -1435,7 +1438,7 @@ async function handleInbound({
         sess.portal = sess.portal || {};
         sess.portal.form = sess.portal.form || {};
         sess.portal.form.planKey =
-          upper === "PL_MED" ? PLAN_KEYS.MEDSENIOR_SP : PLAN_KEYS.PARTICULAR;
+          upper === "PLAN_INSURED" ? PLAN_KEYS.INSURED : PLAN_KEYS.PRIVATE;
         sess.portal.form.mobilePhone = formatPhoneFromWA(phone);
       });
 
@@ -1733,6 +1736,7 @@ async function handleInbound({
         practitionerId,
         privatePlanId,
         insuredPlanId,
+        MSG,
       });
 
       return;
@@ -1753,8 +1757,8 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.PARTICULAR,
-        state: "PARTICULAR",
+        body: MSG.PRIVATE_MENU,
+        state: "PRIVATE_MENU",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -1763,8 +1767,8 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.CONVENIOS,
-        state: "CONVENIOS",
+        body: MSG.INSURANCE_MENU,
+        state: "INSURANCE_MENU",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -1798,12 +1802,12 @@ async function handleInbound({
     });
   }
 
-  if (ctx === "PARTICULAR") {
+  if (ctx === "PRIVATE_MENU") {
     if (digits === "1") {
       await updateSession(tenantId, phone, (s) => {
         s.booking = {
           ...(s.booking || {}),
-          planKey: PLAN_KEYS.PARTICULAR,
+          planKey: PLAN_KEYS.PRIVATE,
           practitionerId,
           patientId: null,
           appointmentDate: null,
@@ -1846,13 +1850,13 @@ async function handleInbound({
     return sendAndSetState({
       tenantId,
       phone,
-      body: MSG.PARTICULAR,
-      state: "PARTICULAR",
+      body: MSG.PRIVATE_MENU,
+      state: "PRIVATE_MENU",
       phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
-  if (ctx === "CONVENIOS") {
+  if (ctx === "INSURANCE_MENU") {
     if (digits === "0") {
       return resetToMain(tenantId, phone, effectivePhoneNumberId, MSG);
     }
@@ -1861,8 +1865,8 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.CONVENIO_GOCARE,
-        state: "CONV_DETALHE",
+        body: MSG.INSURANCE_INFO_1,
+        state: "INSURANCE_INFO",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -1871,8 +1875,8 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.CONVENIO_SAMARITANO,
-        state: "CONV_DETALHE",
+        body: MSG.INSURANCE_INFO_2,
+        state: "INSURANCE_INFO",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -1881,8 +1885,8 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.CONVENIO_SALUSMED,
-        state: "CONV_DETALHE",
+        body: MSG.INSURANCE_INFO_3,
+        state: "INSURANCE_INFO",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -1891,19 +1895,19 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.CONVENIO_PROASA,
-        state: "CONV_DETALHE",
+        body: MSG.INSURANCE_INFO_4,
+        state: "INSURANCE_INFO",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
 
     if (digits === "5") {
-      await setBookingPlan(tenantId, phone, PLAN_KEYS.MEDSENIOR_SP);
+      await setBookingPlan(tenantId, phone, PLAN_KEYS.INSURED);
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.MEDSENIOR,
-        state: "MEDSENIOR",
+        body: MSG.INSURED_DIRECT_MENU,
+        state: "INSURED_DIRECT",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -1911,19 +1915,19 @@ async function handleInbound({
     return sendAndSetState({
       tenantId,
       phone,
-      body: MSG.CONVENIOS,
-      state: "CONVENIOS",
+      body: MSG.INSURANCE_MENU,
+      state: "INSURANCE_MENU",
       phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
-  if (ctx === "CONV_DETALHE") {
+  if (ctx === "INSURANCE_INFO") {
     if (digits === "9") {
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.PARTICULAR,
-        state: "PARTICULAR",
+        body: MSG.PRIVATE_MENU,
+        state: "PRIVATE_MENU",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -1935,18 +1939,18 @@ async function handleInbound({
     return sendAndSetState({
       tenantId,
       phone,
-      body: MSG.CONVENIOS,
-      state: "CONVENIOS",
+      body: MSG.INSURANCE_MENU,
+      state: "INSURANCE_MENU",
       phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
 
-  if (ctx === "MEDSENIOR") {
+  if (ctx === "INSURED_DIRECT") {
     if (digits === "1") {
       await updateSession(tenantId, phone, (s) => {
         s.booking = {
           ...(s.booking || {}),
-          planKey: PLAN_KEYS.MEDSENIOR_SP,
+          planKey: PLAN_KEYS.INSURED,
           practitionerId,
           patientId: null,
           appointmentDate: null,
@@ -1989,8 +1993,8 @@ async function handleInbound({
     return sendAndSetState({
       tenantId,
       phone,
-      body: MSG.MEDSENIOR,
-      state: "MEDSENIOR",
+      body: MSG.INSURED_DIRECT_MENU,
+      state: "INSURED_DIRECT",
       phoneNumberIdFallback: effectivePhoneNumberId,
     });
   }
@@ -2048,8 +2052,8 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.PARTICULAR,
-        state: "PARTICULAR",
+        body: MSG.PRIVATE_MENU,
+        state: "PRIVATE_MENU",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -2058,8 +2062,8 @@ async function handleInbound({
       return sendAndSetState({
         tenantId,
         phone,
-        body: MSG.CONVENIOS,
-        state: "CONVENIOS",
+        body: MSG.INSURANCE_MENU,
+        state: "INSURANCE_MENU",
         phoneNumberIdFallback: effectivePhoneNumberId,
       });
     }
@@ -2221,7 +2225,7 @@ function buildSupportPrefillFromSession(
 
   const reason =
     issue?.type === "PLAN_NOT_ENABLED"
-      ? "Convênio desejado não habilitado no cadastro."
+      ? "Plano desejado não habilitado no cadastro."
       : "Ajuda no agendamento.";
 
   return buildSafeSupportPrefill({
@@ -2549,14 +2553,16 @@ function getFlowText(runtime) {
     ASK_CPF_PORTAL: requireText(messages, "askCpfPortal"),
     CPF_INVALIDO: requireText(messages, "cpfInvalido"),
     PLAN_DIVERGENCIA: requireText(messages, "planDivergencia"),
-    BTN_PLAN_PART: requireText(messages, "btnPlanPart"),
-    BTN_PLAN_MED: requireText(messages, "btnPlanMed"),
+    BTN_PLAN_PRIVATE: requireText(messages, "btnPlanPrivate"),
+    BTN_PLAN_INSURED: requireText(messages, "btnPlanInsured"),
     BTN_FALAR_ATENDENTE: requireText(messages, "btnFalarAtendente"),
+
     PORTAL_NEED_DATA: requireText(messages, "portalNeedData"),
     PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO: requireText(
       messages,
       "portalExistenteIncompletoBloqueio"
     ),
+
     ASK_NOME: requireText(messages, "askNome"),
     ASK_DTNASC: requireText(messages, "askDtNasc"),
     ASK_EMAIL: requireText(messages, "askEmail"),
@@ -2567,24 +2573,29 @@ function getFlowText(runtime) {
     ASK_BAIRRO: requireText(messages, "askBairro"),
     ASK_CIDADE: requireText(messages, "askCidade"),
     ASK_UF: requireText(messages, "askUf"),
+
     MENU: requireText(messages, "menu"),
     LGPD_CONSENT: requireText(messages, "lgpdConsent"),
     LGPD_RECUSA: requireText(messages, "lgpdRecusa"),
-    PARTICULAR: requireText(messages, "particular"),
-    CONVENIOS: requireText(messages, "convenios"),
-    CONVENIO_GOCARE: requireText(messages, "convenioGoCare"),
-    CONVENIO_SAMARITANO: requireText(messages, "convenioSamaritano"),
-    CONVENIO_SALUSMED: requireText(messages, "convenioSalusmed"),
-    CONVENIO_PROASA: requireText(messages, "convenioProasa"),
-    MEDSENIOR: requireText(messages, "medsenior"),
+
+    PRIVATE_MENU: requireText(messages, "privateMenu"),
+    INSURANCE_MENU: requireText(messages, "insuranceMenu"),
+    INSURANCE_INFO_1: requireText(messages, "insuranceInfo1"),
+    INSURANCE_INFO_2: requireText(messages, "insuranceInfo2"),
+    INSURANCE_INFO_3: requireText(messages, "insuranceInfo3"),
+    INSURANCE_INFO_4: requireText(messages, "insuranceInfo4"),
+    INSURED_DIRECT_MENU: requireText(messages, "insuredDirectMenu"),
+
     POS_MENU: requireText(messages, "posMenu"),
     POS_RECENTE: requireText(messages, "posRecente"),
     POS_TARDIO: requireText(messages, "posTardio"),
     ATENDENTE: requireText(messages, "atendente"),
     AJUDA_PERGUNTA: requireText(messages, "ajudaPergunta"),
     REDIS_UNAVAILABLE: requireText(messages, "redisUnavailable"),
+
     BUTTONS_ONLY_WARNING: requireText(messages, "buttonsOnlyWarning"),
     PICK_PLAN_BUTTONS_ONLY: requireText(messages, "pickPlanButtonsOnly"),
+
     BOOKING_SESSION_INVALID: requireText(messages, "bookingSessionInvalid"),
     BOOKING_SLOT_CONFIRM: requireText(messages, "bookingSlotConfirm"),
     BOOKING_SLOT_INVALID: requireText(messages, "bookingSlotInvalid"),
@@ -2607,6 +2618,7 @@ function getFlowText(runtime) {
     BOOKING_AVAILABLE_SLOTS: requireText(messages, "bookingAvailableSlots"),
     BOOKING_OPTIONS: requireText(messages, "bookingOptions"),
     BOOKING_VIEW_MORE: requireText(messages, "bookingViewMore"),
+
     WIZARD_NEW_PATIENT_NAME: requireText(messages, "wizardNewPatientName"),
     PROFILE_LOOKUP_FAILURE: requireText(messages, "profileLookupFailure"),
     PLAN_VALIDATION_FAILURE: requireText(messages, "planValidationFailure"),
@@ -2623,22 +2635,29 @@ function getFlowText(runtime) {
       messages,
       "registrationCreateFailure"
     ),
+
     ATTENDANT_DESCRIBE: requireText(messages, "attendantDescribe"),
     SUPPORT_LINK_MESSAGE: requireText(messages, "supportLinkMessage"),
     PLAN_NOT_ENABLED_MESSAGE: requireText(messages, "planNotEnabledMessage"),
+
     BOOKING_SUCCESS_MAIN: requireText(messages, "bookingSuccessMain"),
     PORTAL_LINK_PREFIX: requireText(messages, "portalLinkPrefix"),
     PAYMENT_INFO_PRIVATE_FIRST_VISIT: requireText(
       messages,
       "paymentInfoPrivateFirstVisit"
     ),
+
     SEX_PROMPT: requireText(messages, "sexPrompt"),
     SEX_MALE: requireText(messages, "sexMale"),
     SEX_FEMALE: requireText(messages, "sexFemale"),
     SEX_NO_INFO: requireText(messages, "sexNoInfo"),
+
     PLAN_SELECTION_PROMPT: requireText(messages, "planSelectionPrompt"),
-    PLAN_OPTION_PART: requireText(messages, "planOptionPart"),
-    PLAN_OPTION_MED: requireText(messages, "planOptionMed"),
+    PLAN_OPTION_PRIVATE: requireText(messages, "planOptionPrivate"),
+    PLAN_OPTION_INSURED: requireText(messages, "planOptionInsured"),
+
+    ACTION_CONFIRM: requireText(messages, "actionConfirm"),
+    ACTION_PICK_OTHER: requireText(messages, "actionPickOther"),
   };
 }
 
@@ -2654,6 +2673,7 @@ async function finishWizardAndGoToDates({
   practitionerId,
   privatePlanId,
   insuredPlanId,
+  MSG,
 }) {
   const isReturn = await schedulingAdapter.checkReturnEligibility({
     patientId,
@@ -2688,7 +2708,7 @@ async function finishWizardAndGoToDates({
     practitionerId,
     patientId,
     traceId,
-    MSG: getFlowText(runtime),
+    MSG,
   });
 
   if (shown) {
