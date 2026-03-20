@@ -104,7 +104,7 @@ async function handleInbound({
 
   const runtimeCtx = {
     tenantId,
-    tenantConfig,
+    runtime,
     tenantRuntime: runtime,
     traceId,
     tracePhone: maskPhone(phone),
@@ -317,7 +317,7 @@ async function handleInbound({
     await finishWizardAndGoToDates({
       schedulingAdapter,
       tenantId,
-      tenantConfig,
+      runtime,
       phone,
       phoneNumberIdFallback: effectivePhoneNumberId,
       patientId,
@@ -353,7 +353,7 @@ async function handleInbound({
     const out = await findSlotsByDate({
       schedulingAdapter,
       tenantId,
-      tenantConfig,
+      runtime,
       traceId,
       practitionerId: selectedPractitionerId,
       patientId,
@@ -405,7 +405,7 @@ async function handleInbound({
     const shown = await showNextDates({
       schedulingAdapter,
       tenantId,
-      tenantConfig,
+      runtime,
       phone,
       phoneNumberIdFallback: effectivePhoneNumberId,
       practitionerId: selectedPractitionerId,
@@ -470,7 +470,7 @@ async function handleInbound({
       const shown = await showNextDates({
         schedulingAdapter,
         tenantId,
-        tenantConfig,
+        runtime,
         phone,
         phoneNumberIdFallback: effectivePhoneNumberId,
         practitionerId: selectedPractitionerId,
@@ -627,7 +627,11 @@ async function handleInbound({
           (x) => Number(x.slotId) === slotId
         );
 
-        if (!appointmentDate || !chosen?.time || !isSlotAllowed(appointmentDate, chosen.time)) {
+        if (
+          !appointmentDate ||
+          !chosen?.time ||
+          !isSlotAllowed(appointmentDate, chosen.time)
+        ) {
           await updateSession(tenantId, phone, (sess) => {
             delete sess.pending;
           });
@@ -658,7 +662,7 @@ async function handleInbound({
           const outSlots = await findSlotsByDate({
             schedulingAdapter,
             tenantId,
-            tenantConfig,
+            runtime,
             traceId,
             practitionerId: selectedPractitionerId,
             patientId,
@@ -685,7 +689,7 @@ async function handleInbound({
 
         const out = await schedulingAdapter.confirmBooking({
           tenantId,
-          tenantConfig,
+          runtime,
           bookingRequest,
           traceMeta: {
             tenantId,
@@ -825,21 +829,21 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           }
 
           audit(
-          "BOOKING_CONFIRM_PATIENT_RESPONSE",
-          sanitizeForLog({
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            rid: out?.rid || null,
-            httpStatus: out?.status || null,
-            technicalAccepted: true,
-            functionalResult: "BOOKING_PRESUMED_CREATED",
-            patientFacingMessage: "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE",
-            patientMessageMainSent: !!sentMainSuccess,
-            patientMessagePortalLinkSent: !!sentPortalLink,
-            escalationRequired: false,
-          })
-        );
+            "BOOKING_CONFIRM_PATIENT_RESPONSE",
+            sanitizeForLog({
+              tenantId,
+              traceId,
+              tracePhone: maskPhone(phone),
+              rid: out?.rid || null,
+              httpStatus: out?.status || null,
+              technicalAccepted: true,
+              functionalResult: "BOOKING_PRESUMED_CREATED",
+              patientFacingMessage: "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE",
+              patientMessageMainSent: !!sentMainSuccess,
+              patientMessagePortalLinkSent: !!sentPortalLink,
+              escalationRequired: false,
+            })
+          );
         } catch {
           audit("BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE", {
             tenantId,
@@ -848,12 +852,13 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
             rid: out?.rid || null,
             httpStatus: out?.status || null,
             technicalAccepted: true,
-            functionalResult: "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
+            functionalResult:
+              "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
             patientFacingMessage: "BOOKING_SUCCESS_FALLBACK_MESSAGE",
             escalationRequired: false,
           });
 
-          const fallbackSent = await sendText({
+          await sendText({
             tenantId,
             to: phone,
             body: "✅ Agendamento confirmado. Se precisar, digite MENU para voltar.",
@@ -869,7 +874,8 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
               rid: out?.rid || null,
               httpStatus: out?.status || null,
               technicalAccepted: true,
-              functionalResult: "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
+              functionalResult:
+                "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
               patientFacingMessage: "BOOKING_SUCCESS_FALLBACK_MESSAGE",
               escalationRequired: false,
             })
@@ -1165,11 +1171,15 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           sess.booking.patientId = patientId;
         });
 
-        if (hasPrivatePlan && !hasInsuredPlan && flowPlanKey === PLAN_KEYS.PARTICULAR) {
+        if (
+          hasPrivatePlan &&
+          !hasInsuredPlan &&
+          flowPlanKey === PLAN_KEYS.PARTICULAR
+        ) {
           await finishWizardAndGoToDates({
             schedulingAdapter,
             tenantId,
-            tenantConfig,
+            runtime,
             phone,
             phoneNumberIdFallback: effectivePhoneNumberId,
             patientId,
@@ -1182,11 +1192,15 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           return;
         }
 
-        if (!hasPrivatePlan && hasInsuredPlan && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
+        if (
+          !hasPrivatePlan &&
+          hasInsuredPlan &&
+          flowPlanKey === PLAN_KEYS.MEDSENIOR_SP
+        ) {
           await finishWizardAndGoToDates({
             schedulingAdapter,
             tenantId,
-            tenantConfig,
+            runtime,
             phone,
             phoneNumberIdFallback: effectivePhoneNumberId,
             patientId,
@@ -1199,7 +1213,11 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           return;
         }
 
-        if (hasPrivatePlan && !hasInsuredPlan && flowPlanKey === PLAN_KEYS.MEDSENIOR_SP) {
+        if (
+          hasPrivatePlan &&
+          !hasInsuredPlan &&
+          flowPlanKey === PLAN_KEYS.MEDSENIOR_SP
+        ) {
           await updateSession(tenantId, phone, (sess) => {
             sess.portal = sess.portal || {};
             sess.portal.issue = {
@@ -1246,7 +1264,11 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           return;
         }
 
-        if (!hasPrivatePlan && hasInsuredPlan && flowPlanKey === PLAN_KEYS.PARTICULAR) {
+        if (
+          !hasPrivatePlan &&
+          hasInsuredPlan &&
+          flowPlanKey === PLAN_KEYS.PARTICULAR
+        ) {
           await sendButtons({
             tenantId,
             to: phone,
@@ -1285,7 +1307,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
           traceId,
           tracePhone: maskPhone(phone),
           patientId: patientId || null,
-          missingFields: Array.isArray(validation.missing) ? validation.missing : [],
+          missingFields: Array.isArray(validation.missing)
+            ? validation.missing
+            : [],
           escalationRequired: true,
         })
       );
@@ -1659,7 +1683,9 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       });
 
       const validation2 = profileResult2.ok
-        ? patientAdapter.validateRegistrationData({ profile: profileResult2.data })
+        ? patientAdapter.validateRegistrationData({
+            profile: profileResult2.data,
+          })
         : { ok: false, missing: ["dados do cadastro"] };
 
       if (!validation2.ok) {
@@ -1690,7 +1716,7 @@ acesse o Portal e selecione a opção “Esqueci minha senha”.`;
       await finishWizardAndGoToDates({
         schedulingAdapter,
         tenantId,
-        tenantConfig,
+        runtime,
         phone,
         phoneNumberIdFallback: effectivePhoneNumberId,
         patientId: registrationResult.patientId,
@@ -2242,7 +2268,7 @@ function isSlotAllowed(appointmentDate, appointmentTime) {
 async function findSlotsByDate({
   schedulingAdapter,
   tenantId,
-  tenantConfig,
+  runtime,
   traceId = null,
   practitionerId,
   patientId,
@@ -2251,7 +2277,7 @@ async function findSlotsByDate({
 }) {
   const out = await schedulingAdapter.findSlotsByDate({
     tenantId,
-    tenantConfig,
+    runtime,
     traceId,
     providerId: practitionerId,
     patientId,
@@ -2277,7 +2303,7 @@ async function findSlotsByDate({
 async function fetchNextAvailableDates({
   schedulingAdapter,
   tenantId,
-  tenantConfig,
+  runtime,
   traceId = null,
   practitionerId,
   patientId,
@@ -2302,7 +2328,7 @@ async function fetchNextAvailableDates({
     const out = await findSlotsByDate({
       schedulingAdapter,
       tenantId,
-      tenantConfig,
+      runtime,
       traceId,
       practitionerId,
       patientId,
@@ -2327,7 +2353,7 @@ function formatBRFromISO(isoDate) {
 async function showNextDates({
   schedulingAdapter,
   tenantId,
-  tenantConfig,
+  runtime,
   phone,
   phoneNumberIdFallback,
   practitionerId,
@@ -2337,7 +2363,7 @@ async function showNextDates({
   const dates = await fetchNextAvailableDates({
     schedulingAdapter,
     tenantId,
-    tenantConfig,
+    runtime,
     traceId,
     practitionerId,
     patientId,
@@ -2493,7 +2519,7 @@ function nextWizardStateFromMissing(missingList) {
 async function finishWizardAndGoToDates({
   schedulingAdapter,
   tenantId,
-  tenantConfig,
+  runtime,
   phone,
   phoneNumberIdFallback,
   patientId,
@@ -2507,7 +2533,8 @@ async function finishWizardAndGoToDates({
     patientId,
     runtimeCtx: {
       tenantId,
-      tenantConfig,
+      runtime,
+      tenantRuntime: runtime,
       traceId,
       tracePhone: maskPhone(phone),
       privatePlanId,
@@ -2529,7 +2556,7 @@ async function finishWizardAndGoToDates({
   const shown = await showNextDates({
     schedulingAdapter,
     tenantId,
-    tenantConfig,
+    runtime,
     phone,
     phoneNumberIdFallback,
     practitionerId,
