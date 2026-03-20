@@ -12,7 +12,16 @@ import {
 } from "../session/redisSession.js";
 
 import { sendText, sendButtons } from "../whatsapp/sender.js";
-import { MSG, PLAN_KEYS, FLOW_RESET_CODE } from "../config/constants.js";
+import {
+  MSG,
+  PLAN_KEYS,
+  FLOW_RESET_CODE,
+  MIN_LEAD_HOURS,
+  TZ_OFFSET,
+  LGPD_TEXT_VERSION,
+  LGPD_TEXT_HASH,
+  resolvePlanIdFromRuntime,
+} from "../config/constants.js";
 import { buildTenantRuntime } from "../tenants/buildTenantRuntime.js";
 
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
@@ -33,15 +42,6 @@ import { sanitizeForLog } from "../utils/logSanitizer.js";
 import { parseBRDateToISO } from "../utils/time.js";
 import { audit, debugLog } from "../observability/audit.js";
 import { maskPhone, maskCpf } from "../utils/mask.js";
-
-const LGPD_TEXT_VERSION = "LGPD_v1";
-const LGPD_TEXT_HASH = crypto
-  .createHash("sha256")
-  .update(String(MSG?.LGPD_CONSENT || ""), "utf8")
-  .digest("hex");
-
-const MIN_LEAD_HOURS = 12;
-const TZ_OFFSET = "-03:00";
 
 async function handleInbound({
   context = {},
@@ -556,8 +556,10 @@ async function handleInbound({
       const selectedPlanId = resolvePlanIdFromRuntime(
         s?.booking?.planKey || PLAN_KEYS.PARTICULAR,
         {
-          privatePlanId,
-          insuredPlanId,
+          plans: {
+            privatePlanId,
+            insuredPlanId,
+          },
         }
       );
 
@@ -2567,12 +2569,4 @@ async function finishWizardAndGoToDates({
   if (shown) {
     await setState(tenantId, phone, "ASK_DATE_PICK");
   }
-}
-
-function resolvePlanIdFromRuntime(planKey, runtime) {
-  if (planKey === PLAN_KEYS.MEDSENIOR_SP) {
-    return Number(runtime?.insuredPlanId || 0) || null;
-  }
-
-  return Number(runtime?.privatePlanId || 0) || null;
 }
