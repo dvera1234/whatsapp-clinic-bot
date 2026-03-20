@@ -8,7 +8,6 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       t.status,
 
       tc.phone_number_id,
-      tc.whatsapp_business_account_id,
 
       cs.default_unit_id,
       cs.default_specialty_id,
@@ -24,13 +23,25 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       p.base_url,
       p.username,
       p.password_encrypted,
-      p.extra_config_json
+      p.extra_config_json,
+
+      c.assistant_name,
+      c.doctor_name,
+      c.instagram_url,
+      c.clinic_name,
+      c.clinic_address_line1,
+      c.clinic_address_line2,
+      c.clinic_city_state_zip,
+      c.post_op_recent_wa_number,
+      c.messages_json
 
     FROM tenants t
     JOIN tenant_channels tc ON tc.tenant_id = t.tenant_id
     JOIN tenant_clinic_settings cs ON cs.tenant_id = t.tenant_id
     JOIN tenant_plan_settings ps ON ps.tenant_id = t.tenant_id
     JOIN tenant_provider_settings p ON p.tenant_id = t.tenant_id
+    JOIN tenant_content c ON c.tenant_id = t.tenant_id
+
     WHERE tc.phone_number_id = $1
       AND t.status = 'active'
   `;
@@ -54,10 +65,6 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
   return {
     tenantId: first.tenant_id,
 
-    channels: {
-      phoneNumberId: first.phone_number_id,
-    },
-
     clinic: {
       codUnidade: first.default_unit_id,
       codEspecialidade: first.default_specialty_id,
@@ -78,5 +85,27 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     },
 
     providers,
+
+    // 🔥 NOVO BLOCO
+    content: {
+      branding: {
+        assistantName: first.assistant_name,
+        doctorName: first.doctor_name,
+        instagramUrl: first.instagram_url,
+      },
+
+      clinic: {
+        name: first.clinic_name,
+        addressLine1: first.clinic_address_line1,
+        addressLine2: first.clinic_address_line2,
+        cityStateZip: first.clinic_city_state_zip,
+      },
+
+      postOp: {
+        recentWaNumber: first.post_op_recent_wa_number,
+      },
+
+      messages: first.messages_json || {},
+    },
   };
 }
