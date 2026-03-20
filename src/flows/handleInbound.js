@@ -13,7 +13,16 @@ import {
 
 import { sendText, sendButtons } from "../whatsapp/sender.js";
 
-import { buildTenantRuntime } from "../tenants/buildTenantRuntime.js";
+import {
+  PLAN_KEYS,
+  FLOW_RESET_CODE,
+  MIN_LEAD_HOURS,
+  TZ_OFFSET,
+  LGPD_TEXT,
+  LGPD_TEXT_VERSION,
+  LGPD_TEXT_HASH,
+  resolvePlanIdFromRuntime,
+} from "../config/constants.js";
 
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
 import { createPortalAdapter } from "../integrations/adapters/factories/createPortalAdapter.js";
