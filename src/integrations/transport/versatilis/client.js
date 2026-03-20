@@ -16,9 +16,20 @@ function readString(value) {
 }
 
 function resolveProviderBaseUrl(runtime = {}) {
-  const base = readString(runtime?.integrations?.identity?.baseUrl);
-  if (!base) return "";
-  return base.endsWith("/") ? base.slice(0, -1) : base;
+  const candidates = [
+    runtime?.integrations?.identity?.baseUrl,
+    runtime?.integrations?.access?.baseUrl,
+    runtime?.integrations?.booking?.baseUrl,
+  ];
+
+  for (const candidate of candidates) {
+    const base = readString(candidate);
+    if (base) {
+      return base.endsWith("/") ? base.slice(0, -1) : base;
+    }
+  }
+
+  return "";
 }
 
 function mergeTraceMeta(base, extra) {
@@ -42,6 +53,7 @@ function sanitizePathForLog(path) {
       "datanascimento",
       "login",
       "email",
+      "codusuario",
     ]);
 
     for (const [key] of fakeUrl.searchParams.entries()) {
@@ -58,8 +70,10 @@ function sanitizePathForLog(path) {
       .replace(/(cpf=)[^&]+/gi, "$1***")
       .replace(/(usercpf=)[^&]+/gi, "$1***")
       .replace(/(dtnasc=)[^&]+/gi, "$1***")
+      .replace(/(datanascimento=)[^&]+/gi, "$1***")
       .replace(/(login=)[^&]+/gi, "$1***")
-      .replace(/(email=)[^&]+/gi, "$1***");
+      .replace(/(email=)[^&]+/gi, "$1***")
+      .replace(/(codusuario=)[^&]+/gi, "$1***");
   }
 }
 
@@ -148,18 +162,16 @@ async function providerFetch(
 
   const isExpected404 =
     response.status === 404 &&
-    (
-      normalizedText.includes("não foram encontradas") ||
+    (normalizedText.includes("não foram encontradas") ||
       normalizedText.includes("não foram encontrados") ||
       normalizedText.includes("usuário não encontrado") ||
-      normalizedText.includes("agendamento não encontrado")
-    );
+      normalizedText.includes("agendamento não encontrado"));
 
   const technicalResult = response.ok
     ? "API_ACCEPTED"
     : isExpected404
-    ? "EXPECTED_EMPTY_RESULT"
-    : "API_REJECTED";
+      ? "EXPECTED_EMPTY_RESULT"
+      : "API_REJECTED";
 
   const safePath = sanitizePathForLog(path);
 
@@ -181,7 +193,7 @@ async function providerFetch(
   if (response.ok) {
     debugLog("PROVIDER_CALL_OK", baseLog);
   } else if (isExpected404) {
-    const rateLimitKey = `expected404:${tenantId}:${method}:${path.split("?")[0]}`;
+    const rateLimitKey = `expected404:${tenantId}:${method}:${safePath.split("?")[0]}`;
 
     logRateLimited(
       "DEBUG",
@@ -218,8 +230,8 @@ async function providerFetch(
         dataType: Array.isArray(data)
           ? "array"
           : data === null
-          ? "null"
-          : typeof data,
+            ? "null"
+            : typeof data,
         responseTopLevelKeys,
       })
     );
