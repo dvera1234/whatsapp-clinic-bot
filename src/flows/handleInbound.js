@@ -23,6 +23,8 @@ import {
   resolvePlanIdFromRuntime,
 } from "../config/constants.js";
 
+import { buildTenantRuntime } from "../tenants/buildTenantRuntime.js";
+
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
 import { createPortalAdapter } from "../integrations/adapters/factories/createPortalAdapter.js";
 import { createSchedulingAdapter } from "../integrations/adapters/factories/createSchedulingAdapter.js";
@@ -64,15 +66,19 @@ async function handleInbound({
     return;
   }
 
-  const runtime = context?.runtime || null;
+  const runtimeResult = buildTenantRuntime(context?.tenantConfig || {});
 
-  if (!runtime) {
-    audit("TENANT_RUNTIME_MISSING", {
+  if (!runtimeResult.ok) {
+    audit("RUNTIME_INVALID_BLOCKED", {
       tenantId,
       traceId,
       tracePhone: maskPhone(phone),
-      hasContext: !!context,
-      hasPhoneNumberId: !!effectivePhoneNumberId,
+      missing: Array.isArray(runtimeResult?.missing)
+        ? runtimeResult.missing
+        : [],
+      invalid: Array.isArray(runtimeResult?.invalid)
+        ? runtimeResult.invalid
+        : [],
       blockedBeforeFlow: true,
     });
 
@@ -83,6 +89,8 @@ async function handleInbound({
     });
     return;
   }
+
+  const runtime = runtimeResult.value;
 
   let MSG;
   try {
@@ -104,9 +112,9 @@ async function handleInbound({
     return;
   }
 
-  const patientAdapter = createPatientAdapter(runtime);
-  const portalAdapter = createPortalAdapter(runtime);
-  const schedulingAdapter = createSchedulingAdapter(runtime);
+  const patientAdapter = createPatientAdapter({ tenantId, runtime });
+  const portalAdapter = createPortalAdapter({ tenantId, runtime });
+  const schedulingAdapter = createSchedulingAdapter({ tenantId, runtime });
 
   const practitionerId = runtime?.clinic?.primaryPractitionerId ?? null;
   const unitId = runtime?.clinic?.defaultUnitId ?? null;
@@ -355,8 +363,7 @@ async function handleInbound({
     const appointmentDate = raw.slice(2).trim();
     const s = await getSession(tenantId, phone);
 
-    const selectedPractitionerId =
-      s?.booking?.practitionerId ?? practitionerId;
+    const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
     const patientId = s?.booking?.patientId;
 
     if (!patientId) {
@@ -408,8 +415,7 @@ async function handleInbound({
 
   if (ctx === "ASK_DATE_PICK") {
     const s = await getSession(tenantId, phone);
-    const selectedPractitionerId =
-      s?.booking?.practitionerId ?? practitionerId;
+    const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
     const patientId = s?.booking?.patientId;
 
     if (!patientId) {
