@@ -61,15 +61,10 @@ function getWebhookCore(req) {
   return { body, entry, change, value, msg };
 }
 
-function buildWebhookContext({
-  tenantId,
-  tenantConfig,
-  traceId,
-  phoneNumberId,
-}) {
+function buildWebhookContext({ tenantId, runtime, traceId, phoneNumberId }) {
   return {
     tenantId,
-    tenantConfig,
+    runtime,
     traceId,
     phoneNumberId,
     LGPD_TEXT_VERSION,
@@ -182,13 +177,14 @@ router.post("/webhook", async (req, res) => {
         phoneNumberIdPresent: !!phoneNumberId,
         phoneNumberId: phoneNumberId || null,
         reason: tenantResolved?.reason || "UNKNOWN",
+        missingFields: tenantResolved?.missing || [],
         blockedBeforeFlow: true,
       });
       return;
     }
 
     tenantId = tenantResolved.tenantId;
-    const tenantConfig = tenantResolved.tenantConfig;
+    const runtime = tenantResolved.runtime;
 
     if (await isDuplicateWebhookMessage(tenantId, messageId)) {
       audit("WEBHOOK_DUPLICATE_IGNORED", {
@@ -218,7 +214,7 @@ router.post("/webhook", async (req, res) => {
 
     const context = buildWebhookContext({
       tenantId,
-      tenantConfig,
+      runtime,
       traceId,
       phoneNumberId,
     });
