@@ -15,10 +15,7 @@ export function buildTenantRuntime(config = {}) {
   if (!booking?.baseUrl) missing.push("providers.booking.baseUrl");
 
   if (missing.length) {
-    return {
-      ok: false,
-      missing,
-    };
+    return { ok: false, missing };
   }
 
   return {
@@ -56,6 +53,9 @@ export function buildTenantRuntime(config = {}) {
         access,
         booking,
       },
+
+      // 🔥 NOVO
+      content: config.content || {},
     },
   };
 }
