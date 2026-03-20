@@ -12,16 +12,7 @@ import {
 } from "../session/redisSession.js";
 
 import { sendText, sendButtons } from "../whatsapp/sender.js";
-import {
-  MSG,
-  PLAN_KEYS,
-  FLOW_RESET_CODE,
-  MIN_LEAD_HOURS,
-  TZ_OFFSET,
-  LGPD_TEXT_VERSION,
-  LGPD_TEXT_HASH,
-  resolvePlanIdFromRuntime,
-} from "../config/constants.js";
+
 import { buildTenantRuntime } from "../tenants/buildTenantRuntime.js";
 
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
@@ -88,6 +79,10 @@ async function handleInbound({
 
   const runtime = tenantRuntime.value;
 
+  const content = runtime.content || {};
+  const branding = content.branding || {};
+  const clinicInfo = content.clinic || {};
+  const messages = content.messages || {};
   const patientAdapter = createPatientAdapter(runtime);
   const portalAdapter = createPortalAdapter(runtime);
   const schedulingAdapter = createSchedulingAdapter(runtime);
