@@ -1,4 +1,5 @@
 import { loadTenantConfigByPhoneNumberId } from "../db/loadTenantConfigByPhoneNumberId.js";
+import { buildTenantRuntime } from "./buildTenantRuntime.js";
 
 function readString(value) {
   const v = String(value ?? "").trim();
@@ -13,8 +14,9 @@ export async function resolveTenant(channelId) {
       ok: false,
       reason: "CHANNEL_ID_MISSING",
       tenantId: null,
-      tenantConfig: null,
+      runtime: null,
       channelId: "",
+      missing: [],
     };
   }
 
@@ -25,16 +27,31 @@ export async function resolveTenant(channelId) {
       ok: false,
       reason: "TENANT_NOT_FOUND_FOR_CHANNEL_ID",
       tenantId: null,
-      tenantConfig: null,
+      runtime: null,
       channelId: safeChannelId,
+      missing: [],
+    };
+  }
+
+  const built = buildTenantRuntime(tenantConfig);
+
+  if (!built?.ok || !built?.value) {
+    return {
+      ok: false,
+      reason: "TENANT_RUNTIME_INVALID",
+      tenantId: tenantConfig.tenantId || null,
+      runtime: null,
+      channelId: safeChannelId,
+      missing: built?.missing || [],
     };
   }
 
   return {
     ok: true,
     reason: null,
-    tenantId: tenantConfig.tenantId,
-    tenantConfig,
+    tenantId: built.value.tenantId,
+    runtime: built.value,
     channelId: safeChannelId,
+    missing: [],
   };
 }
