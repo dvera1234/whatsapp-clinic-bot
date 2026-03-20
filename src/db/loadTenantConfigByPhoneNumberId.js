@@ -41,7 +41,6 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     JOIN tenant_plan_settings ps ON ps.tenant_id = t.tenant_id
     JOIN tenant_provider_settings p ON p.tenant_id = t.tenant_id
     JOIN tenant_content c ON c.tenant_id = t.tenant_id
-
     WHERE tc.phone_number_id = $1
       AND t.status = 'active'
   `;
@@ -53,11 +52,14 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
 
   const providers = {};
   for (const row of rows) {
-    providers[row.capability] = {
-      key: row.provider_key,
-      baseUrl: row.base_url,
-      user: row.username,
-      pass: row.password_encrypted,
+    const capability = String(row.capability || "").trim();
+    if (!capability) continue;
+
+    providers[capability] = {
+      key: row.provider_key || "",
+      baseUrl: row.base_url || "",
+      user: row.username || "",
+      pass: row.password_encrypted || "",
       extra: row.extra_config_json || {},
     };
   }
@@ -77,35 +79,37 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     },
 
     portal: {
-      url: first.portal_url,
+      url: first.portal_url || "",
     },
 
     support: {
-      waNumber: first.support_wa_number,
+      waNumber: first.support_wa_number || "",
     },
 
     providers,
 
-    // 🔥 NOVO BLOCO
     content: {
       branding: {
-        assistantName: first.assistant_name,
-        doctorName: first.doctor_name,
-        instagramUrl: first.instagram_url,
+        assistantName: first.assistant_name || "",
+        doctorName: first.doctor_name || "",
+        instagramUrl: first.instagram_url || "",
       },
 
       clinic: {
-        name: first.clinic_name,
-        addressLine1: first.clinic_address_line1,
-        addressLine2: first.clinic_address_line2,
-        cityStateZip: first.clinic_city_state_zip,
+        name: first.clinic_name || "",
+        addressLine1: first.clinic_address_line1 || "",
+        addressLine2: first.clinic_address_line2 || "",
+        cityStateZip: first.clinic_city_state_zip || "",
       },
 
       postOp: {
-        recentWaNumber: first.post_op_recent_wa_number,
+        recentWaNumber: first.post_op_recent_wa_number || "",
       },
 
-      messages: first.messages_json || {},
+      messages:
+        first.messages_json && typeof first.messages_json === "object"
+          ? first.messages_json
+          : {},
     },
   };
 }
