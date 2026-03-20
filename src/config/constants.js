@@ -7,14 +7,13 @@ import {
 const INACTIVITY_WARN_MS = 14 * 60 * 1000 + 50 * 1000;
 const MIN_LEAD_HOURS = 12;
 const TZ_OFFSET = "-03:00";
-const SUPPORT_WA = "5519933005596";
 
 const PLAN_KEYS = {
   PARTICULAR: "PARTICULAR",
   MEDSENIOR_SP: "MEDSENIOR_SP",
 };
 
-function resolvePlanId(planKey, runtime) {
+function resolvePlanIdFromRuntime(planKey, runtime) {
   if (!runtime?.plans) return null;
 
   return planKey === PLAN_KEYS.MEDSENIOR_SP
@@ -70,9 +69,8 @@ export {
   INACTIVITY_WARN_MS,
   MIN_LEAD_HOURS,
   TZ_OFFSET,
-  SUPPORT_WA,
   PLAN_KEYS,
-  resolvePlanId,
+  resolvePlanIdFromRuntime,
   MSG,
   LGPD_TEXT_VERSION,
   LGPD_TEXT_HASH,
