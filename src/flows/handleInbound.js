@@ -112,9 +112,30 @@ async function handleInbound({
     return;
   }
 
-  const patientAdapter = createPatientAdapter({ tenantId, runtime });
-  const portalAdapter = createPortalAdapter({ tenantId, runtime });
-  const schedulingAdapter = createSchedulingAdapter({ tenantId, runtime });
+  let patientAdapter;
+  let portalAdapter;
+  let schedulingAdapter;
+
+  try {
+    patientAdapter = createPatientAdapter({ tenantId, runtime });
+    portalAdapter = createPortalAdapter({ tenantId, runtime });
+    schedulingAdapter = createSchedulingAdapter({ tenantId, runtime });
+  } catch (err) {
+    audit("TENANT_PROVIDER_FACTORY_INIT_FAILED", {
+      tenantId,
+      traceId,
+      tracePhone: maskPhone(phone),
+      error: String(err?.message || err),
+      blockedBeforeFlow: true,
+    });
+
+    await failSafeTenantConfigError({
+      tenantId,
+      phone,
+      phoneNumberIdFallback: effectivePhoneNumberId,
+    });
+    return;
+  }
 
   const practitionerId = runtime?.clinic?.primaryPractitionerId ?? null;
   const unitId = runtime?.clinic?.defaultUnitId ?? null;
@@ -363,7 +384,8 @@ async function handleInbound({
     const appointmentDate = raw.slice(2).trim();
     const s = await getSession(tenantId, phone);
 
-    const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
+    const selectedPractitionerId =
+      s?.booking?.practitionerId ?? practitionerId;
     const patientId = s?.booking?.patientId;
 
     if (!patientId) {
@@ -387,6 +409,20 @@ async function handleInbound({
       appointmentDate,
       phone,
     });
+
+    if (out.providerUnavailable) {
+      await handleProviderTemporaryUnavailable({
+        tenantId,
+        traceId,
+        phone,
+        phoneNumberIdFallback: effectivePhoneNumberId,
+        capability: "booking",
+        err: out.error,
+        MSG,
+        nextState: "MAIN",
+      });
+      return;
+    }
 
     const slots = out.ok ? out.slots : [];
 
@@ -415,7 +451,8 @@ async function handleInbound({
 
   if (ctx === "ASK_DATE_PICK") {
     const s = await getSession(tenantId, phone);
-    const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
+    const selectedPractitionerId =
+      s?.booking?.practitionerId ?? practitionerId;
     const patientId = s?.booking?.patientId;
 
     if (!patientId) {
@@ -705,6 +742,20 @@ async function handleInbound({
             phone,
           });
 
+          if (outSlots.providerUnavailable) {
+            await handleProviderTemporaryUnavailable({
+              tenantId,
+              traceId,
+              phone,
+              phoneNumberIdFallback: effectivePhoneNumberId,
+              capability: "booking",
+              err: outSlots.error,
+              MSG,
+              nextState: "MAIN",
+            });
+            return;
+          }
+
           await updateSession(tenantId, phone, (sess) => {
             sess.booking = sess.booking || {};
             sess.booking.slots = outSlots.ok ? outSlots.slots : [];
@@ -723,21 +774,43 @@ async function handleInbound({
           return;
         }
 
-        const out = await schedulingAdapter.confirmBooking({
-          tenantId,
-          runtime,
-          bookingRequest,
-          traceMeta: {
+        let out;
+        try {
+          out = await schedulingAdapter.confirmBooking({
             tenantId,
-            traceId,
-            flow: "CONFIRM_BOOKING",
-            tracePhone: maskPhone(phone),
-            patientId: bookingRequest.patientId || null,
-            slotId: bookingRequest.slotId || null,
-            planId: bookingRequest.planId || null,
-            providerId: bookingRequest.providerId || null,
-          },
-        });
+            runtime,
+            bookingRequest,
+            traceMeta: {
+              tenantId,
+              traceId,
+              flow: "CONFIRM_BOOKING",
+              tracePhone: maskPhone(phone),
+              patientId: bookingRequest.patientId || null,
+              slotId: bookingRequest.slotId || null,
+              planId: bookingRequest.planId || null,
+              providerId: bookingRequest.providerId || null,
+            },
+          });
+        } catch (err) {
+          if (isProviderTemporaryUnavailableError(err)) {
+            await updateSession(tenantId, phone, (sess) => {
+              delete sess.pending;
+            });
+
+            await handleProviderTemporaryUnavailable({
+              tenantId,
+              traceId,
+              phone,
+              phoneNumberIdFallback: effectivePhoneNumberId,
+              capability: "booking",
+              err,
+              MSG,
+              nextState: "MAIN",
+            });
+            return;
+          }
+          throw err;
+        }
 
         audit(
           "BOOKING_CONFIRM_FLOW",
@@ -1028,10 +1101,28 @@ async function handleInbound({
         })
       );
 
-      const patientId = await patientAdapter.findPatientIdByDocument({
-        document,
-        runtimeCtx,
-      });
+      let patientId;
+      try {
+        patientId = await patientAdapter.findPatientIdByDocument({
+          document,
+          runtimeCtx,
+        });
+      } catch (err) {
+        if (isProviderTemporaryUnavailableError(err)) {
+          await handleProviderTemporaryUnavailable({
+            tenantId,
+            traceId,
+            phone,
+            phoneNumberIdFallback: effectivePhoneNumberId,
+            capability: "identity",
+            err,
+            MSG,
+            nextState: "MAIN",
+          });
+          return;
+        }
+        throw err;
+      }
 
       debugLog(
         "PATIENT_DOCUMENT_IDENTIFICATION_RESULT",
@@ -1046,11 +1137,11 @@ async function handleInbound({
       );
 
       if (!patientId) {
-        await updateSession(tenantId, phone, (s) => {
-          s.portal = s.portal || {};
-          s.portal.exists = false;
-          s.portal.form = s.portal.form || {};
-          s.portal.form.document = document;
+        await updateSession(tenantId, phone, (s2) => {
+          s2.portal = s2.portal || {};
+          s2.portal.exists = false;
+          s2.portal.form = s2.portal.form || {};
+          s2.portal.form.document = document;
         });
 
         await sendText({
@@ -1072,10 +1163,28 @@ async function handleInbound({
         sess.portal.patientId = patientId;
       });
 
-      const profileResult = await patientAdapter.getPatientProfile({
-        patientId,
-        runtimeCtx,
-      });
+      let profileResult;
+      try {
+        profileResult = await patientAdapter.getPatientProfile({
+          patientId,
+          runtimeCtx,
+        });
+      } catch (err) {
+        if (isProviderTemporaryUnavailableError(err)) {
+          await handleProviderTemporaryUnavailable({
+            tenantId,
+            traceId,
+            phone,
+            phoneNumberIdFallback: effectivePhoneNumberId,
+            capability: "identity",
+            err,
+            MSG,
+            nextState: "MAIN",
+          });
+          return;
+        }
+        throw err;
+      }
 
       if (profileResult.ok && profileResult.data) {
         const profile = profileResult.data;
@@ -1670,16 +1779,34 @@ async function handleInbound({
 
       const sUpdated = await getSession(tenantId, phone);
 
-      const registrationResult = await portalAdapter.createPatientRegistration({
-        registrationData: sUpdated?.portal?.form || {},
-        traceMeta: {
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          flow: "PATIENT_REGISTRATION_WIZARD_CREATE",
-        },
-        runtimeCtx,
-      });
+      let registrationResult;
+      try {
+        registrationResult = await portalAdapter.createPatientRegistration({
+          registrationData: sUpdated?.portal?.form || {},
+          traceMeta: {
+            tenantId,
+            traceId,
+            tracePhone: maskPhone(phone),
+            flow: "PATIENT_REGISTRATION_WIZARD_CREATE",
+          },
+          runtimeCtx,
+        });
+      } catch (err) {
+        if (isProviderTemporaryUnavailableError(err)) {
+          await handleProviderTemporaryUnavailable({
+            tenantId,
+            traceId,
+            phone,
+            phoneNumberIdFallback: effectivePhoneNumberId,
+            capability: "access",
+            err,
+            MSG,
+            nextState: "MAIN",
+          });
+          return;
+        }
+        throw err;
+      }
 
       if (!registrationResult.ok || !registrationResult.patientId) {
         await sendText({
@@ -1692,10 +1819,28 @@ async function handleInbound({
         return;
       }
 
-      const profileResult2 = await patientAdapter.getPatientProfile({
-        patientId: registrationResult.patientId,
-        runtimeCtx,
-      });
+      let profileResult2;
+      try {
+        profileResult2 = await patientAdapter.getPatientProfile({
+          patientId: registrationResult.patientId,
+          runtimeCtx,
+        });
+      } catch (err) {
+        if (isProviderTemporaryUnavailableError(err)) {
+          await handleProviderTemporaryUnavailable({
+            tenantId,
+            traceId,
+            phone,
+            phoneNumberIdFallback: effectivePhoneNumberId,
+            capability: "identity",
+            err,
+            MSG,
+            nextState: "MAIN",
+          });
+          return;
+        }
+        throw err;
+      }
 
       const validation2 = profileResult2.ok
         ? patientAdapter.validateRegistrationData({
@@ -2284,6 +2429,61 @@ function isSlotAllowed(appointmentDate, appointmentTime) {
   return ms >= minMs;
 }
 
+function isProviderTemporaryUnavailableError(err) {
+  if (!err) return false;
+
+  if (err?.code === "PROVIDER_CIRCUIT_OPEN") return true;
+
+  const msg = String(err?.message || err).toLowerCase();
+
+  return (
+    msg.includes("provider temporarily unavailable") ||
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("econnreset") ||
+    msg.includes("econnrefused") ||
+    msg.includes("enotfound") ||
+    msg.includes("socket hang up") ||
+    msg.includes("network") ||
+    msg.includes("fetch failed") ||
+    msg.includes("503") ||
+    msg.includes("502") ||
+    msg.includes("504")
+  );
+}
+
+async function handleProviderTemporaryUnavailable({
+  tenantId,
+  traceId = null,
+  phone,
+  phoneNumberIdFallback,
+  capability = null,
+  err,
+  MSG,
+  nextState = "MAIN",
+}) {
+  audit("PROVIDER_TEMPORARILY_UNAVAILABLE", {
+    tenantId,
+    traceId,
+    tracePhone: maskPhone(phone),
+    capability,
+    errorCode: err?.code || null,
+    error: String(err?.message || err || "unknown_error"),
+    patientMessageSent: true,
+  });
+
+  await sendText({
+    tenantId,
+    to: phone,
+    body: MSG.PROVIDER_UNAVAILABLE,
+    phoneNumberIdFallback,
+  });
+
+  if (nextState) {
+    await setState(tenantId, phone, nextState);
+  }
+}
+
 async function findSlotsByDate({
   schedulingAdapter,
   tenantId,
@@ -2294,18 +2494,37 @@ async function findSlotsByDate({
   appointmentDate,
   phone = "",
 }) {
-  const out = await schedulingAdapter.findSlotsByDate({
-    tenantId,
-    runtime,
-    traceId,
-    providerId: practitionerId,
-    patientId,
-    isoDate: appointmentDate,
-    tracePhone: maskPhone(phone),
-  });
+  let out;
+
+  try {
+    out = await schedulingAdapter.findSlotsByDate({
+      tenantId,
+      runtime,
+      traceId,
+      providerId: practitionerId,
+      patientId,
+      isoDate: appointmentDate,
+      tracePhone: maskPhone(phone),
+    });
+  } catch (err) {
+    if (isProviderTemporaryUnavailableError(err)) {
+      return {
+        ok: false,
+        slots: [],
+        providerUnavailable: true,
+        error: err,
+      };
+    }
+    throw err;
+  }
 
   if (!out?.ok || !Array.isArray(out?.slots)) {
-    return { ok: false, slots: [] };
+    return {
+      ok: false,
+      slots: [],
+      providerUnavailable: false,
+      error: null,
+    };
   }
 
   const slots = out.slots.filter(
@@ -2316,7 +2535,12 @@ async function findSlotsByDate({
       isSlotAllowed(appointmentDate, x.time)
   );
 
-  return { ok: true, slots };
+  return {
+    ok: true,
+    slots,
+    providerUnavailable: false,
+    error: null,
+  };
 }
 
 async function fetchNextAvailableDates({
@@ -2355,12 +2579,26 @@ async function fetchNextAvailableDates({
       phone,
     });
 
+    if (out.providerUnavailable) {
+      return {
+        ok: false,
+        dates: [],
+        providerUnavailable: true,
+        error: out.error,
+      };
+    }
+
     if (out.ok && out.slots.length > 0) {
       dates.push(appointmentDate);
     }
   }
 
-  return dates;
+  return {
+    ok: true,
+    dates,
+    providerUnavailable: false,
+    error: null,
+  };
 }
 
 function formatBRFromISO(isoDate) {
@@ -2380,7 +2618,7 @@ async function showNextDates({
   traceId = null,
   MSG,
 }) {
-  const dates = await fetchNextAvailableDates({
+  const result = await fetchNextAvailableDates({
     schedulingAdapter,
     tenantId,
     runtime,
@@ -2391,6 +2629,22 @@ async function showNextDates({
     daysLookahead: 60,
     limit: 3,
   });
+
+  if (result.providerUnavailable) {
+    await handleProviderTemporaryUnavailable({
+      tenantId,
+      traceId,
+      phone,
+      phoneNumberIdFallback,
+      capability: "booking",
+      err: result.error,
+      MSG,
+      nextState: "MAIN",
+    });
+    return false;
+  }
+
+  const dates = result.dates || [];
 
   if (!dates.length) {
     await sendText({
@@ -2598,6 +2852,7 @@ function getFlowText(runtime) {
     ATENDENTE: requireText(messages, "atendente"),
     AJUDA_PERGUNTA: requireText(messages, "ajudaPergunta"),
     REDIS_UNAVAILABLE: requireText(messages, "redisUnavailable"),
+    PROVIDER_UNAVAILABLE: requireText(messages, "providerUnavailable"),
 
     BUTTONS_ONLY_WARNING: requireText(messages, "buttonsOnlyWarning"),
     PICK_PLAN_BUTTONS_ONLY: requireText(messages, "pickPlanButtonsOnly"),
@@ -2681,18 +2936,37 @@ async function finishWizardAndGoToDates({
   insuredPlanId,
   MSG,
 }) {
-  const isReturn = await schedulingAdapter.checkReturnEligibility({
-    patientId,
-    runtimeCtx: {
-      tenantId,
-      runtime,
-      tenantRuntime: runtime,
-      traceId,
-      tracePhone: maskPhone(phone),
-      privatePlanId,
-      insuredPlanId,
-    },
-  });
+  let isReturn;
+
+  try {
+    isReturn = await schedulingAdapter.checkReturnEligibility({
+      patientId,
+      runtimeCtx: {
+        tenantId,
+        runtime,
+        tenantRuntime: runtime,
+        traceId,
+        tracePhone: maskPhone(phone),
+        privatePlanId,
+        insuredPlanId,
+      },
+    });
+  } catch (err) {
+    if (isProviderTemporaryUnavailableError(err)) {
+      await handleProviderTemporaryUnavailable({
+        tenantId,
+        traceId,
+        phone,
+        phoneNumberIdFallback,
+        capability: "booking",
+        err,
+        MSG,
+        nextState: "MAIN",
+      });
+      return false;
+    }
+    throw err;
+  }
 
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
@@ -2720,4 +2994,6 @@ async function finishWizardAndGoToDates({
   if (shown) {
     await setState(tenantId, phone, "ASK_DATE_PICK");
   }
+
+  return shown;
 }
