@@ -13,31 +13,104 @@ function toHHMM(hora) {
   return `${hh}:${m[2]}`;
 }
 
-function createVersatilisSchedulingAdapter() {
+function getProviderRuntimeContext(runtimeCtx = {}, factoryCtx = {}) {
+  return {
+    tenantId:
+      runtimeCtx?.tenantId ||
+      factoryCtx?.tenantId ||
+      null,
+    runtime:
+      runtimeCtx?.runtime ||
+      runtimeCtx?.tenantRuntime ||
+      factoryCtx?.runtime ||
+      null,
+    traceId: runtimeCtx?.traceId || null,
+    tracePhone: runtimeCtx?.tracePhone || null,
+  };
+}
+
+function buildSchedulingAdapterResult({
+  ok,
+  data = null,
+  status = null,
+  rid = null,
+  errorCode = null,
+  errorMessage = null,
+}) {
+  return {
+    ok: !!ok,
+    data,
+    status,
+    rid,
+    errorCode,
+    errorMessage,
+  };
+}
+
+function parseHistoryDateToEpochMs(brDate) {
+  const raw = String(brDate || "").trim();
+  const parts = raw.split("/");
+  if (parts.length !== 3) return null;
+
+  const [dd, mm, yyyy] = parts;
+  const dateMs = new Date(`${yyyy}-${mm}-${dd}T00:00:00-03:00`).getTime();
+
+  return Number.isFinite(dateMs) ? dateMs : null;
+}
+
+function normalizeSlots(items) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        item.PermiteConsulta === true &&
+        item.CodHorario != null
+    )
+    .map((item) => ({
+      slotId: Number(item.CodHorario),
+      time: toHHMM(item.Hora),
+    }))
+    .filter((item) => item.slotId && item.time)
+    .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+function createVersatilisSchedulingAdapter(factoryCtx = {}) {
   return {
     async checkReturnEligibility({ patientId, runtimeCtx = {} }) {
-      if (!patientId) return false;
+      const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
+      const externalPatientId = Number(patientId);
 
-      const runtime =
-        runtimeCtx?.runtime || runtimeCtx?.tenantRuntime || null;
+      if (!Number.isFinite(externalPatientId) || externalPatientId <= 0) {
+        return buildSchedulingAdapterResult({
+          ok: false,
+          status: 400,
+          errorCode: "INVALID_PATIENT_ID",
+          errorMessage: "Invalid patientId",
+          data: {
+            eligible: false,
+          },
+        });
+      }
 
       const out = await versatilisFetch(
         `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(
-          patientId
+          externalPatientId
         )}`,
         {
-          tenantId: runtimeCtx?.tenantId || null,
-          runtime,
+          tenantId: ctx.tenantId,
+          runtime: ctx.runtime,
           traceMeta: sanitizeForLog(
             mergeTraceMeta(
               {
-                tenantId: runtimeCtx?.tenantId || null,
-                traceId: runtimeCtx?.traceId || null,
-                tracePhone: runtimeCtx?.tracePhone || null,
+                tenantId: ctx.tenantId,
+                traceId: ctx.traceId,
+                tracePhone: ctx.tracePhone,
               },
               {
                 flow: "CHECK_RETURN_ELIGIBILITY_LAST_30_DAYS",
-                patientId: Number(patientId) || null,
+                patientId: externalPatientId,
               }
             )
           ),
@@ -49,10 +122,10 @@ function createVersatilisSchedulingAdapter() {
           "RETURN_ELIGIBILITY_HISTORY_UNAVAILABLE",
           auditOutcome(
             sanitizeForLog({
-              tenantId: runtimeCtx?.tenantId || null,
-              traceId: runtimeCtx?.traceId || null,
-              tracePhone: runtimeCtx?.tracePhone || null,
-              patientId: Number(patientId) || null,
+              tenantId: ctx.tenantId,
+              traceId: ctx.traceId,
+              tracePhone: ctx.tracePhone,
+              patientId: externalPatientId,
               technicalAccepted: !!out?.ok,
               httpStatus: out?.status || null,
               rid: out?.rid || null,
@@ -62,32 +135,35 @@ function createVersatilisSchedulingAdapter() {
             })
           )
         );
-        return false;
+
+        return buildSchedulingAdapterResult({
+          ok: false,
+          status: out?.status || 502,
+          rid: out?.rid || null,
+          errorCode: "RETURN_ELIGIBILITY_UNAVAILABLE",
+          errorMessage: "Unable to determine return eligibility",
+          data: {
+            eligible: false,
+          },
+        });
       }
 
       const now = Date.now();
       const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
       for (const appointment of out.data) {
-        if (!appointment?.Data) continue;
-
-        const parts = appointment.Data.split("/");
-        if (parts.length !== 3) continue;
-
-        const [dd, mm, yyyy] = parts;
-        const dateMs = new Date(`${yyyy}-${mm}-${dd}T00:00:00-03:00`).getTime();
-
-        if (!Number.isFinite(dateMs)) continue;
+        const dateMs = parseHistoryDateToEpochMs(appointment?.Data);
+        if (!dateMs) continue;
 
         if (now - dateMs <= THIRTY_DAYS_MS) {
           audit(
             "RETURN_ELIGIBILITY_POSITIVE_LAST_30_DAYS",
             auditOutcome(
               sanitizeForLog({
-                tenantId: runtimeCtx?.tenantId || null,
-                traceId: runtimeCtx?.traceId || null,
-                tracePhone: runtimeCtx?.tracePhone || null,
-                patientId: Number(patientId) || null,
+                tenantId: ctx.tenantId,
+                traceId: ctx.traceId,
+                tracePhone: ctx.tracePhone,
+                patientId: externalPatientId,
                 technicalAccepted: true,
                 functionalResult: "RETURN_ELIGIBILITY_POSITIVE",
                 patientFacingMessage: null,
@@ -95,7 +171,15 @@ function createVersatilisSchedulingAdapter() {
               })
             )
           );
-          return true;
+
+          return buildSchedulingAdapterResult({
+            ok: true,
+            status: out.status || 200,
+            rid: out.rid || null,
+            data: {
+              eligible: true,
+            },
+          });
         }
       }
 
@@ -103,10 +187,10 @@ function createVersatilisSchedulingAdapter() {
         "RETURN_ELIGIBILITY_NEGATIVE_LAST_30_DAYS",
         auditOutcome(
           sanitizeForLog({
-            tenantId: runtimeCtx?.tenantId || null,
-            traceId: runtimeCtx?.traceId || null,
-            tracePhone: runtimeCtx?.tracePhone || null,
-            patientId: Number(patientId) || null,
+            tenantId: ctx.tenantId,
+            traceId: ctx.traceId,
+            tracePhone: ctx.tracePhone,
+            patientId: externalPatientId,
             technicalAccepted: true,
             functionalResult: "RETURN_ELIGIBILITY_NEGATIVE",
             patientFacingMessage: null,
@@ -116,7 +200,15 @@ function createVersatilisSchedulingAdapter() {
         )
       );
 
-      return false;
+      return buildSchedulingAdapterResult({
+        ok: true,
+        status: out.status || 200,
+        rid: out.rid || null,
+        data: {
+          eligible: false,
+          historyCount: out.data.length,
+        },
+      });
     },
 
     async findSlotsByDate({
@@ -128,6 +220,9 @@ function createVersatilisSchedulingAdapter() {
       isoDate,
       tracePhone = null,
     }) {
+      const resolvedTenantId = tenantId || factoryCtx?.tenantId || null;
+      const resolvedRuntime = runtime || factoryCtx?.runtime || null;
+
       const path =
         `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(providerId)}` +
         `&CodUsuario=${encodeURIComponent(patientId)}` +
@@ -135,10 +230,10 @@ function createVersatilisSchedulingAdapter() {
         `&DataFinal=${encodeURIComponent(isoDate)}`;
 
       const out = await versatilisFetch(path, {
-        tenantId,
-        runtime: runtime || null,
+        tenantId: resolvedTenantId,
+        runtime: resolvedRuntime,
         traceMeta: sanitizeForLog({
-          tenantId,
+          tenantId: resolvedTenantId,
           traceId,
           flow: "FIND_SLOTS_BY_DATE",
           tracePhone,
@@ -149,28 +244,39 @@ function createVersatilisSchedulingAdapter() {
       });
 
       if (out.status === 404) {
-        return { ok: true, slots: [] };
+        return buildSchedulingAdapterResult({
+          ok: true,
+          status: 404,
+          rid: out.rid || null,
+          data: {
+            slots: [],
+          },
+        });
       }
 
       if (!out.ok || !Array.isArray(out.data)) {
-        return { ok: false, slots: [] };
+        return buildSchedulingAdapterResult({
+          ok: false,
+          status: out.status || 502,
+          rid: out.rid || null,
+          errorCode: "SLOTS_LOOKUP_FAILED",
+          errorMessage: "Failed to fetch slots",
+          data: {
+            slots: [],
+          },
+        });
       }
 
-      const slots = out.data
-        .filter(
-          (item) =>
-            item &&
-            item.PermiteConsulta === true &&
-            item.CodHorario != null
-        )
-        .map((item) => ({
-          slotId: Number(item.CodHorario),
-          time: toHHMM(item.Hora),
-        }))
-        .filter((x) => x.slotId && x.time)
-        .sort((a, b) => a.time.localeCompare(b.time));
+      const slots = normalizeSlots(out.data);
 
-      return { ok: true, slots };
+      return buildSchedulingAdapterResult({
+        ok: true,
+        status: out.status || 200,
+        rid: out.rid || null,
+        data: {
+          slots,
+        },
+      });
     },
 
     async confirmBooking({
@@ -179,6 +285,9 @@ function createVersatilisSchedulingAdapter() {
       bookingRequest,
       traceMeta,
     }) {
+      const resolvedTenantId = tenantId || factoryCtx?.tenantId || null;
+      const resolvedRuntime = runtime || factoryCtx?.runtime || null;
+
       const payload = {
         CodUnidade: bookingRequest?.unitId,
         CodEspecialidade: bookingRequest?.specialtyId,
@@ -190,12 +299,35 @@ function createVersatilisSchedulingAdapter() {
         Confirmada: bookingRequest?.shouldConfirm !== false,
       };
 
-      return await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
-        tenantId,
-        runtime: runtime || null,
+      const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
+        tenantId: resolvedTenantId,
+        runtime: resolvedRuntime,
         method: "POST",
         jsonBody: payload,
         traceMeta: sanitizeForLog(traceMeta || {}),
+      });
+
+      if (!out.ok) {
+        return buildSchedulingAdapterResult({
+          ok: false,
+          status: out.status || 502,
+          rid: out.rid || null,
+          errorCode: "BOOKING_CONFIRM_FAILED",
+          errorMessage: "Failed to confirm booking",
+          data: {
+            providerResult: out.data ?? null,
+          },
+        });
+      }
+
+      return buildSchedulingAdapterResult({
+        ok: true,
+        status: out.status || 200,
+        rid: out.rid || null,
+        data: {
+          bookingConfirmed: true,
+          providerResult: out.data ?? null,
+        },
       });
     },
   };
