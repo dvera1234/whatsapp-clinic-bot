@@ -1,6 +1,6 @@
 import { getRedisClient } from "../redis.js";
 import { DEBUG_REDIS, SESSION_TTL_SECONDS } from "../config/env.js";
-import { INACTIVITY_WARN_MS, MSG } from "../config/constants.js";
+import { INACTIVITY_WARN_MS } from "../config/constants.js";
 import { audit, errLog, techLog } from "../observability/audit.js";
 import { safeConsoleWrite, safeJson } from "../observability/logger.js";
 import { maskKey, maskPhone } from "../utils/mask.js";
@@ -10,8 +10,7 @@ const inactivityTimers = new Map();
 
 let inactivityHandler = {
   sendText: null,
-  getMessage: () =>
-    MSG?.ENCERRAMENTO || "Sessão encerrada por inatividade.",
+  getMessage: () => "Sessão encerrada por inatividade.",
 };
 
 function configureInactivityHandler({ sendText, getMessage } = {}) {
