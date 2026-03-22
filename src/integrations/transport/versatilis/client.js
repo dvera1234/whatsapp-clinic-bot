@@ -15,7 +15,20 @@ function readString(value) {
   return v || "";
 }
 
-function resolveProviderBaseUrl(runtime = {}) {
+function resolveProviderBaseUrl(runtime = {}, capability = null) {
+  const byCapability = {
+    identity: runtime?.integrations?.identity?.baseUrl,
+    access: runtime?.integrations?.access?.baseUrl,
+    booking: runtime?.integrations?.booking?.baseUrl,
+  };
+
+  if (capability) {
+    const direct = readString(byCapability[capability]);
+    if (direct) {
+      return direct.endsWith("/") ? direct.slice(0, -1) : direct;
+    }
+  }
+
   const candidates = [
     runtime?.integrations?.identity?.baseUrl,
     runtime?.integrations?.access?.baseUrl,
@@ -77,6 +90,16 @@ function sanitizePathForLog(path) {
   }
 }
 
+function inferCapabilityFromPath(path) {
+  const p = String(path || "").toLowerCase();
+
+  if (p.includes("/api/agenda/")) return "booking";
+  if (p.includes("/api/login/cadastrarusuario")) return "access";
+  if (p.includes("/api/login/")) return "identity";
+
+  return null;
+}
+
 async function providerFetch(
   path,
   {
@@ -86,6 +109,7 @@ async function providerFetch(
     traceMeta,
     tenantId,
     runtime,
+    capability = null,
   } = {}
 ) {
   const requestId = crypto.randomUUID();
@@ -96,13 +120,14 @@ async function providerFetch(
     throw err;
   }
 
-  if (!runtime) {
+  if (!runtime || typeof runtime !== "object") {
     const err = new Error("runtime ausente em providerFetch");
     err.code = "RUNTIME_MISSING";
     throw err;
   }
 
-  const baseUrl = resolveProviderBaseUrl(runtime);
+  const resolvedCapability = capability || inferCapabilityFromPath(path) || null;
+  const baseUrl = resolveProviderBaseUrl(runtime, resolvedCapability);
 
   if (!baseUrl) {
     const err = new Error("Base URL do provider ausente no runtime");
@@ -113,6 +138,7 @@ async function providerFetch(
   const accessToken = await getProviderAccessToken({
     tenantId,
     runtime,
+    capability: resolvedCapability,
   });
 
   const url = `${baseUrl}${path}`;
@@ -184,6 +210,7 @@ async function providerFetch(
     query: safeQuery,
     hasBody: !!jsonBody,
     technicalResult,
+    capability: resolvedCapability,
     ...(traceMeta || {}),
     tenantId,
   };
