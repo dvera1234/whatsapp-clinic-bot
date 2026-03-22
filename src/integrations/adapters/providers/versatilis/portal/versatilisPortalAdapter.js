@@ -15,24 +15,9 @@ import {
   parseExternalPatientIdFromAny,
   validatePatientRegistrationData,
 } from "../shared/versatilisMappers.js";
+import { getProviderRuntimeContext } from "../shared/versatilisContext.js";
 
-function getProviderRuntimeContext(runtimeCtx = {}, factoryCtx = {}) {
-  return {
-    tenantId:
-      runtimeCtx?.tenantId ||
-      factoryCtx?.tenantId ||
-      null,
-    runtime:
-      runtimeCtx?.runtime ||
-      runtimeCtx?.tenantRuntime ||
-      factoryCtx?.runtime ||
-      null,
-    traceId: runtimeCtx?.traceId || null,
-    tracePhone: runtimeCtx?.tracePhone || null,
-  };
-}
-
-function buildPortalAdapterResult({
+function buildResult({
   ok,
   data = null,
   status = null,
@@ -40,14 +25,7 @@ function buildPortalAdapterResult({
   errorCode = null,
   errorMessage = null,
 }) {
-  return {
-    ok: !!ok,
-    data,
-    status,
-    rid,
-    errorCode,
-    errorMessage,
-  };
+  return { ok: !!ok, data, status, rid, errorCode, errorMessage };
 }
 
 function isEmptyValue(value) {
@@ -57,32 +35,21 @@ function isEmptyValue(value) {
   return false;
 }
 
-function describeShape(value) {
-  if (value == null) return "null/undefined";
-  if (typeof value === "string") return `string(len=${value.length})`;
-  if (typeof value === "number") return "number";
-  if (typeof value === "boolean") return "boolean";
-  if (Array.isArray(value)) return `array(len=${value.length})`;
-  return typeof value;
-}
-
-function createRegistrationPayload({ registrationData, runtimeCtx }) {
-  const resolvedPlanId = resolvePlanIdFromPlanKey(
+function createPayload(registrationData, runtime) {
+  const planId = resolvePlanIdFromPlanKey(
     registrationData?.planKey,
-    runtimeCtx
+    runtime
   );
 
-  const temporaryPasswordHash = md5HexLegacyVersatilisOnly(
+  const passwordHash = md5HexLegacyVersatilisOnly(
     generateTempPassword(10)
   );
 
-  const birthDateISO = cleanStr(registrationData?.birthDateISO);
-
-  const payload = {
+  return {
     Nome: registrationData?.fullName,
     CPF: registrationData?.document,
     Email: registrationData?.email,
-    DtNasc: birthDateISO,
+    DtNasc: cleanStr(registrationData?.birthDateISO),
     Celular: registrationData?.mobilePhone,
     Telefone: registrationData?.phone || registrationData?.mobilePhone || "",
     CEP: registrationData?.postalCode,
@@ -94,153 +61,71 @@ function createRegistrationPayload({ registrationData, runtimeCtx }) {
     ),
     Bairro: registrationData?.district,
     Cidade: registrationData?.city,
-    CodPlano: resolvedPlanId ? String(resolvedPlanId) : "",
-    CodPlanos: resolvedPlanId ? [resolvedPlanId] : [],
-    Senha: temporaryPasswordHash,
-  };
-
-  if (
-    registrationData?.gender === "M" ||
-    registrationData?.gender === "F"
-  ) {
-    payload.Sexo = registrationData.gender;
-  }
-
-  return {
-    payload,
-    resolvedPlanId,
+    CodPlano: planId ? String(planId) : "",
+    CodPlanos: planId ? [planId] : [],
+    Senha: passwordHash,
+    Sexo:
+      registrationData?.gender === "M" ||
+      registrationData?.gender === "F"
+        ? registrationData.gender
+        : undefined,
   };
 }
 
-function validateRegistrationPayload(payload, resolvedPlanId) {
-  const emptyFields = Object.entries(payload)
-    .filter(([_, value]) => isEmptyValue(value))
-    .map(([key]) => key);
+function validatePayload(payload, planId) {
+  const missing = Object.entries(payload)
+    .filter(([_, v]) => isEmptyValue(v))
+    .map(([k]) => k);
 
-  const validationErrors = [];
+  const errors = [];
 
-  if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5) {
-    validationErrors.push("Nome");
-  }
+  if (!cleanStr(payload.Nome) || payload.Nome.length < 5) errors.push("Nome");
+  if (!/^\d{11}$/.test(String(payload.CPF).replace(/\D+/g, ""))) errors.push("CPF");
+  if (!isValidEmail(payload.Email)) errors.push("Email");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.DtNasc)) errors.push("DtNasc");
+  if (!/^\d{8}$/.test(String(payload.CEP).replace(/\D+/g, ""))) errors.push("CEP");
+  if (!cleanStr(payload.Endereco)) errors.push("Endereco");
+  if (!cleanStr(payload.Numero)) errors.push("Numero");
+  if (!cleanStr(payload.Bairro)) errors.push("Bairro");
+  if (!cleanStr(payload.Cidade)) errors.push("Cidade");
+  if (!cleanStr(payload.Celular)) errors.push("Celular");
+  if (!cleanStr(payload.Senha)) errors.push("Senha");
+  if (!planId) errors.push("CodPlano");
 
-  if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, ""))) {
-    validationErrors.push("CPF");
-  }
-
-  if (!isValidEmail(payload.Email)) validationErrors.push("Email");
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || ""))) {
-    validationErrors.push("DtNasc");
-  }
-
-  if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, ""))) {
-    validationErrors.push("CEP");
-  }
-
-  if (!cleanStr(payload.Endereco)) validationErrors.push("Endereco");
-  if (!cleanStr(payload.Numero)) validationErrors.push("Numero");
-  if (!cleanStr(payload.Bairro)) validationErrors.push("Bairro");
-  if (!cleanStr(payload.Cidade)) validationErrors.push("Cidade");
-  if (!cleanStr(payload.Celular)) validationErrors.push("Celular");
-  if (!cleanStr(payload.Senha)) validationErrors.push("Senha");
-  if (!resolvedPlanId) validationErrors.push("CodPlano");
-
-  return {
-    emptyFields,
-    validationErrors,
-  };
+  return { missing, errors };
 }
 
 function createVersatilisPortalAdapter(factoryCtx = {}) {
   return {
     validateRegistrationData({ profile }) {
-      const data = validatePatientRegistrationData(profile);
-
-      return buildPortalAdapterResult({
+      return buildResult({
         ok: true,
-        data,
-        status: 200,
+        data: validatePatientRegistrationData(profile),
       });
     },
 
     async createPatientRegistration({
       registrationData,
       traceMeta = {},
-      runtimeCtx = {},
+      runtimeCtx,
     }) {
       const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
 
-      const { payload, resolvedPlanId } = createRegistrationPayload({
-        registrationData,
-        runtimeCtx: {
-          ...runtimeCtx,
-          tenantId: ctx.tenantId,
-          runtime: ctx.runtime,
-        },
-      });
-
-      const { emptyFields, validationErrors } = validateRegistrationPayload(
-        payload,
-        resolvedPlanId
+      const planId = resolvePlanIdFromPlanKey(
+        registrationData?.planKey,
+        ctx.runtime
       );
 
-      const shape = Object.fromEntries(
-        Object.entries(payload).map(([key, value]) => [key, describeShape(value)])
-      );
+      const payload = createPayload(registrationData, ctx.runtime);
 
-      debugLog(
-        "PATIENT_REGISTRATION_PAYLOAD_SHAPE",
-        sanitizeForLog({
-          tenantId: ctx.tenantId,
-          traceId: ctx.traceId || traceMeta?.traceId || null,
-          emptyFields,
-          validationErrors,
-          shape,
-        })
-      );
+      const { missing, errors } = validatePayload(payload, planId);
 
-      if (emptyFields.length > 0 || validationErrors.length > 0) {
-        audit(
-          "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
-          auditOutcome(
-            sanitizeForLog({
-              ...(traceMeta || {}),
-              tenantId: ctx.tenantId,
-              traceId: ctx.traceId || traceMeta?.traceId || null,
-              tracePhone: ctx.tracePhone || traceMeta?.tracePhone || null,
-              technicalAccepted: false,
-              functionalResult: "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
-              patientFacingMessage: null,
-              escalationRequired: true,
-              hasRegistrationData: !!registrationData,
-              registrationDataKeys: registrationData
-                ? Object.keys(registrationData).sort()
-                : [],
-              registrationDataShape: registrationData
-                ? Object.fromEntries(
-                    Object.entries(registrationData).map(([key, value]) => [
-                      key,
-                      describeShape(value),
-                    ])
-                  )
-                : {},
-              missingFields: emptyFields,
-              validationErrors,
-            })
-          )
-        );
-
-        return buildPortalAdapterResult({
+      if (missing.length || errors.length) {
+        return buildResult({
           ok: false,
           status: 400,
           errorCode: "INVALID_REGISTRATION_PAYLOAD",
-          errorMessage: "Registration payload is invalid",
-          data: {
-            stage: "blocked_missing_fields",
-            missing: emptyFields,
-            validationErrors,
-            hint: "Wizard não preencheu dados obrigatórios. Corrigir fluxo WZ_*.",
-          },
+          data: { missing, errors },
         });
       }
 
@@ -251,45 +136,17 @@ function createVersatilisPortalAdapter(factoryCtx = {}) {
         jsonBody: payload,
         traceMeta: mergeTraceMeta(traceMeta, {
           tenantId: ctx.tenantId,
-          traceId: ctx.traceId || traceMeta?.traceId || null,
-          tracePhone: ctx.tracePhone || traceMeta?.tracePhone || null,
+          traceId: ctx.traceId,
           flow: "CREATE_PATIENT_REGISTRATION",
-          documentMasked: "***",
         }),
       });
 
-      audit(
-        "PATIENT_REGISTRATION_ATTEMPT",
-        auditOutcome(
-          sanitizeForLog({
-            ...(traceMeta || {}),
-            tenantId: ctx.tenantId,
-            traceId: ctx.traceId || traceMeta?.traceId || null,
-            tracePhone: ctx.tracePhone || traceMeta?.tracePhone || null,
-            technicalAccepted: out.ok,
-            httpStatus: out.status,
-            rid: out.rid,
-            functionalResult: out.ok
-              ? "PATIENT_REGISTRATION_CREATED"
-              : "PATIENT_REGISTRATION_FAILED",
-            patientFacingMessage: null,
-            escalationRequired: !out.ok,
-            dataType: typeof out.data,
-          })
-        )
-      );
-
       if (!out.ok) {
-        return buildPortalAdapterResult({
+        return buildResult({
           ok: false,
           status: out.status || 500,
-          rid: out.rid || null,
+          rid: out.rid,
           errorCode: "PATIENT_REGISTRATION_FAILED",
-          errorMessage: "Failed to create patient registration",
-          data: {
-            stage: "create_registration",
-            providerResult: out,
-          },
         });
       }
 
@@ -297,15 +154,14 @@ function createVersatilisPortalAdapter(factoryCtx = {}) {
         parseExternalPatientIdFromAny(out.data) ||
         Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
 
-      return buildPortalAdapterResult({
+      return buildResult({
         ok: true,
-        status: out.status || 200,
-        rid: out.rid || null,
+        status: out.status,
+        rid: out.rid,
         data: {
           patientId: Number.isFinite(Number(patientId))
             ? Number(patientId)
             : null,
-          providerResult: out.data ?? null,
         },
       });
     },
