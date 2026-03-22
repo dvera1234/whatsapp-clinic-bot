@@ -115,9 +115,20 @@ function validatePatientRegistrationData(profile = {}) {
   };
 }
 
-function resolvePlanIdFromPlanKey(planKey, runtime = {}) {
-  const privatePlanId = Number(runtime?.plans?.privatePlanId) || null;
-  const insuredPlanId = Number(runtime?.plans?.insuredPlanId) || null;
+function resolvePlanExternalIdFromRuntime(planKey, runtime = {}) {
+  const privatePlanId =
+    Number(
+      runtime?.planMappings?.PRIVATE?.externalId ||
+        runtime?.integrations?.booking?.planMappings?.PRIVATE?.externalId ||
+        0
+    ) || null;
+
+  const insuredPlanId =
+    Number(
+      runtime?.planMappings?.INSURED?.externalId ||
+        runtime?.integrations?.booking?.planMappings?.INSURED?.externalId ||
+        0
+    ) || null;
 
   if (planKey === PLAN_KEYS.PRIVATE) {
     return privatePlanId;
@@ -156,7 +167,7 @@ function listPlanIdsFromProfile(profile = {}) {
 }
 
 function hasPlanByDomainKey(planIds, planKey, runtime = {}) {
-  const expectedPlanId = resolvePlanIdFromPlanKey(planKey, runtime);
+  const expectedPlanId = resolvePlanExternalIdFromRuntime(planKey, runtime);
 
   if (!expectedPlanId) return false;
 
@@ -226,7 +237,7 @@ function composeAddressComplement(addressComplement, stateCode) {
 }
 
 export {
-  resolvePlanIdFromPlanKey,
+  resolvePlanExternalIdFromRuntime,
   listPlanIdsFromProfile,
   hasPlanByDomainKey,
   findExternalPatientIdDeep,
