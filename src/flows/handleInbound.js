@@ -134,16 +134,13 @@ async function handleInbound({
     return;
   }
 
-  const { practitionerId, unitId, specialtyId } = getClinicIdsFromRuntime(runtime);
-  const { privatePlanId, insuredPlanId } = getPlanIdsFromRuntime(runtime);
-
+  const { practitionerId } = getClinicIdsFromRuntime(runtime);
   const portalUrl = runtime?.portal?.url || "";
   const supportWa = runtime?.support?.waNumber || "";
 
   const runtimeCtx = {
     tenantId,
     runtime,
-    tenantRuntime: runtime,
     traceId,
     tracePhone: maskPhone(phone),
   };
@@ -372,9 +369,7 @@ async function handleInbound({
 
     const out = await findSlotsByDate({
       schedulingAdapter,
-      tenantId,
-      runtime,
-      traceId,
+      runtimeCtx,
       practitionerId: selectedPractitionerId,
       patientId,
       appointmentDate,
@@ -439,13 +434,11 @@ async function handleInbound({
 
     const shown = await showNextDates({
       schedulingAdapter,
-      tenantId,
-      runtime,
+      runtimeCtx,
       phone,
       phoneNumberIdFallback: effectivePhoneNumberId,
       practitionerId: selectedPractitionerId,
       patientId,
-      traceId,
       MSG,
     });
 
@@ -506,13 +499,11 @@ async function handleInbound({
 
       const shown = await showNextDates({
         schedulingAdapter,
-        tenantId,
-        runtime,
+        runtimeCtx,
         phone,
         phoneNumberIdFallback: effectivePhoneNumberId,
         practitionerId: selectedPractitionerId,
         patientId,
-        traceId,
         MSG,
       });
 
@@ -593,20 +584,13 @@ async function handleInbound({
     if (upper === "CONFIRMAR") {
       const s = await getSession(tenantId, phone);
       const slotId = Number(s?.pending?.slotId);
-      const selectedPlanId = resolvePlanIdFromRuntimeStrict(
-        s?.booking?.planKey || PLAN_KEYS.PRIVATE,
-        runtime
-      );
 
       const bookingRequest = {
-        unitId,
-        specialtyId,
-        planId: selectedPlanId,
         slotId,
         patientId: s?.booking?.patientId,
         providerId: s?.booking?.practitionerId ?? practitionerId,
+        planKey: s?.booking?.planKey || PLAN_KEYS.PRIVATE,
         isTelemedicine: false,
-        shouldConfirm: true,
       };
 
       if (!bookingRequest.patientId) {
@@ -614,29 +598,6 @@ async function handleInbound({
           tenantId,
           to: phone,
           body: MSG.BOOKING_PATIENT_NOT_IDENTIFIED,
-          phoneNumberIdFallback: effectivePhoneNumberId,
-        });
-        await setState(tenantId, phone, "MAIN");
-        return;
-      }
-
-      if (!bookingRequest.planId) {
-        audit(
-          "RUNTIME_PLAN_ID_MISSING_FOR_BOOKING",
-          sanitizeForLog({
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            planKey: s?.booking?.planKey || PLAN_KEYS.PRIVATE,
-            privatePlanId: Number(privatePlanId) || null,
-            insuredPlanId: Number(insuredPlanId) || null,
-          })
-        );
-
-        await sendText({
-          tenantId,
-          to: phone,
-          body: MSG.BOOKING_CONFIRM_FAILURE,
           phoneNumberIdFallback: effectivePhoneNumberId,
         });
         await setState(tenantId, phone, "MAIN");
@@ -722,9 +683,7 @@ async function handleInbound({
 
           const outSlots = await findSlotsByDate({
             schedulingAdapter,
-            tenantId,
-            runtime,
-            traceId,
+            runtimeCtx,
             practitionerId: selectedPractitionerId,
             patientId,
             appointmentDate,
@@ -766,19 +725,8 @@ async function handleInbound({
         let out;
         try {
           out = await schedulingAdapter.confirmBooking({
-            tenantId,
-            runtime,
             bookingRequest,
-            traceMeta: {
-              tenantId,
-              traceId,
-              flow: "CONFIRM_BOOKING",
-              tracePhone: maskPhone(phone),
-              patientId: bookingRequest.patientId || null,
-              slotId: bookingRequest.slotId || null,
-              planId: bookingRequest.planId || null,
-              providerId: bookingRequest.providerId || null,
-            },
+            runtimeCtx,
           });
         } catch (err) {
           if (isProviderTemporaryUnavailableError(err)) {
@@ -809,7 +757,7 @@ async function handleInbound({
             tracePhone: maskPhone(phone),
             patientId: bookingRequest.patientId || null,
             slotId: bookingRequest.slotId || null,
-            planId: bookingRequest.planId || null,
+            planKey: bookingRequest.planKey || null,
             providerId: bookingRequest.providerId || null,
             appointmentDate: s?.booking?.appointmentDate || null,
             appointmentTime: chosen?.time || null,
@@ -1275,23 +1223,17 @@ async function handleInbound({
             ? planIdsResult.data
             : [];
 
-        const hasPrivatePlanResult = patientAdapter.hasPlan({
+        const hasPrivatePlan = hasPlanKey({
           planIds,
+          runtime,
           planKey: PLAN_KEYS.PRIVATE,
-          runtimeCtx,
         });
 
-        const hasInsuredPlanResult = patientAdapter.hasPlan({
+        const hasInsuredPlan = hasPlanKey({
           planIds,
+          runtime,
           planKey: PLAN_KEYS.INSURED,
-          runtimeCtx,
         });
-
-        const hasPrivatePlan =
-          !!hasPrivatePlanResult?.ok && hasPrivatePlanResult?.data === true;
-
-        const hasInsuredPlan =
-          !!hasInsuredPlanResult?.ok && hasInsuredPlanResult?.data === true;
 
         await updateSession(tenantId, phone, (sess) => {
           sess.booking = sess.booking || {};
@@ -1414,8 +1356,6 @@ async function handleInbound({
             tracePhone: maskPhone(phone),
             patientId: Number(patientId) || null,
             flowPlanKey,
-            privatePlanId: Number(privatePlanId) || null,
-            insuredPlanId: Number(insuredPlanId) || null,
             planIdsDetected: Array.isArray(planIds) ? planIds.map(Number) : [],
             hasPrivatePlan,
             hasInsuredPlan,
@@ -1511,6 +1451,7 @@ async function handleInbound({
       await updateSession(tenantId, phone, (sess) => {
         sess.portal = sess.portal || {};
         sess.portal.form = sess.portal.form || {};
+
         sess.portal.form.birthDateISO = birthDateISO;
       });
 
@@ -2297,32 +2238,33 @@ function resolveRuntimeFromContext(context = {}) {
 
 function getClinicIdsFromRuntime(runtime = {}) {
   return {
-    practitionerId: runtime?.clinic?.primaryPractitionerId ?? null,
-    unitId: runtime?.clinic?.defaultUnitId ?? null,
-    specialtyId: runtime?.clinic?.defaultSpecialtyId ?? null,
+    practitionerId: runtime?.clinic?.providerId ?? null,
   };
 }
 
 function getPlanIdsFromRuntime(runtime = {}) {
   return {
-    privatePlanId: runtime?.plans?.privatePlanId ?? null,
-    insuredPlanId: runtime?.plans?.insuredPlanId ?? null,
+    privatePlanId: Number(runtime?.plans?.privatePlanId) || null,
+    insuredPlanId: Number(runtime?.plans?.insuredPlanId) || null,
   };
 }
 
-function resolvePlanIdFromRuntimeStrict(planKey, runtime = {}) {
-  const privatePlanId = Number(runtime?.plans?.privatePlanId) || null;
-  const insuredPlanId = Number(runtime?.plans?.insuredPlanId) || null;
+function hasPlanKey({ planIds, runtime, planKey }) {
+  const { privatePlanId, insuredPlanId } = getPlanIdsFromRuntime(runtime);
+
+  const normalizedPlanIds = Array.isArray(planIds)
+    ? planIds.map((x) => Number(x)).filter(Number.isFinite)
+    : [];
 
   if (planKey === PLAN_KEYS.PRIVATE) {
-    return privatePlanId;
+    return privatePlanId != null && normalizedPlanIds.includes(privatePlanId);
   }
 
   if (planKey === PLAN_KEYS.INSURED) {
-    return insuredPlanId;
+    return insuredPlanId != null && normalizedPlanIds.includes(insuredPlanId);
   }
 
-  return privatePlanId;
+  return false;
 }
 
 async function failSafeTenantConfigError({
@@ -2554,9 +2496,7 @@ async function handleProviderTemporaryUnavailable({
 
 async function findSlotsByDate({
   schedulingAdapter,
-  tenantId,
-  runtime,
-  traceId = null,
+  runtimeCtx,
   practitionerId,
   patientId,
   appointmentDate,
@@ -2566,13 +2506,13 @@ async function findSlotsByDate({
 
   try {
     out = await schedulingAdapter.findSlotsByDate({
-      tenantId,
-      runtime,
-      traceId,
       providerId: practitionerId,
       patientId,
       isoDate: appointmentDate,
-      tracePhone: maskPhone(phone),
+      runtimeCtx: {
+        ...runtimeCtx,
+        tracePhone: maskPhone(phone),
+      },
     });
   } catch (err) {
     if (isProviderTemporaryUnavailableError(err)) {
@@ -2613,9 +2553,7 @@ async function findSlotsByDate({
 
 async function fetchNextAvailableDates({
   schedulingAdapter,
-  tenantId,
-  runtime,
-  traceId = null,
+  runtimeCtx,
   practitionerId,
   patientId,
   phone = "",
@@ -2638,9 +2576,7 @@ async function fetchNextAvailableDates({
 
     const out = await findSlotsByDate({
       schedulingAdapter,
-      tenantId,
-      runtime,
-      traceId,
+      runtimeCtx,
       practitionerId,
       patientId,
       appointmentDate,
@@ -2677,20 +2613,16 @@ function formatBRFromISO(isoDate) {
 
 async function showNextDates({
   schedulingAdapter,
-  tenantId,
-  runtime,
+  runtimeCtx,
   phone,
   phoneNumberIdFallback,
   practitionerId,
   patientId,
-  traceId = null,
   MSG,
 }) {
   const result = await fetchNextAvailableDates({
     schedulingAdapter,
-    tenantId,
-    runtime,
-    traceId,
+    runtimeCtx,
     practitionerId,
     patientId,
     phone,
@@ -2700,8 +2632,8 @@ async function showNextDates({
 
   if (result.providerUnavailable) {
     await handleProviderTemporaryUnavailable({
-      tenantId,
-      traceId,
+      tenantId: runtimeCtx?.tenantId,
+      traceId: runtimeCtx?.traceId || null,
       phone,
       phoneNumberIdFallback,
       capability: "booking",
@@ -2716,7 +2648,7 @@ async function showNextDates({
 
   if (!dates.length) {
     await sendText({
-      tenantId,
+      tenantId: runtimeCtx?.tenantId,
       to: phone,
       body: MSG.BOOKING_NO_DATES,
       phoneNumberIdFallback,
@@ -2730,7 +2662,7 @@ async function showNextDates({
   }));
 
   await sendButtons({
-    tenantId,
+    tenantId: runtimeCtx?.tenantId,
     to: phone,
     body: MSG.BOOKING_PICK_DATE,
     buttons,
@@ -3015,44 +2947,11 @@ async function finishWizardAndGoToDates({
   practitionerId,
   MSG,
 }) {
-  let eligibilityResult;
-
-  try {
-    eligibilityResult = await schedulingAdapter.checkReturnEligibility({
-      patientId,
-      runtimeCtx: {
-        tenantId,
-        runtime,
-        tenantRuntime: runtime,
-        traceId,
-        tracePhone: maskPhone(phone),
-      },
-    });
-  } catch (err) {
-    if (isProviderTemporaryUnavailableError(err)) {
-      await handleProviderTemporaryUnavailable({
-        tenantId,
-        traceId,
-        phone,
-        phoneNumberIdFallback,
-        capability: "booking",
-        err,
-        MSG,
-        nextState: "MAIN",
-      });
-      return false;
-    }
-    throw err;
-  }
-
-  const isReturn =
-    !!eligibilityResult?.ok && eligibilityResult?.data?.eligible === true;
-
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.patientId = patientId;
     s.booking.practitionerId = practitionerId;
-    s.booking.isReturn = isReturn;
+    s.booking.isReturn = false;
 
     if (planKeyFromWizard) {
       s.booking.planKey = planKeyFromWizard;
@@ -3061,13 +2960,16 @@ async function finishWizardAndGoToDates({
 
   const shown = await showNextDates({
     schedulingAdapter,
-    tenantId,
-    runtime,
+    runtimeCtx: {
+      tenantId,
+      runtime,
+      traceId,
+      tracePhone: maskPhone(phone),
+    },
     phone,
     phoneNumberIdFallback,
     practitionerId,
     patientId,
-    traceId,
     MSG,
   });
 
