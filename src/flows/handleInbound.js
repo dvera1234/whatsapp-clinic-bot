@@ -21,7 +21,6 @@ import {
   TZ_OFFSET,
   LGPD_TEXT_VERSION,
   LGPD_TEXT_HASH,
-  resolvePlanIdFromRuntime,
 } from "../config/constants.js";
 
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
@@ -103,7 +102,7 @@ async function handleInbound({
     return;
   }
 
-    configureInactivityHandler({
+  configureInactivityHandler({
     sendText,
     getMessage: () =>
       runtime?.content?.messages?.inactivityClosureMessage ||
@@ -135,16 +134,8 @@ async function handleInbound({
     return;
   }
 
-  const {
-    practitionerId,
-    unitId,
-    specialtyId,
-  } = getClinicIdsFromRuntime(runtime);
-
-  const {
-    privatePlanId,
-    insuredPlanId,
-  } = getPlanIdsFromRuntime(runtime);
+  const { practitionerId, unitId, specialtyId } = getClinicIdsFromRuntime(runtime);
+  const { privatePlanId, insuredPlanId } = getPlanIdsFromRuntime(runtime);
 
   const portalUrl = runtime?.portal?.url || "";
   const supportWa = runtime?.support?.waNumber || "";
@@ -155,8 +146,6 @@ async function handleInbound({
     tenantRuntime: runtime,
     traceId,
     tracePhone: maskPhone(phone),
-    privatePlanId,
-    insuredPlanId,
   };
 
   const raw = normalizeSpaces(inboundText);
@@ -356,8 +345,6 @@ async function handleInbound({
       planKeyFromWizard: chosenKey,
       traceId,
       practitionerId,
-      privatePlanId,
-      insuredPlanId,
       MSG,
     });
 
@@ -606,7 +593,7 @@ async function handleInbound({
     if (upper === "CONFIRMAR") {
       const s = await getSession(tenantId, phone);
       const slotId = Number(s?.pending?.slotId);
-      const selectedPlanId = resolvePlanIdFromRuntime(
+      const selectedPlanId = resolvePlanIdFromRuntimeStrict(
         s?.booking?.planKey || PLAN_KEYS.PRIVATE,
         runtime
       );
@@ -627,6 +614,29 @@ async function handleInbound({
           tenantId,
           to: phone,
           body: MSG.BOOKING_PATIENT_NOT_IDENTIFIED,
+          phoneNumberIdFallback: effectivePhoneNumberId,
+        });
+        await setState(tenantId, phone, "MAIN");
+        return;
+      }
+
+      if (!bookingRequest.planId) {
+        audit(
+          "RUNTIME_PLAN_ID_MISSING_FOR_BOOKING",
+          sanitizeForLog({
+            tenantId,
+            traceId,
+            tracePhone: maskPhone(phone),
+            planKey: s?.booking?.planKey || PLAN_KEYS.PRIVATE,
+            privatePlanId: Number(privatePlanId) || null,
+            insuredPlanId: Number(insuredPlanId) || null,
+          })
+        );
+
+        await sendText({
+          tenantId,
+          to: phone,
+          body: MSG.BOOKING_CONFIRM_FAILURE,
           phoneNumberIdFallback: effectivePhoneNumberId,
         });
         await setState(tenantId, phone, "MAIN");
@@ -865,7 +875,7 @@ async function handleInbound({
           "Agendamento confirmado com sucesso!";
 
         const isPrivateBooking =
-          Number(bookingRequest.planId) === Number(privatePlanId);
+          (s?.booking?.planKey || PLAN_KEYS.PRIVATE) === PLAN_KEYS.PRIVATE;
         const isReturnBooking = !!s?.booking?.isReturn;
         const showPaymentInfo = isPrivateBooking && !isReturnBooking;
 
@@ -1303,8 +1313,6 @@ async function handleInbound({
             planKeyFromWizard: flowPlanKey,
             traceId,
             practitionerId,
-            privatePlanId,
-            insuredPlanId,
             MSG,
           });
           return;
@@ -1325,8 +1333,6 @@ async function handleInbound({
             planKeyFromWizard: flowPlanKey,
             traceId,
             practitionerId,
-            privatePlanId,
-            insuredPlanId,
             MSG,
           });
           return;
@@ -1416,7 +1422,7 @@ async function handleInbound({
             validationResult: "PLAN_VALIDATION_FAILURE_BRANCH",
           })
         );
-        
+
         await sendText({
           tenantId,
           to: phone,
@@ -1905,8 +1911,6 @@ async function handleInbound({
         planKeyFromWizard: finalPlanKey,
         traceId,
         practitionerId,
-        privatePlanId,
-        insuredPlanId,
         MSG,
       });
 
@@ -2293,32 +2297,32 @@ function resolveRuntimeFromContext(context = {}) {
 
 function getClinicIdsFromRuntime(runtime = {}) {
   return {
-    practitionerId:
-      runtime?.clinic?.codColaborador ??
-      runtime?.clinic?.primaryPractitionerId ??
-      null,
-    unitId:
-      runtime?.clinic?.codUnidade ??
-      runtime?.clinic?.defaultUnitId ??
-      null,
-    specialtyId:
-      runtime?.clinic?.codEspecialidade ??
-      runtime?.clinic?.defaultSpecialtyId ??
-      null,
+    practitionerId: runtime?.clinic?.primaryPractitionerId ?? null,
+    unitId: runtime?.clinic?.defaultUnitId ?? null,
+    specialtyId: runtime?.clinic?.defaultSpecialtyId ?? null,
   };
 }
 
 function getPlanIdsFromRuntime(runtime = {}) {
   return {
-    privatePlanId:
-      runtime?.plans?.codPlanoParticular ??
-      runtime?.plans?.privatePlanId ??
-      null,
-    insuredPlanId:
-      runtime?.plans?.codPlanoMedSeniorSp ??
-      runtime?.plans?.insuredPlanId ??
-      null,
+    privatePlanId: runtime?.plans?.privatePlanId ?? null,
+    insuredPlanId: runtime?.plans?.insuredPlanId ?? null,
   };
+}
+
+function resolvePlanIdFromRuntimeStrict(planKey, runtime = {}) {
+  const privatePlanId = Number(runtime?.plans?.privatePlanId) || null;
+  const insuredPlanId = Number(runtime?.plans?.insuredPlanId) || null;
+
+  if (planKey === PLAN_KEYS.PRIVATE) {
+    return privatePlanId;
+  }
+
+  if (planKey === PLAN_KEYS.INSURED) {
+    return insuredPlanId;
+  }
+
+  return privatePlanId;
 }
 
 async function failSafeTenantConfigError({
@@ -2992,6 +2996,13 @@ function getFlowText(runtime) {
   };
 }
 
+function tpl(template, vars = {}) {
+  return String(template).replace(/\{(\w+)\}/g, (_, key) => {
+    const value = vars[key];
+    return value == null ? "" : String(value);
+  });
+}
+
 async function finishWizardAndGoToDates({
   schedulingAdapter,
   tenantId,
@@ -3002,8 +3013,6 @@ async function finishWizardAndGoToDates({
   planKeyFromWizard,
   traceId = null,
   practitionerId,
-  privatePlanId,
-  insuredPlanId,
   MSG,
 }) {
   let eligibilityResult;
@@ -3017,8 +3026,6 @@ async function finishWizardAndGoToDates({
         tenantRuntime: runtime,
         traceId,
         tracePhone: maskPhone(phone),
-        privatePlanId,
-        insuredPlanId,
       },
     });
   } catch (err) {
