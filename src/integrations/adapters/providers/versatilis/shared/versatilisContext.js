@@ -1,15 +1,21 @@
-function getProviderRuntimeContext(runtimeCtx = {}) {
+function getProviderRuntimeContext(runtimeCtx = {}, factoryCtx = {}) {
   const runtime =
     runtimeCtx?.runtime ||
     runtimeCtx?.tenantRuntime ||
-    runtimeCtx ||
+    factoryCtx?.runtime ||
+    null;
+
+  const tenantId =
+    runtimeCtx?.tenantId ||
+    factoryCtx?.tenantId ||
+    runtime?.tenantId ||
     null;
 
   return {
-    tenantId: runtime?.tenantId || null,
+    tenantId,
     runtime,
-    traceId: runtimeCtx?.traceId || runtime?.traceId || null,
-    tracePhone: runtimeCtx?.tracePhone || runtime?.tracePhone || null,
+    traceId: runtimeCtx?.traceId || null,
+    tracePhone: runtimeCtx?.tracePhone || null,
   };
 }
 
