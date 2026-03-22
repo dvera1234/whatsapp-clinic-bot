@@ -23,50 +23,45 @@ function sanitizeProviderBase(value) {
   return s;
 }
 
-function resolveProviderConfig(runtime = {}) {
-  const candidates = [
-    { key: "identity", cfg: runtime?.integrations?.identity || {} },
-    { key: "access", cfg: runtime?.integrations?.access || {} },
-    { key: "booking", cfg: runtime?.integrations?.booking || {} },
-  ];
+// 🔥 AGORA CORRETO: POR CAPABILITY
+function resolveProviderConfig(runtime = {}, capability) {
+  const cfg = runtime?.integrations?.[capability];
 
-  for (const candidate of candidates) {
-    const cfg = candidate.cfg || {};
-    const baseUrl = sanitizeProviderBase(cfg?.baseUrl);
-    const username = readString(cfg?.user);
-    const password = readString(cfg?.pass);
-
-    if (baseUrl && username && password) {
-      return {
-        providerKey: cfg?.key || candidate.key,
-        baseUrl,
-        username,
-        password,
-      };
-    }
+  if (!cfg) {
+    const err = new Error(`Provider config ausente para capability: ${capability}`);
+    err.code = "PROVIDER_CONFIG_MISSING";
+    throw err;
   }
+
+  const baseUrl = sanitizeProviderBase(cfg?.baseUrl);
+  const username = readString(cfg?.user);
+  const password = readString(cfg?.pass);
 
   const missing = [];
-  if (!sanitizeProviderBase(runtime?.integrations?.identity?.baseUrl)) {
-    missing.push("runtime.integrations.identity.baseUrl");
-  }
-  if (!readString(runtime?.integrations?.identity?.user)) {
-    missing.push("runtime.integrations.identity.user");
-  }
-  if (!readString(runtime?.integrations?.identity?.pass)) {
-    missing.push("runtime.integrations.identity.pass");
+
+  if (!baseUrl) missing.push(`${capability}.baseUrl`);
+  if (!username) missing.push(`${capability}.user`);
+  if (!password) missing.push(`${capability}.pass`);
+
+  if (missing.length) {
+    const err = new Error(
+      `Provider auth config incompleta (${capability}): ${missing.join(", ")}`
+    );
+    err.code = "PROVIDER_AUTH_CONFIG_INVALID";
+    err.missingFields = missing;
+    throw err;
   }
 
-  const err = new Error(
-    `Provider auth config incompleta: ${missing.join(", ")}`
-  );
-  err.code = "PROVIDER_AUTH_CONFIG_INVALID";
-  err.missingFields = missing;
-  throw err;
+  return {
+    providerKey: cfg?.key || capability,
+    baseUrl,
+    username,
+    password,
+  };
 }
 
 function accessTokenCacheKey(tenantId, providerKey, baseUrl, username) {
-  const raw = `${tenantId || ""}|${providerKey}|${baseUrl}|${username}`;
+  const raw = `${tenantId}|${providerKey}|${baseUrl}|${username}`;
   return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
@@ -89,7 +84,7 @@ function maskBaseUrlForLog(baseUrl) {
   }
 }
 
-async function getProviderAccessToken({ tenantId, runtime }) {
+async function getProviderAccessToken({ tenantId, runtime, capability }) {
   if (!tenantId) {
     const err = new Error("tenantId ausente em getProviderAccessToken");
     err.code = "TENANT_ID_MISSING";
@@ -102,8 +97,14 @@ async function getProviderAccessToken({ tenantId, runtime }) {
     throw err;
   }
 
+  if (!capability) {
+    const err = new Error("capability ausente em getProviderAccessToken");
+    err.code = "CAPABILITY_MISSING";
+    throw err;
+  }
+
   const { providerKey, baseUrl, username, password } =
-    resolveProviderConfig(runtime);
+    resolveProviderConfig(runtime, capability);
 
   const cacheKey = accessTokenCacheKey(
     tenantId,
@@ -144,11 +145,10 @@ async function getProviderAccessToken({ tenantId, runtime }) {
     techLog(
       "PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR",
       sanitizeForLog({
-        tenantId: tenantId || null,
+        tenantId,
         providerKey,
+        capability,
         baseUrl: maskBaseUrlForLog(baseUrl),
-        baseUrlConfigured: !!baseUrl,
-        userConfigured: !!username,
         error: String(err?.message || err),
       })
     );
@@ -171,8 +171,9 @@ async function getProviderAccessToken({ tenantId, runtime }) {
     techLog(
       "PROVIDER_ACCESS_TOKEN_FETCH_FAILED",
       sanitizeForLog({
-        tenantId: tenantId || null,
+        tenantId,
         providerKey,
+        capability,
         status: response.status,
         baseUrl: maskBaseUrlForLog(baseUrl),
       })
@@ -196,13 +197,14 @@ async function getProviderAccessToken({ tenantId, runtime }) {
     techLog(
       "PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE",
       sanitizeForLog({
-        tenantId: tenantId || null,
+        tenantId,
         providerKey,
+        capability,
         baseUrl: maskBaseUrlForLog(baseUrl),
       })
     );
 
-    const err = new Error("Resposta de token do provider sem token utilizável.");
+    const err = new Error("Resposta de token do provider inválida.");
     err.code = "PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE";
     throw err;
   }
@@ -218,8 +220,9 @@ async function getProviderAccessToken({ tenantId, runtime }) {
   debugLog(
     "PROVIDER_ACCESS_TOKEN_FETCH_OK",
     sanitizeForLog({
-      tenantId: tenantId || null,
+      tenantId,
       providerKey,
+      capability,
       expiresIn,
       tokenMasked: maskToken(token),
       baseUrl: maskBaseUrlForLog(baseUrl),
