@@ -63,7 +63,11 @@ function sanitizeSessionForSave(s) {
     lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
     booking: s?.booking
       ? {
-          planKey: s.booking?.planKey ?? null,
+          planKey:
+            s.booking?.planKey === "PRIVATE" ||
+            s.booking?.planKey === "INSURED"
+              ? s.booking.planKey
+              : null,
           practitionerId: Number(s.booking?.practitionerId || 0) || null,
           patientId: Number(s.booking?.patientId || 0) || null,
           appointmentDate: s.booking?.appointmentDate ?? null,
@@ -197,7 +201,8 @@ async function getSession(tenantId, phone) {
 
 async function setBookingPlan(tenantId, phone, planKey) {
   return updateSession(tenantId, phone, (s) => {
-    s.booking = { ...(s.booking || {}), planKey };
+    s.booking = s.booking || {};
+    s.booking.planKey = planKey;
   });
 }
 
