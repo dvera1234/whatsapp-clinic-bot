@@ -50,7 +50,12 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
 
   const first = rows[0];
 
-  const providers = {};
+  const providers = {
+    identity: null,
+    access: null,
+    booking: null,
+  };
+
   for (const row of rows) {
     const capability = String(row.capability || "").trim();
     if (!capability) continue;
@@ -60,7 +65,9 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       baseUrl: row.base_url || "",
       user: row.username || "",
       pass: row.password_encrypted || "",
-      extra: row.extra_config_json || {},
+      ...(row.extra_config_json && typeof row.extra_config_json === "object"
+        ? row.extra_config_json
+        : {}),
     };
   }
 
@@ -68,14 +75,21 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     tenantId: first.tenant_id,
 
     clinic: {
-      codUnidade: first.default_unit_id,
-      codEspecialidade: first.default_specialty_id,
-      codColaborador: first.primary_practitioner_id,
+      providerId: first.primary_practitioner_id,
     },
 
-    plans: {
-      codPlanoParticular: first.private_plan_id,
-      codPlanoMedSeniorSp: first.insured_plan_id,
+    bookingDefaults: {
+      unitId: first.default_unit_id,
+      specialtyId: first.default_specialty_id,
+    },
+
+    planMappings: {
+      PRIVATE: {
+        externalId: first.private_plan_id,
+      },
+      INSURED: {
+        externalId: first.insured_plan_id,
+      },
     },
 
     portal: {
@@ -86,7 +100,27 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       waNumber: first.support_wa_number || "",
     },
 
-    providers,
+    providers: {
+      identity: {
+        key: providers.identity?.key || "",
+        baseUrl: providers.identity?.baseUrl || "",
+        user: providers.identity?.user || "",
+        pass: providers.identity?.pass || "",
+      },
+      access: {
+        key: providers.access?.key || "",
+        baseUrl: providers.access?.baseUrl || "",
+        user: providers.access?.user || "",
+        pass: providers.access?.pass || "",
+      },
+      booking: {
+        key: providers.booking?.key || "",
+        baseUrl: providers.booking?.baseUrl || "",
+        user: providers.booking?.user || "",
+        pass: providers.booking?.pass || "",
+        calendarId: providers.booking?.calendarId || "",
+      },
+    },
 
     content: {
       branding: {
