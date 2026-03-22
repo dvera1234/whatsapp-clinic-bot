@@ -119,17 +119,11 @@ function resolvePlanIdFromPlanKey(planKey, runtime = {}) {
   const privatePlanId = Number(runtime?.plans?.privatePlanId) || null;
   const insuredPlanId = Number(runtime?.plans?.insuredPlanId) || null;
 
-  if (
-    planKey === PLAN_KEYS.PRIVATE ||
-    planKey === PLAN_KEYS.PARTICULAR
-  ) {
+  if (planKey === PLAN_KEYS.PRIVATE) {
     return privatePlanId;
   }
 
-  if (
-    planKey === PLAN_KEYS.INSURED ||
-    planKey === PLAN_KEYS.MEDSENIOR_SP
-  ) {
+  if (planKey === PLAN_KEYS.INSURED) {
     return insuredPlanId;
   }
 
