@@ -308,24 +308,6 @@ async function handleInbound({
   }
 
   if (ctx === "PLAN_PICK") {
-    if (upper === "FALAR_ATENDENTE") {
-      const s = await getSession(tenantId, phone);
-      const prefill = buildSupportPrefillFromSession(phone, s, traceId, tenantId);
-
-      await sendSupportLink({
-        tenantId,
-        phone,
-        phoneNumberIdFallback: effectivePhoneNumberId,
-        prefill,
-        supportWa,
-        nextState: "MAIN",
-        MSG,
-      });
-
-      await clearTransientPortalData(tenantId, phone);
-      return;
-    }
-
     if (upper !== "PLAN_USE_PRIVATE" && upper !== "PLAN_USE_INSURED") {
       await sendText({
         tenantId,
@@ -934,26 +916,6 @@ async function handleInbound({
             })
           );
         } catch {
-          audit("BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE", {
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            rid: out?.rid || null,
-            httpStatus: out?.status || null,
-            technicalAccepted: true,
-            functionalResult:
-              "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
-            patientFacingMessage: "BOOKING_SUCCESS_FALLBACK_MESSAGE",
-            escalationRequired: false,
-          });
-
-          await sendText({
-            tenantId,
-            to: phone,
-            body: MSG.BOOKING_SUCCESS_FALLBACK,
-            phoneNumberIdFallback: effectivePhoneNumberId,
-          });
-
           audit(
             "BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE",
             sanitizeForLog({
@@ -969,6 +931,13 @@ async function handleInbound({
               escalationRequired: false,
             })
           );
+
+          await sendText({
+            tenantId,
+            to: phone,
+            body: MSG.BOOKING_SUCCESS_FALLBACK,
+            phoneNumberIdFallback: effectivePhoneNumberId,
+          });
         }
 
         return;
