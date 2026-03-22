@@ -23,8 +23,6 @@ import {
   resolvePlanIdFromRuntime,
 } from "../config/constants.js";
 
-import { buildTenantRuntime } from "../tenants/buildTenantRuntime.js";
-
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
 import { createPortalAdapter } from "../integrations/adapters/factories/createPortalAdapter.js";
 import { createSchedulingAdapter } from "../integrations/adapters/factories/createSchedulingAdapter.js";
@@ -66,19 +64,13 @@ async function handleInbound({
     return;
   }
 
-  const runtimeResult = buildTenantRuntime(context?.tenantConfig || {});
+  const runtime = resolveRuntimeFromContext(context);
 
-  if (!runtimeResult.ok) {
-    audit("RUNTIME_INVALID_BLOCKED", {
+  if (!runtime) {
+    audit("RUNTIME_MISSING_BLOCKED", {
       tenantId,
       traceId,
       tracePhone: maskPhone(phone),
-      missing: Array.isArray(runtimeResult?.missing)
-        ? runtimeResult.missing
-        : [],
-      invalid: Array.isArray(runtimeResult?.invalid)
-        ? runtimeResult.invalid
-        : [],
       blockedBeforeFlow: true,
     });
 
@@ -89,8 +81,6 @@ async function handleInbound({
     });
     return;
   }
-
-  const runtime = runtimeResult.value;
 
   let MSG;
   try {
@@ -137,12 +127,16 @@ async function handleInbound({
     return;
   }
 
-  const practitionerId = runtime?.clinic?.primaryPractitionerId ?? null;
-  const unitId = runtime?.clinic?.defaultUnitId ?? null;
-  const specialtyId = runtime?.clinic?.defaultSpecialtyId ?? null;
+  const {
+    practitionerId,
+    unitId,
+    specialtyId,
+  } = getClinicIdsFromRuntime(runtime);
 
-  const privatePlanId = runtime?.plans?.privatePlanId ?? null;
-  const insuredPlanId = runtime?.plans?.insuredPlanId ?? null;
+  const {
+    privatePlanId,
+    insuredPlanId,
+  } = getPlanIdsFromRuntime(runtime);
 
   const portalUrl = runtime?.portal?.url || "";
   const supportWa = runtime?.support?.waNumber || "";
@@ -606,12 +600,7 @@ async function handleInbound({
       const slotId = Number(s?.pending?.slotId);
       const selectedPlanId = resolvePlanIdFromRuntime(
         s?.booking?.planKey || PLAN_KEYS.PRIVATE,
-        {
-          plans: {
-            privatePlanId,
-            insuredPlanId,
-          },
-        }
+        runtime
       );
 
       const bookingRequest = {
@@ -2262,6 +2251,50 @@ async function handleInbound({
 }
 
 export { handleInbound };
+
+function resolveRuntimeFromContext(context = {}) {
+  const runtime =
+    context?.runtime ||
+    context?.tenantRuntime ||
+    context?.resolvedRuntime ||
+    null;
+
+  if (!runtime || typeof runtime !== "object") {
+    return null;
+  }
+
+  return runtime;
+}
+
+function getClinicIdsFromRuntime(runtime = {}) {
+  return {
+    practitionerId:
+      runtime?.clinic?.codColaborador ??
+      runtime?.clinic?.primaryPractitionerId ??
+      null,
+    unitId:
+      runtime?.clinic?.codUnidade ??
+      runtime?.clinic?.defaultUnitId ??
+      null,
+    specialtyId:
+      runtime?.clinic?.codEspecialidade ??
+      runtime?.clinic?.defaultSpecialtyId ??
+      null,
+  };
+}
+
+function getPlanIdsFromRuntime(runtime = {}) {
+  return {
+    privatePlanId:
+      runtime?.plans?.codPlanoParticular ??
+      runtime?.plans?.privatePlanId ??
+      null,
+    insuredPlanId:
+      runtime?.plans?.codPlanoMedSeniorSp ??
+      runtime?.plans?.insuredPlanId ??
+      null,
+  };
+}
 
 async function failSafeTenantConfigError({
   tenantId,
