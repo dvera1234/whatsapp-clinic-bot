@@ -50,6 +50,12 @@ function isSupportedBookingProvider(value) {
   return ["versatilis", "google_calendar"].includes(value);
 }
 
+function normalizeContent(config) {
+  return config?.content && typeof config.content === "object"
+    ? config.content
+    : {};
+}
+
 export function buildTenantRuntime(config = {}) {
   const missing = [];
   const invalid = [];
@@ -57,14 +63,25 @@ export function buildTenantRuntime(config = {}) {
   const tenantId = readString(config?.tenantId);
 
   const clinic = {
-    primaryPractitionerId: readNumber(config?.clinic?.codColaborador),
-    defaultUnitId: readNumber(config?.clinic?.codUnidade),
-    defaultSpecialtyId: readNumber(config?.clinic?.codEspecialidade),
+    providerId: readNumber(config?.clinic?.providerId),
+  };
+
+  const bookingDefaults = {
+    unitId: readNumber(config?.bookingDefaults?.unitId),
+    specialtyId: readNumber(config?.bookingDefaults?.specialtyId),
+  };
+
+  const planMappings = {
+    PRIVATE: {
+      externalId: readNumber(config?.planMappings?.PRIVATE?.externalId),
+    },
+    INSURED: {
+      externalId: readNumber(config?.planMappings?.INSURED?.externalId),
+    },
   };
 
   const plans = {
-    privatePlanId: readNumber(config?.plans?.codPlanoParticular),
-    insuredPlanId: readNumber(config?.plans?.codPlanoMedSeniorSp),
+    supportedKeys: ["PRIVATE", "INSURED"],
   };
 
   const portal = {
@@ -99,19 +116,24 @@ export function buildTenantRuntime(config = {}) {
 
   pushMissing(missing, !tenantId, "tenantId");
 
-  pushMissing(missing, clinic.primaryPractitionerId === null, "clinic.codColaborador");
-  pushMissing(missing, clinic.defaultUnitId === null, "clinic.codUnidade");
-  pushMissing(missing, clinic.defaultSpecialtyId === null, "clinic.codEspecialidade");
+  pushMissing(missing, clinic.providerId === null, "clinic.providerId");
 
-  pushMissing(missing, plans.privatePlanId === null, "plans.codPlanoParticular");
-  pushMissing(missing, plans.insuredPlanId === null, "plans.codPlanoMedSeniorSp");
+  pushMissing(
+    missing,
+    planMappings.PRIVATE.externalId === null,
+    "planMappings.PRIVATE.externalId"
+  );
+  pushMissing(
+    missing,
+    planMappings.INSURED.externalId === null,
+    "planMappings.INSURED.externalId"
+  );
 
   pushMissing(missing, !config?.portal?.url, "portal.url");
   pushInvalid(invalid, !!config?.portal?.url && !portal.url, "portal.url");
 
   pushMissing(missing, !support.waNumber, "support.waNumber");
 
-  // identity
   pushMissing(missing, !identity.key, "providers.identity.key");
   pushInvalid(
     invalid,
@@ -120,7 +142,11 @@ export function buildTenantRuntime(config = {}) {
   );
 
   if (identity.key === "versatilis") {
-    pushMissing(missing, !config?.providers?.identity?.baseUrl, "providers.identity.baseUrl");
+    pushMissing(
+      missing,
+      !config?.providers?.identity?.baseUrl,
+      "providers.identity.baseUrl"
+    );
     pushMissing(missing, !identity.user, "providers.identity.user");
     pushMissing(missing, !identity.pass, "providers.identity.pass");
 
@@ -131,7 +157,6 @@ export function buildTenantRuntime(config = {}) {
     );
   }
 
-  // access
   pushMissing(missing, !access.key, "providers.access.key");
   pushInvalid(
     invalid,
@@ -140,7 +165,11 @@ export function buildTenantRuntime(config = {}) {
   );
 
   if (access.key === "versatilis") {
-    pushMissing(missing, !config?.providers?.access?.baseUrl, "providers.access.baseUrl");
+    pushMissing(
+      missing,
+      !config?.providers?.access?.baseUrl,
+      "providers.access.baseUrl"
+    );
     pushMissing(missing, !access.user, "providers.access.user");
     pushMissing(missing, !access.pass, "providers.access.pass");
 
@@ -151,7 +180,6 @@ export function buildTenantRuntime(config = {}) {
     );
   }
 
-  // booking
   pushMissing(missing, !booking.key, "providers.booking.key");
   pushInvalid(
     invalid,
@@ -160,7 +188,11 @@ export function buildTenantRuntime(config = {}) {
   );
 
   if (booking.key === "versatilis") {
-    pushMissing(missing, !config?.providers?.booking?.baseUrl, "providers.booking.baseUrl");
+    pushMissing(
+      missing,
+      !config?.providers?.booking?.baseUrl,
+      "providers.booking.baseUrl"
+    );
     pushMissing(missing, !booking.user, "providers.booking.user");
     pushMissing(missing, !booking.pass, "providers.booking.pass");
 
@@ -168,6 +200,17 @@ export function buildTenantRuntime(config = {}) {
       invalid,
       !!config?.providers?.booking?.baseUrl && !booking.baseUrl,
       "providers.booking.baseUrl"
+    );
+
+    pushMissing(
+      missing,
+      bookingDefaults.unitId === null,
+      "bookingDefaults.unitId"
+    );
+    pushMissing(
+      missing,
+      bookingDefaults.specialtyId === null,
+      "bookingDefaults.specialtyId"
     );
   }
 
@@ -190,7 +233,11 @@ export function buildTenantRuntime(config = {}) {
 
       clinic,
 
+      bookingDefaults,
+
       plans,
+
+      planMappings,
 
       portal,
 
@@ -228,10 +275,16 @@ export function buildTenantRuntime(config = {}) {
                 baseUrl: booking.baseUrl,
                 user: booking.user,
                 pass: booking.pass,
+                defaults: {
+                  providerId: clinic.providerId,
+                  unitId: bookingDefaults.unitId,
+                  specialtyId: bookingDefaults.specialtyId,
+                },
+                planMappings,
               },
       },
 
-      content: config?.content ?? {},
+      content: normalizeContent(config),
     },
   };
 }
