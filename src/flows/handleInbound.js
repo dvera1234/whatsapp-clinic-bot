@@ -1,6 +1,7 @@
 import crypto from "crypto";
 
 import {
+  configureInactivityHandler,
   touchUser,
   getState,
   setState,
@@ -101,6 +102,13 @@ async function handleInbound({
     });
     return;
   }
+
+    configureInactivityHandler({
+    sendText,
+    getMessage: () =>
+      runtime?.content?.messages?.inactivityClosureMessage ||
+      "Sessão encerrada por inatividade.",
+  });
 
   let patientAdapter;
   let portalAdapter;
