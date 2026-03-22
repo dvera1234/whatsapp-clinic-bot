@@ -11,6 +11,24 @@ import {
   validatePatientRegistrationData,
 } from "../shared/versatilisMappers.js";
 
+function buildPatientAdapterResult({
+  ok,
+  data = null,
+  status = null,
+  rid = null,
+  errorCode = null,
+  errorMessage = null,
+}) {
+  return {
+    ok: !!ok,
+    data,
+    status,
+    rid,
+    errorCode,
+    errorMessage,
+  };
+}
+
 function sanitizePathForLog(path) {
   const raw = String(path || "");
   if (!raw) return raw;
@@ -28,36 +46,24 @@ function sanitizePathForLog(path) {
     ]);
 
     for (const [key] of fakeUrl.searchParams.entries()) {
-      const lower = String(key || "").toLowerCase();
-
-      if (sensitiveKeys.has(lower)) {
+      if (sensitiveKeys.has(String(key).toLowerCase())) {
         fakeUrl.searchParams.set(key, "***");
       }
     }
 
     return `${fakeUrl.pathname}${fakeUrl.search}`;
   } catch {
-    return raw
-      .replace(/(CPF=)[^&]+/gi, "$1***")
-      .replace(/(cpf=)[^&]+/gi, "$1***")
-      .replace(/(UserCPF=)[^&]+/gi, "$1***")
-      .replace(/(usercpf=)[^&]+/gi, "$1***")
-      .replace(/(dtNasc=)[^&]+/gi, "$1***")
-      .replace(/(dataNascimento=)[^&]+/gi, "$1***")
-      .replace(/(login=)[^&]+/gi, "$1***")
-      .replace(/(email=)[^&]+/gi, "$1***")
-      .replace(/(CodUsuario=)[^&]+/gi, "$1***")
-      .replace(/(codusuario=)[^&]+/gi, "$1***");
+    return raw;
   }
 }
 
-function createVersatilisPatientAdapter() {
+function createVersatilisPatientAdapter(factoryCtx = {}) {
   async function findPatientIdByCpf({ cpf, runtimeCtx = {} }) {
     const cpfDigits = String(cpf || "").replace(/\D+/g, "");
     if (cpfDigits.length !== 11) return null;
 
-    const ctx = getProviderRuntimeContext(runtimeCtx);
-    const runtime = ctx.runtime || ctx.tenantRuntime || null;
+    const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
+    const runtime = ctx.runtime || null;
     const cpfMask = formatCPFMask(cpfDigits);
 
     const candidates = [
@@ -84,123 +90,20 @@ function createVersatilisPatientAdapter() {
         },
       });
 
-      if (
-        isDebugVersaShapeEnabled() &&
-        out.ok &&
-        out.data &&
-        typeof out.data === "object"
-      ) {
-        const keys = Object.keys(out.data || {}).slice(0, 30);
-
-        debugLog(
-          "VERSA_PATIENT_ID_SHAPE",
-          sanitizeForLog({
-            tenantId: ctx.tenantId,
-            traceId: ctx.traceId,
-            path: safePath,
-            keys,
-            isArray: Array.isArray(out.data),
-          })
-        );
-      }
-
       const parsed = out.ok ? parseExternalPatientIdFromAny(out.data) : null;
 
       debugLog(
-        "VERSA_PATIENT_ID_LOOKUP_ATTEMPT",
+        "VERSA_PATIENT_ID_LOOKUP",
         sanitizeForLog({
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
-          technicalAccepted: out.ok,
-          httpStatus: out.status,
           path: safePath,
-          parsedResult: parsed ? "FOUND" : "NOT_FOUND",
+          httpStatus: out.status,
+          parsed: parsed ? "FOUND" : "NOT_FOUND",
         })
       );
 
-      if (!parsed) {
-        debugLog(
-          "VERSA_PATIENT_ID_LOOKUP_DETAIL",
-          sanitizeForLog({
-            tenantId: ctx.tenantId,
-            traceId: ctx.traceId,
-            path: safePath,
-            httpStatus: out.status,
-            dataType: typeof out.data,
-            dataPreview:
-              typeof out.data === "string"
-                ? out.data.slice(0, 80)
-                : Array.isArray(out.data)
-                  ? "array"
-                  : out.data
-                    ? "object"
-                    : "null",
-          })
-        );
-      }
-
-      if (parsed) return parsed;
-    }
-
-    return null;
-  }
-
-  async function findPatientIdByCpfFallbackProfile({ cpf, runtimeCtx = {} }) {
-    const cpfDigits = String(cpf || "").replace(/\D+/g, "");
-    if (cpfDigits.length !== 11) return null;
-
-    const ctx = getProviderRuntimeContext(runtimeCtx);
-    const runtime = ctx.runtime || ctx.tenantRuntime || null;
-    const cpfMask = formatCPFMask(cpfDigits);
-
-    const candidates = [
-      cpfMask
-        ? `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpfMask)}`
-        : null,
-      `/api/Login/DadosUsuarioPorCPF?UserCPF=${encodeURIComponent(cpfDigits)}`,
-    ].filter(Boolean);
-
-    for (const path of candidates) {
-      const safePath = sanitizePathForLog(path);
-
-      const out = await versatilisFetch(path, {
-        tenantId: ctx.tenantId,
-        runtime,
-        traceMeta: {
-          tenantId: ctx.tenantId,
-          traceId: ctx.traceId,
-          flow: "LOOKUP_PATIENT_PROFILE_BY_DOCUMENT",
-        },
-      });
-
-      const parsed = out.ok ? parseExternalPatientIdFromAny(out.data) : null;
-
-      debugLog(
-        "VERSA_PROFILE_LOOKUP_ATTEMPT",
-        sanitizeForLog({
-          tenantId: ctx.tenantId,
-          traceId: ctx.traceId,
-          technicalAccepted: out.ok,
-          httpStatus: out.status,
-          path: safePath,
-          parsedResult: parsed ? "FOUND" : "NOT_FOUND",
-        })
-      );
-
-      if (!parsed) {
-        debugLog(
-          "VERSA_PROFILE_LOOKUP_DETAIL",
-          sanitizeForLog({
-            tenantId: ctx.tenantId,
-            traceId: ctx.traceId,
-            path: safePath,
-            httpStatus: out.status,
-            dataType: typeof out.data,
-          })
-        );
-      }
-
-      if (parsed) return parsed;
+      if (parsed) return { id: parsed, status: out.status, rid: out.rid };
     }
 
     return null;
@@ -208,58 +111,76 @@ function createVersatilisPatientAdapter() {
 
   return {
     async findPatientByDocument({ document, runtimeCtx = {} }) {
-      const patientId = await findPatientIdByCpf({
+      const found = await findPatientIdByCpf({
         cpf: document,
         runtimeCtx,
       });
 
-      if (!patientId) {
-        return {
+      if (!found) {
+        return buildPatientAdapterResult({
           ok: false,
-          patientId: null,
-          profile: null,
-        };
+          status: 404,
+          errorCode: "PATIENT_NOT_FOUND",
+        });
       }
 
-      const profileResult = await this.getPatientProfile({
-        patientId,
+      const profile = await this.getPatientProfile({
+        patientId: found.id,
         runtimeCtx,
       });
 
-      return {
-        ok: !!profileResult?.ok,
-        patientId,
-        profile: profileResult?.data || null,
-      };
+      return buildPatientAdapterResult({
+        ok: profile.ok,
+        status: profile.status,
+        rid: profile.rid,
+        data: {
+          patientId: found.id,
+          profile: profile.data,
+        },
+      });
     },
 
     async findPatientIdByDocument({ document, runtimeCtx = {} }) {
-      const first = await findPatientIdByCpf({
+      const found = await findPatientIdByCpf({
         cpf: document,
         runtimeCtx,
       });
 
-      if (first) return first;
+      if (!found) {
+        return buildPatientAdapterResult({
+          ok: false,
+          status: 404,
+          errorCode: "PATIENT_ID_NOT_FOUND",
+        });
+      }
 
-      return await findPatientIdByCpfFallbackProfile({
-        cpf: document,
-        runtimeCtx,
+      return buildPatientAdapterResult({
+        ok: true,
+        status: found.status,
+        rid: found.rid,
+        data: {
+          patientId: found.id,
+        },
       });
     },
 
     async getPatientProfile({ patientId, runtimeCtx = {} }) {
-      const ctx = getProviderRuntimeContext(runtimeCtx);
-      const runtime = ctx.runtime || ctx.tenantRuntime || null;
+      const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
+      const runtime = ctx.runtime || null;
+
       const externalPatientId = Number(patientId);
 
-      if (!Number.isFinite(externalPatientId) || externalPatientId <= 0) {
-        return { ok: false, data: null };
+      if (!Number.isFinite(externalPatientId)) {
+        return buildPatientAdapterResult({
+          ok: false,
+          status: 400,
+          errorCode: "INVALID_PATIENT_ID",
+        });
       }
 
       const path = `/api/Login/DadosUsuarioPorCodigo?CodUsuario=${encodeURIComponent(
         externalPatientId
       )}`;
-      const safePath = sanitizePathForLog(path);
 
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
@@ -268,58 +189,45 @@ function createVersatilisPatientAdapter() {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
           flow: "GET_PATIENT_PROFILE",
-          patientId: externalPatientId,
         },
       });
 
       if (!out.ok || !out.data) {
-        debugLog(
-          "VERSA_PATIENT_PROFILE_LOOKUP_FAIL",
-          sanitizeForLog({
-            tenantId: ctx.tenantId,
-            traceId: ctx.traceId,
-            patientId: externalPatientId,
-            path: safePath,
-            httpStatus: out.status,
-            technicalAccepted: out.ok,
-          })
-        );
-
-        return { ok: false, data: null };
+        return buildPatientAdapterResult({
+          ok: false,
+          status: out.status || 502,
+          rid: out.rid,
+          errorCode: "PATIENT_PROFILE_FAILED",
+        });
       }
 
-      if (isDebugVersaShapeEnabled() && typeof out.data === "object") {
-        const topLevelKeys =
-          !Array.isArray(out.data) && out.data
-            ? Object.keys(out.data).slice(0, 50)
-            : [];
-
-        debugLog(
-          "VERSA_PATIENT_PROFILE_SHAPE",
-          sanitizeForLog({
-            tenantId: ctx.tenantId,
-            traceId: ctx.traceId,
-            patientId: externalPatientId,
-            path: safePath,
-            isArray: Array.isArray(out.data),
-            topLevelKeys,
-          })
-        );
-      }
-
-      return { ok: true, data: out.data };
+      return buildPatientAdapterResult({
+        ok: true,
+        status: out.status,
+        rid: out.rid,
+        data: out.data,
+      });
     },
 
     validateRegistrationData({ profile }) {
-      return validatePatientRegistrationData(profile);
+      return buildPatientAdapterResult({
+        ok: true,
+        data: validatePatientRegistrationData(profile),
+      });
     },
 
     listActivePlans({ profile }) {
-      return listPlanIdsFromProfile(profile);
+      return buildPatientAdapterResult({
+        ok: true,
+        data: listPlanIdsFromProfile(profile),
+      });
     },
 
     hasPlan({ planIds, planKey, runtimeCtx = {} }) {
-      return hasPlanByDomainKey(planIds, planKey, runtimeCtx);
+      return buildPatientAdapterResult({
+        ok: true,
+        data: hasPlanByDomainKey(planIds, planKey, runtimeCtx),
+      });
     },
   };
 }
