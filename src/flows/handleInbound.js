@@ -2947,11 +2947,43 @@ async function finishWizardAndGoToDates({
   practitionerId,
   MSG,
 }) {
+  let eligibilityResult;
+
+  try {
+    eligibilityResult = await schedulingAdapter.checkReturnEligibility({
+      patientId,
+      runtimeCtx: {
+        tenantId,
+        runtime,
+        traceId,
+        tracePhone: maskPhone(phone),
+      },
+    });
+  } catch (err) {
+    if (isProviderTemporaryUnavailableError(err)) {
+      await handleProviderTemporaryUnavailable({
+        tenantId,
+        traceId,
+        phone,
+        phoneNumberIdFallback,
+        capability: "booking",
+        err,
+        MSG,
+        nextState: "MAIN",
+      });
+      return false;
+    }
+    throw err;
+  }
+
+  const isReturn =
+    !!eligibilityResult?.ok && eligibilityResult?.data?.eligible === true;
+
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.patientId = patientId;
     s.booking.practitionerId = practitionerId;
-    s.booking.isReturn = false;
+    s.booking.isReturn = isReturn;
 
     if (planKeyFromWizard) {
       s.booking.planKey = planKeyFromWizard;
