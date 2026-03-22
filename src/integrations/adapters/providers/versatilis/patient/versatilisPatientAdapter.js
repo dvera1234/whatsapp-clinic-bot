@@ -1,4 +1,3 @@
-import { isDebugVersaShapeEnabled } from "../../../../../config/env.js";
 import { debugLog } from "../../../../../observability/audit.js";
 import { sanitizeForLog } from "../../../../../utils/logSanitizer.js";
 import { formatCPFMask } from "../../../../../utils/validators.js";
@@ -10,7 +9,7 @@ import {
   validatePatientRegistrationData,
 } from "../shared/versatilisMappers.js";
 
-function buildPatientAdapterResult({
+function buildResult({
   ok,
   data = null,
   status = null,
@@ -34,6 +33,7 @@ function sanitizePathForLog(path) {
 
   try {
     const fakeUrl = new URL(raw, "https://sanitizer.local");
+
     const sensitiveKeys = new Set([
       "cpf",
       "usercpf",
@@ -57,12 +57,13 @@ function sanitizePathForLog(path) {
 }
 
 function createVersatilisPatientAdapter(factoryCtx = {}) {
-  async function findPatientIdByCpf({ cpf, runtimeCtx = {} }) {
+  async function findPatientIdByCpf({ cpf, runtimeCtx }) {
     const cpfDigits = String(cpf || "").replace(/\D+/g, "");
     if (cpfDigits.length !== 11) return null;
 
     const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
-    const runtime = ctx.runtime || null;
+    const runtime = ctx.runtime;
+
     const cpfMask = formatCPFMask(cpfDigits);
 
     const candidates = [
@@ -89,7 +90,9 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         },
       });
 
-      const parsed = out.ok ? parseExternalPatientIdFromAny(out.data) : null;
+      const parsed = out.ok
+        ? parseExternalPatientIdFromAny(out.data)
+        : null;
 
       debugLog(
         "VERSA_PATIENT_ID_LOOKUP",
@@ -102,21 +105,27 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         })
       );
 
-      if (parsed) return { id: parsed, status: out.status, rid: out.rid };
+      if (parsed) {
+        return {
+          id: parsed,
+          status: out.status,
+          rid: out.rid,
+        };
+      }
     }
 
     return null;
   }
 
   return {
-    async findPatientByDocument({ document, runtimeCtx = {} }) {
+    async findPatientByDocument({ document, runtimeCtx }) {
       const found = await findPatientIdByCpf({
         cpf: document,
         runtimeCtx,
       });
 
       if (!found) {
-        return buildPatientAdapterResult({
+        return buildResult({
           ok: false,
           status: 404,
           errorCode: "PATIENT_NOT_FOUND",
@@ -128,7 +137,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         runtimeCtx,
       });
 
-      return buildPatientAdapterResult({
+      return buildResult({
         ok: profile.ok,
         status: profile.status,
         rid: profile.rid,
@@ -139,21 +148,21 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       });
     },
 
-    async findPatientIdByDocument({ document, runtimeCtx = {} }) {
+    async findPatientIdByDocument({ document, runtimeCtx }) {
       const found = await findPatientIdByCpf({
         cpf: document,
         runtimeCtx,
       });
 
       if (!found) {
-        return buildPatientAdapterResult({
+        return buildResult({
           ok: false,
           status: 404,
           errorCode: "PATIENT_ID_NOT_FOUND",
         });
       }
 
-      return buildPatientAdapterResult({
+      return buildResult({
         ok: true,
         status: found.status,
         rid: found.rid,
@@ -163,14 +172,14 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       });
     },
 
-    async getPatientProfile({ patientId, runtimeCtx = {} }) {
+    async getPatientProfile({ patientId, runtimeCtx }) {
       const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
-      const runtime = ctx.runtime || null;
+      const runtime = ctx.runtime;
 
-      const externalPatientId = Number(patientId);
+      const externalId = Number(patientId);
 
-      if (!Number.isFinite(externalPatientId)) {
-        return buildPatientAdapterResult({
+      if (!Number.isFinite(externalId)) {
+        return buildResult({
           ok: false,
           status: 400,
           errorCode: "INVALID_PATIENT_ID",
@@ -178,7 +187,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       }
 
       const path = `/api/Login/DadosUsuarioPorCodigo?CodUsuario=${encodeURIComponent(
-        externalPatientId
+        externalId
       )}`;
 
       const out = await versatilisFetch(path, {
@@ -192,7 +201,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       });
 
       if (!out.ok || !out.data) {
-        return buildPatientAdapterResult({
+        return buildResult({
           ok: false,
           status: out.status || 502,
           rid: out.rid,
@@ -200,7 +209,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         });
       }
 
-      return buildPatientAdapterResult({
+      return buildResult({
         ok: true,
         status: out.status,
         rid: out.rid,
@@ -209,68 +218,16 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
     },
 
     validateRegistrationData({ profile }) {
-      return buildPatientAdapterResult({
+      return buildResult({
         ok: true,
         data: validatePatientRegistrationData(profile),
       });
     },
 
     listActivePlans({ profile }) {
-      return buildPatientAdapterResult({
+      return buildResult({
         ok: true,
         data: listPlanIdsFromProfile(profile),
-      });
-    },
-
-    hasPlan({ planIds, planKey, runtimeCtx = {} }) {
-      const runtime =
-        runtimeCtx?.runtime ||
-        runtimeCtx?.tenantRuntime ||
-        null;
-
-      const privatePlanId =
-        Number(runtime?.plans?.privatePlanId) || null;
-
-      const insuredPlanId =
-        Number(runtime?.plans?.insuredPlanId) || null;
-
-      const normalizedPlanIds = Array.isArray(planIds)
-        ? planIds.map((x) => Number(x)).filter(Number.isFinite)
-        : [];
-
-      if (planKey === "PRIVATE") {
-        return buildPatientAdapterResult({
-          ok: true,
-          data:
-            privatePlanId != null &&
-            normalizedPlanIds.includes(privatePlanId),
-          status: 200,
-          rid: null,
-          errorCode: null,
-          errorMessage: null,
-        });
-      }
-
-      if (planKey === "INSURED") {
-        return buildPatientAdapterResult({
-          ok: true,
-          data:
-            insuredPlanId != null &&
-            normalizedPlanIds.includes(insuredPlanId),
-          status: 200,
-          rid: null,
-          errorCode: null,
-          errorMessage: null,
-        });
-      }
-
-      return buildPatientAdapterResult({
-        ok: false,
-        data: false,
-        status: 400,
-        rid: null,
-        errorCode: "INVALID_PLAN_KEY",
-        errorMessage: `Unsupported planKey: ${planKey}`,
       });
     },
   };
