@@ -63,6 +63,13 @@ function resolveProfileStateCode(profile = {}) {
 }
 
 function validatePatientRegistrationData(profile = {}) {
+  if (!profile || typeof profile !== "object") {
+    return {
+      ok: false,
+      missing: ["dados do paciente inválidos"],
+    };
+  }
+
   const missing = [];
 
   const fullName = pickFirst(profile, ["Nome", "nome"]);
@@ -88,8 +95,6 @@ function validatePatientRegistrationData(profile = {}) {
   const district = pickFirst(profile, ["Bairro", "bairro"]);
   const city = pickFirst(profile, ["Cidade", "cidade"]);
 
-  // Continua resolvendo UF caso seja útil em outros pontos,
-  // mas NÃO entra mais como bloqueio de agendamento.
   const stateCode = resolveProfileStateCode(profile);
   void stateCode;
 
@@ -104,12 +109,6 @@ function validatePatientRegistrationData(profile = {}) {
   if (!hasMinText(district, 2)) missing.push("bairro");
   if (!hasMinText(city, 2)) missing.push("cidade");
 
-  // REGRA FORMAL DO PROJETO:
-  // UF pode ser obrigatória no cadastro/wizard,
-  // mas ausência de UF no profile retornado pelo endpoint
-  // NÃO bloqueia agendamento de paciente já existente.
-  // Portanto, não incluir "estado (UF)" em missing bloqueante aqui.
-
   return {
     ok: missing.length === 0,
     missing,
@@ -117,23 +116,27 @@ function validatePatientRegistrationData(profile = {}) {
 }
 
 function resolvePlanIdFromPlanKey(planKey, runtime = {}) {
-  const privatePlanId =
-    Number(runtime?.privatePlanId) ||
-    Number(runtime?.tenantConfig?.plans?.privatePlanId) ||
-    null;
+  const privatePlanId = Number(runtime?.plans?.privatePlanId) || null;
+  const insuredPlanId = Number(runtime?.plans?.insuredPlanId) || null;
 
-  const insuredPlanId =
-    Number(runtime?.insuredPlanId) ||
-    Number(runtime?.tenantConfig?.plans?.insuredPlanId) ||
-    null;
+  if (
+    planKey === PLAN_KEYS.PRIVATE ||
+    planKey === PLAN_KEYS.PARTICULAR
+  ) {
+    return privatePlanId;
+  }
 
-  if (planKey === PLAN_KEYS.PARTICULAR) return privatePlanId;
-  if (planKey === PLAN_KEYS.MEDSENIOR_SP) return insuredPlanId;
+  if (
+    planKey === PLAN_KEYS.INSURED ||
+    planKey === PLAN_KEYS.MEDSENIOR_SP
+  ) {
+    return insuredPlanId;
+  }
 
   return privatePlanId;
 }
 
-function listPlanIdsFromProfile(profile) {
+function listPlanIdsFromProfile(profile = {}) {
   const list = [];
 
   if (Array.isArray(profile?.CodPlanos)) {
@@ -143,7 +146,16 @@ function listPlanIdsFromProfile(profile) {
     }
   }
 
-  const singlePlanId = parsePositiveInt(profile?.CodPlano);
+  if (Array.isArray(profile?.codPlanos)) {
+    for (const x of profile.codPlanos) {
+      const n = parsePositiveInt(x);
+      if (n) list.push(n);
+    }
+  }
+
+  const singlePlanId = parsePositiveInt(
+    profile?.CodPlano ?? profile?.codPlano ?? null
+  );
   if (singlePlanId) list.push(singlePlanId);
 
   return Array.from(new Set(list));
@@ -151,10 +163,18 @@ function listPlanIdsFromProfile(profile) {
 
 function hasPlanByDomainKey(planIds, planKey, runtime = {}) {
   const expectedPlanId = resolvePlanIdFromPlanKey(planKey, runtime);
+
+  if (!expectedPlanId) return false;
+
   return (planIds || []).some((x) => Number(x) === Number(expectedPlanId));
 }
 
-function findExternalPatientIdDeep(obj, depth = 0, maxDepth = 6, seen = new Set()) {
+function findExternalPatientIdDeep(
+  obj,
+  depth = 0,
+  maxDepth = 6,
+  seen = new Set()
+) {
   if (obj == null) return null;
 
   const direct = parsePositiveInt(obj);
@@ -204,11 +224,6 @@ function parseExternalPatientIdFromAny(data) {
 
 function composeAddressComplement(addressComplement, stateCode) {
   const cleanComplement = cleanStr(addressComplement);
-
-  // REGRA FORMAL DO PROJETO:
-  // UF NÃO deve mais ser gravada no campo Complemento.
-  // O complemento deve conter apenas o complemento informado pelo paciente.
-  // Se vier vazio, retorna string vazia para não poluir payload.
   void stateCode;
 
   if (!cleanComplement || cleanComplement === "0") return "";
