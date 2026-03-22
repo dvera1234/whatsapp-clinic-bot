@@ -3,28 +3,39 @@ import { createVersatilisSchedulingAdapter } from "../providers/versatilis/sched
 import { wrapAdapterWithResilience } from "../../resilience/wrapAdapterWithResilience.js";
 
 function createSchedulingAdapter({ tenantId, runtime } = {}) {
-  const providerKey = String(runtime?.providers?.booking || "").trim();
-
   if (!tenantId) {
     throw new Error("Missing tenantId for scheduling adapter");
   }
+
+  if (!runtime || typeof runtime !== "object") {
+    throw new Error("Missing runtime for scheduling adapter");
+  }
+
+  const providerKey = String(runtime?.providers?.booking || "").trim();
 
   if (!providerKey) {
     throw new Error("Missing provider: providers.booking");
   }
 
-  if (providerKey === "versatilis") {
-    const adapter = assertSchedulingAdapter(createVersatilisSchedulingAdapter());
+  let adapter;
 
-    return wrapAdapterWithResilience({
-      adapter,
-      tenantId,
-      runtime,
-      capability: "booking",
-    });
+  switch (providerKey) {
+    case "versatilis":
+      adapter = createVersatilisSchedulingAdapter({ tenantId, runtime });
+      break;
+
+    default:
+      throw new Error(`Unsupported booking provider: ${providerKey}`);
   }
 
-  throw new Error(`Unsupported booking provider: ${providerKey}`);
+  assertSchedulingAdapter(adapter);
+
+  return wrapAdapterWithResilience({
+    adapter,
+    tenantId,
+    runtime,
+    capability: "booking",
+  });
 }
 
 export { createSchedulingAdapter };
