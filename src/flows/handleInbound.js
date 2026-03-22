@@ -1400,6 +1400,23 @@ async function handleInbound({
           return;
         }
 
+        audit(
+          "PLAN_VALIDATION_DEBUG",
+          sanitizeForLog({
+            tenantId,
+            traceId,
+            tracePhone: maskPhone(phone),
+            patientId: Number(patientId) || null,
+            flowPlanKey,
+            privatePlanId: Number(privatePlanId) || null,
+            insuredPlanId: Number(insuredPlanId) || null,
+            planIdsDetected: Array.isArray(planIds) ? planIds.map(Number) : [],
+            hasPrivatePlan,
+            hasInsuredPlan,
+            validationResult: "PLAN_VALIDATION_FAILURE_BRANCH",
+          })
+        );
+        
         await sendText({
           tenantId,
           to: phone,
