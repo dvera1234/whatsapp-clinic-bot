@@ -879,6 +879,8 @@ async function handleInbound({
         }
 
         const msgOk =
+          out?.data?.providerResult?.Message ||
+          out?.data?.providerResult?.message ||
           out?.data?.Message ||
           out?.data?.message ||
           "Agendamento confirmado com sucesso!";
@@ -1101,9 +1103,9 @@ async function handleInbound({
         })
       );
 
-      let patientId;
+      let patientIdResult;
       try {
-        patientId = await patientAdapter.findPatientIdByDocument({
+        patientIdResult = await patientAdapter.findPatientIdByDocument({
           document,
           runtimeCtx,
         });
@@ -1124,6 +1126,11 @@ async function handleInbound({
         throw err;
       }
 
+      const patientId =
+        patientIdResult?.ok && Number(patientIdResult?.data?.patientId) > 0
+          ? Number(patientIdResult.data.patientId)
+          : null;
+
       debugLog(
         "PATIENT_DOCUMENT_IDENTIFICATION_RESULT",
         sanitizeForLog({
@@ -1133,6 +1140,8 @@ async function handleInbound({
           documentMasked: "***",
           patientIdFound: !!patientId,
           patientId: patientId || null,
+          httpStatus: patientIdResult?.status || null,
+          rid: patientIdResult?.rid || null,
         })
       );
 
@@ -1268,28 +1277,45 @@ async function handleInbound({
         return;
       }
 
-      const validation = patientAdapter.validateRegistrationData({
+      const validationResult = patientAdapter.validateRegistrationData({
         profile: profileResult.data,
       });
+
+      const validation =
+        validationResult?.ok && validationResult?.data
+          ? validationResult.data
+          : { ok: false, missing: ["dados do cadastro"] };
 
       if (validation.ok) {
         const sCurrent = await getSession(tenantId, phone);
         const flowPlanKey = sCurrent?.booking?.planKey || PLAN_KEYS.PRIVATE;
-        const planIds = patientAdapter.listActivePlans({
+
+        const planIdsResult = patientAdapter.listActivePlans({
           profile: profileResult.data,
         });
 
-        const hasPrivatePlan = patientAdapter.hasPlan({
+        const planIds =
+          planIdsResult?.ok && Array.isArray(planIdsResult?.data)
+            ? planIdsResult.data
+            : [];
+
+        const hasPrivatePlanResult = patientAdapter.hasPlan({
           planIds,
           planKey: PLAN_KEYS.PRIVATE,
           runtimeCtx,
         });
 
-        const hasInsuredPlan = patientAdapter.hasPlan({
+        const hasInsuredPlanResult = patientAdapter.hasPlan({
           planIds,
           planKey: PLAN_KEYS.INSURED,
           runtimeCtx,
         });
+
+        const hasPrivatePlan =
+          !!hasPrivatePlanResult?.ok && hasPrivatePlanResult?.data === true;
+
+        const hasInsuredPlan =
+          !!hasInsuredPlanResult?.ok && hasInsuredPlanResult?.data === true;
 
         await updateSession(tenantId, phone, (sess) => {
           sess.booking = sess.booking || {};
@@ -1808,7 +1834,13 @@ async function handleInbound({
         throw err;
       }
 
-      if (!registrationResult.ok || !registrationResult.patientId) {
+      const registeredPatientId =
+        registrationResult?.ok &&
+        Number(registrationResult?.data?.patientId) > 0
+          ? Number(registrationResult.data.patientId)
+          : null;
+
+      if (!registrationResult.ok || !registeredPatientId) {
         await sendText({
           tenantId,
           to: phone,
@@ -1822,7 +1854,7 @@ async function handleInbound({
       let profileResult2;
       try {
         profileResult2 = await patientAdapter.getPatientProfile({
-          patientId: registrationResult.patientId,
+          patientId: registeredPatientId,
           runtimeCtx,
         });
       } catch (err) {
@@ -1842,11 +1874,16 @@ async function handleInbound({
         throw err;
       }
 
-      const validation2 = profileResult2.ok
+      const validation2Result = profileResult2.ok
         ? patientAdapter.validateRegistrationData({
             profile: profileResult2.data,
           })
-        : { ok: false, missing: ["dados do cadastro"] };
+        : null;
+
+      const validation2 =
+        validation2Result?.ok && validation2Result?.data
+          ? validation2Result.data
+          : { ok: false, missing: ["dados do cadastro"] };
 
       if (!validation2.ok) {
         await sendText({
@@ -1881,7 +1918,7 @@ async function handleInbound({
         runtime,
         phone,
         phoneNumberIdFallback: effectivePhoneNumberId,
-        patientId: registrationResult.patientId,
+        patientId: registeredPatientId,
         planKeyFromWizard: finalPlanKey,
         traceId,
         practitionerId,
@@ -2518,7 +2555,7 @@ async function findSlotsByDate({
     throw err;
   }
 
-  if (!out?.ok || !Array.isArray(out?.slots)) {
+  if (!out?.ok || !Array.isArray(out?.data?.slots)) {
     return {
       ok: false,
       slots: [],
@@ -2527,7 +2564,7 @@ async function findSlotsByDate({
     };
   }
 
-  const slots = out.slots.filter(
+  const slots = out.data.slots.filter(
     (x) =>
       x &&
       Number(x.slotId) &&
@@ -2936,10 +2973,10 @@ async function finishWizardAndGoToDates({
   insuredPlanId,
   MSG,
 }) {
-  let isReturn;
+  let eligibilityResult;
 
   try {
-    isReturn = await schedulingAdapter.checkReturnEligibility({
+    eligibilityResult = await schedulingAdapter.checkReturnEligibility({
       patientId,
       runtimeCtx: {
         tenantId,
@@ -2967,6 +3004,9 @@ async function finishWizardAndGoToDates({
     }
     throw err;
   }
+
+  const isReturn =
+    !!eligibilityResult?.ok && eligibilityResult?.data?.eligible === true;
 
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
