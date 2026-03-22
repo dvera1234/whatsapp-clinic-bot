@@ -2846,11 +2846,9 @@ function requireText(messages, key) {
   return value;
 }
 
-function tpl(template, vars = {}) {
-  return String(template).replace(/\{(\w+)\}/g, (_, key) => {
-    const value = vars[key];
-    return value == null ? "" : String(value);
-  });
+function optionalText(messages, key, fallback) {
+  const value = messages?.[key];
+  return typeof value === "string" && value.trim() ? value : fallback;
 }
 
 function getFlowText(runtime) {
@@ -2898,8 +2896,16 @@ function getFlowText(runtime) {
     POS_TARDIO: requireText(messages, "posTardio"),
     ATENDENTE: requireText(messages, "atendente"),
     AJUDA_PERGUNTA: requireText(messages, "ajudaPergunta"),
-    REDIS_UNAVAILABLE: requireText(messages, "redisUnavailable"),
-    PROVIDER_UNAVAILABLE: requireText(messages, "providerUnavailable"),
+    REDIS_UNAVAILABLE: optionalText(
+      messages,
+      "redisUnavailable",
+      "⚠️ Não foi possível continuar o atendimento agora. Por favor, tente novamente em instantes."
+    ),
+    PROVIDER_UNAVAILABLE: optionalText(
+      messages,
+      "providerUnavailable",
+      "⚠️ Nosso sistema está temporariamente indisponível no momento. Por favor, tente novamente em instantes."
+    ),
 
     BUTTONS_ONLY_WARNING: requireText(messages, "buttonsOnlyWarning"),
     PICK_PLAN_BUTTONS_ONLY: requireText(messages, "pickPlanButtonsOnly"),
