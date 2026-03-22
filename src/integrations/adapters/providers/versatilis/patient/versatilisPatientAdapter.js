@@ -7,7 +7,6 @@ import { getProviderRuntimeContext } from "../shared/versatilisContext.js";
 import {
   parseExternalPatientIdFromAny,
   listPlanIdsFromProfile,
-  hasPlanByDomainKey,
   validatePatientRegistrationData,
 } from "../shared/versatilisMappers.js";
 
@@ -224,9 +223,54 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
     },
 
     hasPlan({ planIds, planKey, runtimeCtx = {} }) {
+      const runtime =
+        runtimeCtx?.runtime ||
+        runtimeCtx?.tenantRuntime ||
+        null;
+
+      const privatePlanId =
+        Number(runtime?.plans?.privatePlanId) || null;
+
+      const insuredPlanId =
+        Number(runtime?.plans?.insuredPlanId) || null;
+
+      const normalizedPlanIds = Array.isArray(planIds)
+        ? planIds.map((x) => Number(x)).filter(Number.isFinite)
+        : [];
+
+      if (planKey === "PRIVATE") {
+        return buildPatientAdapterResult({
+          ok: true,
+          data:
+            privatePlanId != null &&
+            normalizedPlanIds.includes(privatePlanId),
+          status: 200,
+          rid: null,
+          errorCode: null,
+          errorMessage: null,
+        });
+      }
+
+      if (planKey === "INSURED") {
+        return buildPatientAdapterResult({
+          ok: true,
+          data:
+            insuredPlanId != null &&
+            normalizedPlanIds.includes(insuredPlanId),
+          status: 200,
+          rid: null,
+          errorCode: null,
+          errorMessage: null,
+        });
+      }
+
       return buildPatientAdapterResult({
-        ok: true,
-        data: hasPlanByDomainKey(planIds, planKey, runtimeCtx),
+        ok: false,
+        data: false,
+        status: 400,
+        rid: null,
+        errorCode: "INVALID_PLAN_KEY",
+        errorMessage: `Unsupported planKey: ${planKey}`,
       });
     },
   };
