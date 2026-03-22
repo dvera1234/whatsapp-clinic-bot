@@ -16,10 +16,151 @@ import {
   validatePatientRegistrationData,
 } from "../shared/versatilisMappers.js";
 
-function createVersatilisPortalAdapter() {
+function getProviderRuntimeContext(runtimeCtx = {}, factoryCtx = {}) {
+  return {
+    tenantId:
+      runtimeCtx?.tenantId ||
+      factoryCtx?.tenantId ||
+      null,
+    runtime:
+      runtimeCtx?.runtime ||
+      runtimeCtx?.tenantRuntime ||
+      factoryCtx?.runtime ||
+      null,
+    traceId: runtimeCtx?.traceId || null,
+    tracePhone: runtimeCtx?.tracePhone || null,
+  };
+}
+
+function buildPortalAdapterResult({
+  ok,
+  data = null,
+  status = null,
+  rid = null,
+  errorCode = null,
+  errorMessage = null,
+}) {
+  return {
+    ok: !!ok,
+    data,
+    status,
+    rid,
+    errorCode,
+    errorMessage,
+  };
+}
+
+function isEmptyValue(value) {
+  if (value == null) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
+
+function describeShape(value) {
+  if (value == null) return "null/undefined";
+  if (typeof value === "string") return `string(len=${value.length})`;
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (Array.isArray(value)) return `array(len=${value.length})`;
+  return typeof value;
+}
+
+function createRegistrationPayload({ registrationData, runtimeCtx }) {
+  const resolvedPlanId = resolvePlanIdFromPlanKey(
+    registrationData?.planKey,
+    runtimeCtx
+  );
+
+  const temporaryPasswordHash = md5HexLegacyVersatilisOnly(
+    generateTempPassword(10)
+  );
+
+  const birthDateISO = cleanStr(registrationData?.birthDateISO);
+
+  const payload = {
+    Nome: registrationData?.fullName,
+    CPF: registrationData?.document,
+    Email: registrationData?.email,
+    DtNasc: birthDateISO,
+    Celular: registrationData?.mobilePhone,
+    Telefone: registrationData?.phone || registrationData?.mobilePhone || "",
+    CEP: registrationData?.postalCode,
+    Endereco: registrationData?.streetAddress,
+    Numero: registrationData?.addressNumber,
+    Complemento: composeAddressComplement(
+      registrationData?.addressComplement,
+      registrationData?.stateCode
+    ),
+    Bairro: registrationData?.district,
+    Cidade: registrationData?.city,
+    CodPlano: resolvedPlanId ? String(resolvedPlanId) : "",
+    CodPlanos: resolvedPlanId ? [resolvedPlanId] : [],
+    Senha: temporaryPasswordHash,
+  };
+
+  if (
+    registrationData?.gender === "M" ||
+    registrationData?.gender === "F"
+  ) {
+    payload.Sexo = registrationData.gender;
+  }
+
+  return {
+    payload,
+    resolvedPlanId,
+  };
+}
+
+function validateRegistrationPayload(payload, resolvedPlanId) {
+  const emptyFields = Object.entries(payload)
+    .filter(([_, value]) => isEmptyValue(value))
+    .map(([key]) => key);
+
+  const validationErrors = [];
+
+  if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5) {
+    validationErrors.push("Nome");
+  }
+
+  if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, ""))) {
+    validationErrors.push("CPF");
+  }
+
+  if (!isValidEmail(payload.Email)) validationErrors.push("Email");
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || ""))) {
+    validationErrors.push("DtNasc");
+  }
+
+  if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, ""))) {
+    validationErrors.push("CEP");
+  }
+
+  if (!cleanStr(payload.Endereco)) validationErrors.push("Endereco");
+  if (!cleanStr(payload.Numero)) validationErrors.push("Numero");
+  if (!cleanStr(payload.Bairro)) validationErrors.push("Bairro");
+  if (!cleanStr(payload.Cidade)) validationErrors.push("Cidade");
+  if (!cleanStr(payload.Celular)) validationErrors.push("Celular");
+  if (!cleanStr(payload.Senha)) validationErrors.push("Senha");
+  if (!resolvedPlanId) validationErrors.push("CodPlano");
+
+  return {
+    emptyFields,
+    validationErrors,
+  };
+}
+
+function createVersatilisPortalAdapter(factoryCtx = {}) {
   return {
     validateRegistrationData({ profile }) {
-      return validatePatientRegistrationData(profile);
+      const data = validatePatientRegistrationData(profile);
+
+      return buildPortalAdapterResult({
+        ok: true,
+        data,
+        status: 200,
+      });
     },
 
     async createPatientRegistration({
@@ -27,103 +168,31 @@ function createVersatilisPortalAdapter() {
       traceMeta = {},
       runtimeCtx = {},
     }) {
-      const runtime =
-        runtimeCtx?.runtime || runtimeCtx?.tenantRuntime || null;
+      const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
 
-      const resolvedPlanId = resolvePlanIdFromPlanKey(
-        registrationData?.planKey,
-        runtimeCtx
+      const { payload, resolvedPlanId } = createRegistrationPayload({
+        registrationData,
+        runtimeCtx: {
+          ...runtimeCtx,
+          tenantId: ctx.tenantId,
+          runtime: ctx.runtime,
+        },
+      });
+
+      const { emptyFields, validationErrors } = validateRegistrationPayload(
+        payload,
+        resolvedPlanId
       );
-
-      const temporaryPasswordHash = md5HexLegacyVersatilisOnly(
-        generateTempPassword(10)
-      );
-
-      const birthDateISO = cleanStr(registrationData?.birthDateISO);
-
-      const payload = {
-        Nome: registrationData?.fullName,
-        CPF: registrationData?.document,
-        Email: registrationData?.email,
-        DtNasc: birthDateISO,
-        Celular: registrationData?.mobilePhone,
-        Telefone:
-          registrationData?.phone || registrationData?.mobilePhone || "",
-        CEP: registrationData?.postalCode,
-        Endereco: registrationData?.streetAddress,
-        Numero: registrationData?.addressNumber,
-        Complemento: composeAddressComplement(
-          registrationData?.addressComplement,
-          registrationData?.stateCode
-        ),
-        Bairro: registrationData?.district,
-        Cidade: registrationData?.city,
-        CodPlano: String(resolvedPlanId),
-        CodPlanos: resolvedPlanId ? [resolvedPlanId] : [],
-        Senha: temporaryPasswordHash,
-      };
-
-      if (
-        registrationData?.gender === "M" ||
-        registrationData?.gender === "F"
-      ) {
-        payload.Sexo = registrationData.gender;
-      }
-
-      function isEmpty(v) {
-        if (v == null) return true;
-        if (typeof v === "string") return v.trim().length === 0;
-        if (Array.isArray(v)) return v.length === 0;
-        return false;
-      }
-
-      const emptyFields = Object.entries(payload)
-        .filter(([_, v]) => isEmpty(v))
-        .map(([k]) => k);
-
-      const validationErrors = [];
-
-      if (!cleanStr(payload.Nome) || cleanStr(payload.Nome).length < 5) {
-        validationErrors.push("Nome");
-      }
-
-      if (!/^\d{11}$/.test(String(payload.CPF || "").replace(/\D+/g, ""))) {
-        validationErrors.push("CPF");
-      }
-
-      if (!isValidEmail(payload.Email)) validationErrors.push("Email");
-
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(payload.DtNasc || ""))) {
-        validationErrors.push("DtNasc");
-      }
-
-      if (!/^\d{8}$/.test(String(payload.CEP || "").replace(/\D+/g, ""))) {
-        validationErrors.push("CEP");
-      }
-
-      if (!cleanStr(payload.Endereco)) validationErrors.push("Endereco");
-      if (!cleanStr(payload.Numero)) validationErrors.push("Numero");
-      if (!cleanStr(payload.Bairro)) validationErrors.push("Bairro");
-      if (!cleanStr(payload.Cidade)) validationErrors.push("Cidade");
-      if (!cleanStr(payload.Celular)) validationErrors.push("Celular");
-      if (!cleanStr(payload.Senha)) validationErrors.push("Senha");
-      if (!resolvedPlanId) validationErrors.push("CodPlano");
 
       const shape = Object.fromEntries(
-        Object.entries(payload).map(([k, v]) => {
-          if (typeof v === "string") return [k, `string(len=${v.length})`];
-          if (typeof v === "number") return [k, "number"];
-          if (Array.isArray(v)) return [k, `array(len=${v.length})`];
-          if (typeof v === "boolean") return [k, "boolean"];
-          return [k, typeof v];
-        })
+        Object.entries(payload).map(([key, value]) => [key, describeShape(value)])
       );
 
       debugLog(
         "PATIENT_REGISTRATION_PAYLOAD_SHAPE",
         sanitizeForLog({
-          tenantId: runtimeCtx?.tenantId || null,
-          traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
+          tenantId: ctx.tenantId,
+          traceId: ctx.traceId || traceMeta?.traceId || null,
           emptyFields,
           validationErrors,
           shape,
@@ -136,10 +205,9 @@ function createVersatilisPortalAdapter() {
           auditOutcome(
             sanitizeForLog({
               ...(traceMeta || {}),
-              tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
-              traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
-              tracePhone:
-                runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
+              tenantId: ctx.tenantId,
+              traceId: ctx.traceId || traceMeta?.traceId || null,
+              tracePhone: ctx.tracePhone || traceMeta?.tracePhone || null,
               technicalAccepted: false,
               functionalResult: "PATIENT_REGISTRATION_BLOCKED_INVALID_PAYLOAD",
               patientFacingMessage: null,
@@ -150,16 +218,10 @@ function createVersatilisPortalAdapter() {
                 : [],
               registrationDataShape: registrationData
                 ? Object.fromEntries(
-                    Object.entries(registrationData).map(([k, v]) => {
-                      if (v == null) return [k, "null/undefined"];
-                      if (typeof v === "string") {
-                        return [k, `string(len=${v.length})`];
-                      }
-                      if (typeof v === "number") return [k, "number"];
-                      if (typeof v === "boolean") return [k, "boolean"];
-                      if (Array.isArray(v)) return [k, `array(len=${v.length})`];
-                      return [k, typeof v];
-                    })
+                    Object.entries(registrationData).map(([key, value]) => [
+                      key,
+                      describeShape(value),
+                    ])
                   )
                 : {},
               missingFields: emptyFields,
@@ -168,24 +230,29 @@ function createVersatilisPortalAdapter() {
           )
         );
 
-        return {
+        return buildPortalAdapterResult({
           ok: false,
-          stage: "blocked_missing_fields",
-          missing: emptyFields,
-          validationErrors,
-          hint: "Wizard não preencheu dados obrigatórios. Corrigir fluxo WZ_*.",
-        };
+          status: 400,
+          errorCode: "INVALID_REGISTRATION_PAYLOAD",
+          errorMessage: "Registration payload is invalid",
+          data: {
+            stage: "blocked_missing_fields",
+            missing: emptyFields,
+            validationErrors,
+            hint: "Wizard não preencheu dados obrigatórios. Corrigir fluxo WZ_*.",
+          },
+        });
       }
 
       const out = await versatilisFetch("/api/Login/CadastrarUsuario", {
-        tenantId: runtimeCtx?.tenantId || null,
-        runtime,
+        tenantId: ctx.tenantId,
+        runtime: ctx.runtime,
         method: "POST",
         jsonBody: payload,
         traceMeta: mergeTraceMeta(traceMeta, {
-          tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
-          traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
-          tracePhone: runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
+          tenantId: ctx.tenantId,
+          traceId: ctx.traceId || traceMeta?.traceId || null,
+          tracePhone: ctx.tracePhone || traceMeta?.tracePhone || null,
           flow: "CREATE_PATIENT_REGISTRATION",
           documentMasked: "***",
         }),
@@ -196,10 +263,9 @@ function createVersatilisPortalAdapter() {
         auditOutcome(
           sanitizeForLog({
             ...(traceMeta || {}),
-            tenantId: runtimeCtx?.tenantId || traceMeta?.tenantId || null,
-            traceId: runtimeCtx?.traceId || traceMeta?.traceId || null,
-            tracePhone:
-              runtimeCtx?.tracePhone || traceMeta?.tracePhone || null,
+            tenantId: ctx.tenantId,
+            traceId: ctx.traceId || traceMeta?.traceId || null,
+            tracePhone: ctx.tracePhone || traceMeta?.tracePhone || null,
             technicalAccepted: out.ok,
             httpStatus: out.status,
             rid: out.rid,
@@ -214,19 +280,34 @@ function createVersatilisPortalAdapter() {
       );
 
       if (!out.ok) {
-        return { ok: false, stage: "create_registration", out };
+        return buildPortalAdapterResult({
+          ok: false,
+          status: out.status || 500,
+          rid: out.rid || null,
+          errorCode: "PATIENT_REGISTRATION_FAILED",
+          errorMessage: "Failed to create patient registration",
+          data: {
+            stage: "create_registration",
+            providerResult: out,
+          },
+        });
       }
 
       const patientId =
         parseExternalPatientIdFromAny(out.data) ||
         Number(out?.data?.CodUsuario ?? out?.data?.codUsuario);
 
-      return {
+      return buildPortalAdapterResult({
         ok: true,
-        patientId: Number.isFinite(Number(patientId))
-          ? Number(patientId)
-          : null,
-      };
+        status: out.status || 200,
+        rid: out.rid || null,
+        data: {
+          patientId: Number.isFinite(Number(patientId))
+            ? Number(patientId)
+            : null,
+          providerResult: out.data ?? null,
+        },
+      });
     },
   };
 }
