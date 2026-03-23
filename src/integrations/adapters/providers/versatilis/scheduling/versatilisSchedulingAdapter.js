@@ -1,3 +1,4 @@
+import { debugLog } from "../../../../../observability/audit.js";
 import { sanitizeForLog } from "../../../../../utils/logSanitizer.js";
 import { versatilisFetch } from "../../../../transport/versatilis/client.js";
 import { getProviderRuntimeContext } from "../shared/versatilisContext.js";
@@ -112,12 +113,18 @@ function extractReturnEligibilityFromPayload(payload) {
     payload?.RetornoElegivel,
     payload?.isReturnEligible,
     payload?.IsReturnEligible,
+    payload?.temRetorno,
+    payload?.TemRetorno,
+    payload?.bitRetorno,
+    payload?.BitRetorno,
+    payload?.possuiConsulta30Dias,
+    payload?.PossuiConsulta30Dias,
   ];
 
   for (const value of directFlags) {
-    if (typeof value === "boolean") {
-      return value;
-    }
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1") return true;
+    if (value === 0 || value === "0") return false;
   }
 
   const counters = [
@@ -145,6 +152,8 @@ function extractReturnEligibilityFromPayload(payload) {
     payload?.Agendamentos,
     payload?.consultas,
     payload?.Consultas,
+    payload?.retornos,
+    payload?.Retornos,
   ];
 
   for (const value of arrays) {
@@ -174,6 +183,31 @@ function resolveReturnEligibilityPath(patientId, runtime) {
     .replaceAll("{patientId}", encodeURIComponent(String(patientId)))
     .replaceAll("{startDate}", encodeURIComponent(startDate))
     .replaceAll("{endDate}", encodeURIComponent(endDate));
+}
+
+function summarizeEligibilityPayload(payload) {
+  if (payload == null) {
+    return { kind: "nullish" };
+  }
+
+  if (Array.isArray(payload)) {
+    return {
+      kind: "array",
+      length: payload.length,
+    };
+  }
+
+  if (typeof payload === "object") {
+    return {
+      kind: "object",
+      keys: Object.keys(payload).slice(0, 20),
+    };
+  }
+
+  return {
+    kind: typeof payload,
+    value: String(payload).slice(0, 120),
+  };
 }
 
 function createVersatilisSchedulingAdapter(factoryCtx = {}) {
@@ -322,6 +356,19 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
       }
 
       const eligible = extractReturnEligibilityFromPayload(out.data);
+
+      debugLog(
+        "VERSA_RETURN_ELIGIBILITY_RESULT",
+        sanitizeForLog({
+          tenantId: ctx.tenantId,
+          traceId: ctx.traceId,
+          patientId: externalPatientId,
+          rid: out.rid || null,
+          httpStatus: out.status || null,
+          parsedEligible: eligible,
+          payloadSummary: summarizeEligibilityPayload(out.data),
+        })
+      );
 
       if (typeof eligible !== "boolean") {
         return buildResult({
