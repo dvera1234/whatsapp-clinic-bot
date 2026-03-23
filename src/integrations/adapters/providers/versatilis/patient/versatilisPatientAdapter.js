@@ -117,6 +117,39 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
     return null;
   }
 
+  function resolvePlanExternalId({ planKey, runtimeCtx }) {
+    const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
+    const runtime = ctx.runtime;
+
+    const externalId =
+      runtime?.planMappings?.[planKey]?.externalId != null
+        ? Number(runtime.planMappings[planKey].externalId)
+        : null;
+
+    return Number.isFinite(externalId) ? externalId : null;
+  }
+
+  function hasPlan({ profile, planKey, runtimeCtx }) {
+    const externalId = resolvePlanExternalId({ planKey, runtimeCtx });
+
+    if (!externalId) {
+      return buildResult({
+        ok: false,
+        data: false,
+        errorCode: "PLAN_MAPPING_MISSING",
+      });
+    }
+
+    const planIds = listPlanIdsFromProfile(profile) || [];
+
+    const normalized = planIds.map((x) => Number(x)).filter(Number.isFinite);
+
+    return buildResult({
+      ok: true,
+      data: normalized.includes(externalId),
+    });
+  }
+
   return {
     async findPatientByDocument({ document, runtimeCtx }) {
       const found = await findPatientIdByCpf({
@@ -230,6 +263,8 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         data: listPlanIdsFromProfile(profile),
       });
     },
+
+    hasPlan,
   };
 }
 
