@@ -36,16 +36,3 @@ export function nextWizardStateFromMissing(missingList) {
 
   return "WZ_NOME";
 }
-
-export function hasPlanKey({ planIds, runtime, planKey }) {
-  const externalId =
-    runtime?.planMappings?.[planKey]?.externalId != null
-      ? Number(runtime.planMappings[planKey].externalId)
-      : null;
-
-  const normalizedPlanIds = Array.isArray(planIds)
-    ? planIds.map((x) => Number(x)).filter(Number.isFinite)
-    : [];
-
-  return externalId != null && normalizedPlanIds.includes(externalId);
-}
