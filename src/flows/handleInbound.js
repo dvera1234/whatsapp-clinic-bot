@@ -164,32 +164,36 @@ async function handleInbound({
     })
   );
 
-  const flowCtx = {
-    context,
-    tenantId,
-    runtime,
-    runtimeCtx,
-    traceId,
-    phone,
-    phoneNumberIdFallback: effectivePhoneNumberId,
-    raw,
-    upper,
-    digits,
-    state,
-    MSG,
-    practitionerId,
-    portalUrl,
-    supportWa,
-    adapters: {
-      patientAdapter,
-      portalAdapter,
-      schedulingAdapter,
-    },
-    services: {
-      sendText,
-      sendButtons,
-    },
-  };
+    const flowCtx = {
+      context,
+      tenantId,
+      runtime,
+      runtimeCtx,
+      traceId,
+      phone,
+      phoneNumberIdFallback: effectivePhoneNumberId,
+      raw,
+      upper,
+      digits,
+      state,
+      MSG,
+      practitionerId,
+      portalUrl,
+      supportWa,
+      observability: {
+        audit,
+        debugLog,
+      },
+      adapters: {
+        patientAdapter,
+        portalAdapter,
+        schedulingAdapter,
+      },
+      services: {
+        sendText,
+        sendButtons,
+      },
+    };
 
   {
     const code = String(FLOW_RESET_CODE || "").trim();
@@ -237,10 +241,20 @@ async function handleInbound({
     if (await handlePatientRegistrationStep(flowCtx)) return;
   }
 
-  if (!digits && !String(state || "").startsWith("WZ_")) {
+    if (!digits && !String(state || "").startsWith("WZ_")) {
     if (await handleSupportFlowStep(flowCtx, { allowFreeTextAttendant: true })) {
       return;
     }
+
+    debugLog(
+      "FLOW_FREE_TEXT_OUTSIDE_EXPECTED_STATE",
+      sanitizeForLog({
+        tenantId,
+        traceId,
+        phoneMasked: maskPhone(phone),
+        state,
+      })
+    );
 
     await sendAndSetState({
       tenantId,
