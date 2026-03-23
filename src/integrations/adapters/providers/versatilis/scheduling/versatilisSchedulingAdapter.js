@@ -1,4 +1,3 @@
-import { debugLog } from "../../../../../observability/audit.js";
 import { sanitizeForLog } from "../../../../../utils/logSanitizer.js";
 import { versatilisFetch } from "../../../../transport/versatilis/client.js";
 import { getProviderRuntimeContext } from "../shared/versatilisContext.js";
@@ -87,127 +86,106 @@ function normalizeSlotsFromAgendaData(data) {
     .filter((item) => item.slotId && item.time);
 }
 
-function buildReturnEligibilityWindow() {
-  const end = new Date();
-  const start = new Date(end);
-  start.setDate(end.getDate() - 30);
+function parsePossibleDate(rawValue) {
+  if (!rawValue) return null;
 
-  const toIso = (d) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-      d.getDate()
-    ).padStart(2, "0")}`;
-
-  return {
-    startDate: toIso(start),
-    endDate: toIso(end),
-  };
-}
-
-function extractReturnEligibilityFromPayload(payload) {
-  if (!payload) return null;
-
-  const directFlags = [
-    payload?.eligible,
-    payload?.Elegivel,
-    payload?.retornoElegivel,
-    payload?.RetornoElegivel,
-    payload?.isReturnEligible,
-    payload?.IsReturnEligible,
-    payload?.temRetorno,
-    payload?.TemRetorno,
-    payload?.bitRetorno,
-    payload?.BitRetorno,
-    payload?.possuiConsulta30Dias,
-    payload?.PossuiConsulta30Dias,
-  ];
-
-  for (const value of directFlags) {
-    if (typeof value === "boolean") return value;
-    if (value === 1 || value === "1") return true;
-    if (value === 0 || value === "0") return false;
+  if (rawValue instanceof Date && !Number.isNaN(rawValue.getTime())) {
+    return rawValue;
   }
 
-  const counters = [
-    payload?.count,
-    payload?.Count,
-    payload?.total,
-    payload?.Total,
-    payload?.quantidade,
-    payload?.Quantidade,
-  ];
+  const raw = String(rawValue).trim();
+  if (!raw) return null;
 
-  for (const value of counters) {
-    const n = Number(value);
-    if (Number.isFinite(n)) {
-      return n > 0;
+  const direct = new Date(raw);
+  if (!Number.isNaN(direct.getTime())) {
+    return direct;
+  }
+
+  const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(
+    raw
+  );
+  if (brMatch) {
+    const [, dd, mm, yyyy, hh = "00", mi = "00", ss = "00"] = brMatch;
+    const parsed = new Date(
+      Number(yyyy),
+      Number(mm) - 1,
+      Number(dd),
+      Number(hh),
+      Number(mi),
+      Number(ss)
+    );
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
     }
-  }
-
-  const arrays = [
-    payload?.data,
-    payload?.Data,
-    payload?.items,
-    payload?.Items,
-    payload?.agendamentos,
-    payload?.Agendamentos,
-    payload?.consultas,
-    payload?.Consultas,
-    payload?.retornos,
-    payload?.Retornos,
-  ];
-
-  for (const value of arrays) {
-    if (Array.isArray(value)) {
-      return value.length > 0;
-    }
-  }
-
-  if (Array.isArray(payload)) {
-    return payload.length > 0;
   }
 
   return null;
 }
 
-function resolveReturnEligibilityPath(patientId, runtime) {
-  const template =
-    runtime?.integrations?.booking?.returnEligibilityPathTemplate || null;
+function normalizeStatusText(item) {
+  const raw =
+    item?.Status ??
+    item?.status ??
+    item?.Situacao ??
+    item?.situacao ??
+    item?.DescricaoStatus ??
+    item?.descricaoStatus ??
+    "";
 
-  if (!template || typeof template !== "string") {
-    return null;
-  }
-
-  const { startDate, endDate } = buildReturnEligibilityWindow();
-
-  return template
-    .replaceAll("{patientId}", encodeURIComponent(String(patientId)))
-    .replaceAll("{startDate}", encodeURIComponent(startDate))
-    .replaceAll("{endDate}", encodeURIComponent(endDate));
+  return String(raw || "").trim().toLowerCase();
 }
 
-function summarizeEligibilityPayload(payload) {
-  if (payload == null) {
-    return { kind: "nullish" };
-  }
+function isCancelledStatus(item) {
+  const status = normalizeStatusText(item);
 
-  if (Array.isArray(payload)) {
-    return {
-      kind: "array",
-      length: payload.length,
-    };
-  }
+  return (
+    status.includes("cancel") ||
+    status.includes("cancelada") ||
+    status.includes("cancelado")
+  );
+}
 
-  if (typeof payload === "object") {
-    return {
-      kind: "object",
-      keys: Object.keys(payload).slice(0, 20),
-    };
-  }
+function extractHistoryDate(item) {
+  return (
+    item?.Data ??
+    item?.data ??
+    item?.DataAgendamento ??
+    item?.dataAgendamento ??
+    item?.DataConsulta ??
+    item?.dataConsulta ??
+    item?.DtAgendamento ??
+    item?.dtAgendamento ??
+    item?.DtConsulta ??
+    item?.dtConsulta ??
+    item?.DataAtendimento ??
+    item?.dataAtendimento ??
+    null
+  );
+}
 
-  return {
-    kind: typeof payload,
-    value: String(payload).slice(0, 120),
-  };
+function hasRecentValidAppointment(historyItems, now = new Date()) {
+  if (!Array.isArray(historyItems)) return false;
+
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+  return historyItems.some((item) => {
+    if (!item || isCancelledStatus(item)) {
+      return false;
+    }
+
+    const parsedDate = parsePossibleDate(extractHistoryDate(item));
+    if (!parsedDate) {
+      return false;
+    }
+
+    const diff = now.getTime() - parsedDate.getTime();
+
+    if (diff < 0) {
+      return false;
+    }
+
+    return diff <= THIRTY_DAYS_MS;
+  });
 }
 
 function createVersatilisSchedulingAdapter(factoryCtx = {}) {
@@ -324,17 +302,9 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
         });
       }
 
-      const path = resolveReturnEligibilityPath(externalPatientId, ctx.runtime);
-
-      if (!path) {
-        return buildResult({
-          ok: false,
-          status: 500,
-          errorCode: "RETURN_ELIGIBILITY_PATH_TEMPLATE_MISSING",
-          errorMessage:
-            "runtime.integrations.booking.returnEligibilityPathTemplate is required for checkReturnEligibility",
-        });
-      }
+      const path = `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(
+        externalPatientId
+      )}`;
 
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
@@ -346,7 +316,7 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
         }),
       });
 
-      if (!out.ok) {
+      if (!out.ok || !Array.isArray(out.data)) {
         return buildResult({
           ok: false,
           status: out.status || 502,
@@ -355,29 +325,7 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
         });
       }
 
-      const eligible = extractReturnEligibilityFromPayload(out.data);
-
-      debugLog(
-        "VERSA_RETURN_ELIGIBILITY_RESULT",
-        sanitizeForLog({
-          tenantId: ctx.tenantId,
-          traceId: ctx.traceId,
-          patientId: externalPatientId,
-          rid: out.rid || null,
-          httpStatus: out.status || null,
-          parsedEligible: eligible,
-          payloadSummary: summarizeEligibilityPayload(out.data),
-        })
-      );
-
-      if (typeof eligible !== "boolean") {
-        return buildResult({
-          ok: false,
-          status: out.status || 502,
-          rid: out.rid,
-          errorCode: "RETURN_ELIGIBILITY_PARSE_FAILED",
-        });
-      }
+      const eligible = hasRecentValidAppointment(out.data);
 
       return buildResult({
         ok: true,
@@ -385,7 +333,7 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
         rid: out.rid,
         data: {
           eligible,
-          providerResult: out.data,
+          providerResult: null,
         },
       });
     },
