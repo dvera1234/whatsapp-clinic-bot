@@ -23,7 +23,7 @@ import {
 } from "../helpers/auditHelpers.js";
 import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
 import { tpl } from "../helpers/contentHelpers.js";
-import { formatMissing, hasPlanKey } from "../helpers/patientHelpers.js";
+import { formatMissing } from "../helpers/patientHelpers.js";
 
 export async function handlePatientIdentificationStep(flowCtx) {
   const {
@@ -289,24 +289,34 @@ export async function handlePatientIdentificationStep(flowCtx) {
         ? planIdsResult.data
         : [];
 
-    const hasPrivatePlan = hasPlanKey({
-      planIds,
-      runtime,
+    const hasPrivatePlanResult = adapters.patientAdapter.hasPlan({
+      profile: profileResult.data,
       planKey: PLAN_KEYS.PRIVATE,
+      runtimeCtx,
     });
 
-    const hasInsuredPlan = hasPlanKey({
-      planIds,
-      runtime,
+    const hasInsuredPlanResult = adapters.patientAdapter.hasPlan({
+      profile: profileResult.data,
       planKey: PLAN_KEYS.INSURED,
+      runtimeCtx,
     });
+
+    const hasPrivatePlan =
+      hasPrivatePlanResult?.ok && hasPrivatePlanResult?.data === true;
+
+    const hasInsuredPlan =
+      hasInsuredPlanResult?.ok && hasInsuredPlanResult?.data === true;
 
     await updateSession(tenantId, phone, (sess) => {
       sess.booking = sess.booking || {};
       sess.booking.patientId = patientId;
     });
 
-    if (hasPrivatePlan && !hasInsuredPlan && flowPlanKey === PLAN_KEYS.PRIVATE) {
+    if (
+      hasPrivatePlan &&
+      !hasInsuredPlan &&
+      flowPlanKey === PLAN_KEYS.PRIVATE
+    ) {
       await finishWizardAndGoToDates({
         schedulingAdapter: adapters.schedulingAdapter,
         tenantId,
@@ -323,7 +333,11 @@ export async function handlePatientIdentificationStep(flowCtx) {
       return true;
     }
 
-    if (!hasPrivatePlan && hasInsuredPlan && flowPlanKey === PLAN_KEYS.INSURED) {
+    if (
+      !hasPrivatePlan &&
+      hasInsuredPlan &&
+      flowPlanKey === PLAN_KEYS.INSURED
+    ) {
       await finishWizardAndGoToDates({
         schedulingAdapter: adapters.schedulingAdapter,
         tenantId,
@@ -340,7 +354,11 @@ export async function handlePatientIdentificationStep(flowCtx) {
       return true;
     }
 
-    if (hasPrivatePlan && !hasInsuredPlan && flowPlanKey === PLAN_KEYS.INSURED) {
+    if (
+      hasPrivatePlan &&
+      !hasInsuredPlan &&
+      flowPlanKey === PLAN_KEYS.INSURED
+    ) {
       await updateSession(tenantId, phone, (sess) => {
         sess.portal = sess.portal || {};
         sess.portal.issue = {
@@ -348,7 +366,9 @@ export async function handlePatientIdentificationStep(flowCtx) {
           wantedPlan: PLAN_KEYS.INSURED,
           note: "Paciente possui apenas plano privado ativo no cadastro.",
           patientId: Number(patientId) || null,
-          planIdsDetected: Array.isArray(planIds) ? planIds.map(Number) : [],
+          planIdsDetected: Array.isArray(planIds)
+            ? planIds.map(Number)
+            : [],
         };
       });
 
@@ -360,7 +380,9 @@ export async function handlePatientIdentificationStep(flowCtx) {
           tracePhone: maskPhone(phone),
           patientId: Number(patientId) || null,
           flowPlanKey,
-          planIdsDetected: Array.isArray(planIds) ? planIds.map(Number) : [],
+          planIdsDetected: Array.isArray(planIds)
+            ? planIds.map(Number)
+            : [],
           escalationRequired: true,
         })
       );
@@ -380,7 +402,11 @@ export async function handlePatientIdentificationStep(flowCtx) {
       return true;
     }
 
-    if (!hasPrivatePlan && hasInsuredPlan && flowPlanKey === PLAN_KEYS.PRIVATE) {
+    if (
+      !hasPrivatePlan &&
+      hasInsuredPlan &&
+      flowPlanKey === PLAN_KEYS.PRIVATE
+    ) {
       await services.sendButtons({
         tenantId,
         to: phone,
@@ -434,7 +460,9 @@ export async function handlePatientIdentificationStep(flowCtx) {
       traceId,
       tracePhone: maskPhone(phone),
       patientId: patientId || null,
-      missingFields: Array.isArray(validation.missing) ? validation.missing : [],
+      missingFields: Array.isArray(validation.missing)
+        ? validation.missing
+        : [],
       escalationRequired: true,
     })
   );
