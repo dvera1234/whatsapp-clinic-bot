@@ -1,3 +1,5 @@
+import { audit } from "../../observability/audit.js";
+import { sanitizeForLog } from "../../utils/logSanitizer.js";
 import { setState, updateSession } from "../../session/redisSession.js";
 import { MIN_LEAD_HOURS, TZ_OFFSET } from "../../config/constants.js";
 import { maskPhone } from "../../utils/mask.js";
@@ -94,8 +96,8 @@ export async function fetchNextAvailableDates({
   runtimeCtx,
   practitionerId,
   patientId,
-  phone = "",
-  daysLookahead = 60,
+  phone = "", 
+  daysLookahead = 30, // suficiente para UX real
   limit = 3,
 }) {
   const dates = [];
@@ -121,6 +123,8 @@ export async function fetchNextAvailableDates({
       phone,
     });
 
+    await new Promise((r) => setTimeout(r, 50));
+
     if (out.providerUnavailable) {
       return {
         ok: false,
@@ -132,6 +136,11 @@ export async function fetchNextAvailableDates({
 
     if (out.ok && out.slots.length > 0) {
       dates.push(appointmentDate);
+    
+      // 🔴 otimização crítica
+      if (dates.length >= limit) {
+        break;
+      }
     }
   }
 
@@ -311,14 +320,35 @@ export async function finishWizardAndGoToDates({
     throw err;
   }
 
-  const isReturn =
-    !!eligibilityResult?.ok && eligibilityResult?.data?.eligible === true;
+  let isReturn = null;
 
+  if (eligibilityResult?.ok && typeof eligibilityResult?.data?.eligible === "boolean") {
+    isReturn = eligibilityResult.data.eligible;
+  }
+
+    audit(
+    "RETURN_ELIGIBILITY_CHECK",
+    sanitizeForLog({
+      tenantId,
+      traceId,
+      patientId,
+      providerOk: !!eligibilityResult?.ok,
+      eligible: isReturn,
+      rid: eligibilityResult?.rid || null,
+      httpStatus: eligibilityResult?.status || null,
+    })
+  );
+  
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.patientId = patientId;
     s.booking.practitionerId = practitionerId;
-    s.booking.isReturn = isReturn;
+    
+    if (typeof isReturn === "boolean") {
+      s.booking.isReturn = isReturn;
+    } else {
+      delete s.booking.isReturn; // evita estado falso
+    }
 
     if (planKeyFromWizard) {
       s.booking.planKey = planKeyFromWizard;
