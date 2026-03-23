@@ -304,12 +304,47 @@ export async function handleBookingConfirmationStep(flowCtx) {
 
       const isPrivateBooking =
         (s?.booking?.planKey || PLAN_KEYS.PRIVATE) === PLAN_KEYS.PRIVATE;
-      const isReturnBooking = !!s?.booking?.isReturn;
-      const showPaymentInfo = isPrivateBooking && !isReturnBooking;
+      
+     let isReturnBooking = null;
 
+      if (typeof s?.booking?.isReturn === "boolean") {
+        isReturnBooking = s.booking.isReturn;
+      }
+      
+      if (isReturnBooking === null) {
+        audit(
+          "BOOKING_RETURN_FLAG_MISSING",
+          sanitizeForLog({
+            tenantId,
+            traceId,
+            tracePhone: maskPhone(phone),
+            planKey: s?.booking?.planKey || null,
+            warning: "isReturn not defined at confirmation step",
+          })
+        );
+      }
+      
+      const showPaymentInfo =
+        isPrivateBooking && isReturnBooking === false;
+      
+      const showPaymentInfo = isPrivateBooking && !isReturnBooking;
+      
       const paymentInfo = showPaymentInfo
         ? MSG.PAYMENT_INFO_PRIVATE_FIRST_VISIT
         : "";
+      
+      audit(
+        "BOOKING_PAYMENT_DECISION",
+        sanitizeForLog({
+          tenantId,
+          traceId,
+          tracePhone: maskPhone(phone),
+          planKey: s?.booking?.planKey || null,
+          isPrivateBooking,
+          isReturnBooking,
+          showPaymentInfo,
+        })
+      );
 
       try {
         await setState(tenantId, phone, "MAIN");
@@ -349,6 +384,11 @@ export async function handleBookingConfirmationStep(flowCtx) {
             patientMessageMainSent: !!sentMainSuccess,
             patientMessagePortalLinkSent: !!sentPortalLink,
             escalationRequired: false,
+        
+            // 🔴 CRÍTICO
+            planKey: s?.booking?.planKey || null,
+            isReturnBooking,
+            showPaymentInfo,
           })
         );
       } catch {
