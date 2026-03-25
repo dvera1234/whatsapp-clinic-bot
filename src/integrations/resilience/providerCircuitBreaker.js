@@ -127,14 +127,6 @@ async function registerSuccess({
     await redis.del(failureKey).catch(() => {});
   } catch {}
 
-  audit("PROVIDER_CALL_SUCCEEDED", {
-    tenantId,
-    capability,
-    provider,
-    ...traceMeta,
-  });
-}
-
 async function registerFailure({
   tenantId,
   capability,
