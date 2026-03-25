@@ -86,110 +86,34 @@ function normalizeSlotsFromAgendaData(data) {
     .filter((item) => item.slotId && item.time);
 }
 
-function parsePossibleDate(rawValue) {
-  if (!rawValue) return null;
-
-  if (rawValue instanceof Date && !Number.isNaN(rawValue.getTime())) {
-    return rawValue;
+// regra trazida do código antigo que estava funcionando:
+// usa ag.Data em formato dd/mm/yyyy e considera retorno se houver
+// qualquer histórico dentro de 30 dias.
+function hasRecentValidAppointment(historyItems, now = Date.now()) {
+  if (!Array.isArray(historyItems) || historyItems.length === 0) {
+    return false;
   }
-
-  const raw = String(rawValue).trim();
-  if (!raw) return null;
-
-  const direct = new Date(raw);
-  if (!Number.isNaN(direct.getTime())) {
-    return direct;
-  }
-
-  const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(
-    raw
-  );
-  if (brMatch) {
-    const [, dd, mm, yyyy, hh = "00", mi = "00", ss = "00"] = brMatch;
-    const parsed = new Date(
-      Number(yyyy),
-      Number(mm) - 1,
-      Number(dd),
-      Number(hh),
-      Number(mi),
-      Number(ss)
-    );
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function normalizeStatusText(item) {
-  const raw =
-    item?.Status ??
-    item?.status ??
-    item?.Situacao ??
-    item?.situacao ??
-    item?.DescricaoStatus ??
-    item?.descricaoStatus ??
-    "";
-
-  return String(raw || "").trim().toLowerCase();
-}
-
-function isCancelledStatus(item) {
-  const status = normalizeStatusText(item);
-
-  return (
-    status.includes("cancel") ||
-    status.includes("cancelada") ||
-    status.includes("cancelado")
-  );
-}
-
-function extractHistoryDate(item) {
-  return (
-    item?.Data ??
-    item?.data ??
-    item?.DataAgendamento ??
-    item?.dataAgendamento ??
-    item?.DataConsulta ??
-    item?.dataConsulta ??
-    item?.DtAgendamento ??
-    item?.dtAgendamento ??
-    item?.DtConsulta ??
-    item?.dtConsulta ??
-    item?.DataAtendimento ??
-    item?.dataAtendimento ??
-    null
-  );
-}
-
-function hasRecentValidAppointment(historyItems, now = new Date()) {
-  if (!Array.isArray(historyItems)) return false;
 
   const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-  return historyItems.some((item) => {
-    if (!item || isCancelledStatus(item)) {
-      return false;
-    }
+  return historyItems.some((ag) => {
+    if (!ag?.Data) return false;
 
-    const parsedDate = parsePossibleDate(extractHistoryDate(item));
-    if (!parsedDate) {
-      return false;
-    }
+    const raw = String(ag.Data).trim();
+    const parts = raw.split("/");
+    if (parts.length !== 3) return false;
 
-   const diff = now.getTime() - parsedDate.getTime();
+    const [dd, mm, yyyy] = parts;
+    const dateMs = new Date(
+      `${yyyy}-${mm}-${dd}T00:00:00-03:00`
+    ).getTime();
 
-    if (diff < 0) {
-      return false;
-    }
-    
-    // 🔴 tolerância de timezone / horário
-    const THRESHOLD = THIRTY_DAYS_MS + 24 * 60 * 60 * 1000;
-    
-    return diff <= THRESHOLD;
-    });
-  }
+    if (!Number.isFinite(dateMs)) return false;
+
+    const diff = now - dateMs;
+    return diff >= 0 && diff <= THIRTY_DAYS_MS;
+  });
+}
 
 function createVersatilisSchedulingAdapter(factoryCtx = {}) {
   return {
