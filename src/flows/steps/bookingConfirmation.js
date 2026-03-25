@@ -253,6 +253,31 @@ export async function handleBookingConfirmationStep(flowCtx) {
         })
       );
 
+      audit(
+        "BOOKING_CONFIRMED",
+        sanitizeForLog({
+          tenantId,
+          traceId,
+          tracePhone: maskPhone(phone),
+      
+          patientId: bookingRequest.patientId || null,
+          slotId: bookingRequest.slotId || null,
+          planKey: bookingRequest.planKey || null,
+          providerId: bookingRequest.providerId || null,
+      
+          appointmentDate: s?.booking?.appointmentDate || null,
+          appointmentTime: chosen?.time || null,
+      
+          rid: out?.rid || null,
+          httpStatus: out?.status || null,
+      
+          technicalAccepted: !!out?.ok,
+          functionalResult: !!out?.ok
+            ? "BOOKING_PRESUMED_CREATED"
+            : "BOOKING_NOT_CONFIRMED",
+        })
+      );
+
       if (!out.ok) {
         await updateSession(tenantId, phone, (sess) => {
           delete sess.pending;
