@@ -126,7 +126,14 @@ async function providerFetch(
     throw err;
   }
 
-  const resolvedCapability = capability || inferCapabilityFromPath(path) || null;
+  if (!capability) {
+    const err = new Error("capability obrigatória em providerFetch");
+    err.code = "CAPABILITY_REQUIRED";
+    throw err;
+  }
+  
+  const resolvedCapability = capability;
+  
   const baseUrl = resolveProviderBaseUrl(runtime, resolvedCapability);
 
   if (!baseUrl) {
