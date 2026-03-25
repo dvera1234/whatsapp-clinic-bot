@@ -58,36 +58,37 @@ export async function handleBookingConfirmationStep(flowCtx) {
   }
 
   if (upper === "CONFIRMAR") {
-    const s = await getSession(tenantId, phone);
+    let s = await getSession(tenantId, phone);
 
-  // 🔴 CORREÇÃO: calcular retorno antes de confirmar
-  const returnCheck = await adapters.schedulingAdapter.checkReturnEligibility({
-    patientId: s?.booking?.patientId,
-    runtimeCtx,
-  });
-  
-  let isReturnResolved = null;
-  
-  if (returnCheck?.ok) {
-    isReturnResolved = !!returnCheck.data?.eligible;
-  
-    await updateSession(tenantId, phone, (sess) => {
-      sess.booking = sess.booking || {};
-      sess.booking.isReturn = isReturnResolved;
+    const returnCheck = await adapters.schedulingAdapter.checkReturnEligibility({
+      patientId: s?.booking?.patientId,
+      runtimeCtx,
     });
-  } else {
-    audit(
-      "BOOKING_RETURN_CHECK_FAILED",
-      sanitizeForLog({
-        tenantId,
-        traceId,
-        tracePhone: maskPhone(phone),
-        errorCode: returnCheck?.errorCode || null,
-        status: returnCheck?.status || null,
-      })
-    );
-  }
-    
+
+    let isReturnResolved = null;
+
+    if (returnCheck?.ok) {
+      isReturnResolved = !!returnCheck.data?.eligible;
+
+      await updateSession(tenantId, phone, (sess) => {
+        sess.booking = sess.booking || {};
+        sess.booking.isReturn = isReturnResolved;
+      });
+    } else {
+      audit(
+        "BOOKING_RETURN_CHECK_FAILED",
+        sanitizeForLog({
+          tenantId,
+          traceId,
+          tracePhone: maskPhone(phone),
+          errorCode: returnCheck?.errorCode || null,
+          status: returnCheck?.status || null,
+        })
+      );
+    }
+
+    s = await getSession(tenantId, phone);
+
     const slotId = Number(s?.pending?.slotId);
 
     const bookingRequest = {
@@ -288,18 +289,14 @@ export async function handleBookingConfirmationStep(flowCtx) {
           tenantId,
           traceId,
           tracePhone: maskPhone(phone),
-      
           patientId: bookingRequest.patientId || null,
           slotId: bookingRequest.slotId || null,
           planKey: bookingRequest.planKey || null,
           providerId: bookingRequest.providerId || null,
-      
           appointmentDate: s?.booking?.appointmentDate || null,
           appointmentTime: chosen?.time || null,
-      
           rid: out?.rid || null,
           httpStatus: out?.status || null,
-      
           technicalAccepted: !!out?.ok,
           functionalResult: !!out?.ok
             ? "BOOKING_PRESUMED_CREATED"
@@ -355,18 +352,18 @@ export async function handleBookingConfirmationStep(flowCtx) {
         out?.data?.Message ||
         out?.data?.message ||
         "Agendamento confirmado com sucesso!";
-      
-      const isPrivateBooking =
-        (s?.booking?.planKey || PLAN_KEYS.PRIVATE) === PLAN_KEYS.PRIVATE;
-      
+
       const sAfter = await getSession(tenantId, phone);
 
+      const isPrivateBooking =
+        (sAfter?.booking?.planKey || PLAN_KEYS.PRIVATE) === PLAN_KEYS.PRIVATE;
+
       let isReturnBooking = null;
-      
+
       if (typeof sAfter?.booking?.isReturn === "boolean") {
         isReturnBooking = sAfter.booking.isReturn;
       }
-      
+
       if (isReturnBooking === null) {
         audit(
           "BOOKING_RETURN_FLAG_MISSING",
@@ -374,15 +371,15 @@ export async function handleBookingConfirmationStep(flowCtx) {
             tenantId,
             traceId,
             tracePhone: maskPhone(phone),
-            planKey: s?.booking?.planKey || null,
+            planKey: sAfter?.booking?.planKey || null,
             warning: "isReturn not defined at confirmation step",
           })
         );
       }
-      
+
       const showPaymentInfo =
         isPrivateBooking && isReturnBooking === false;
-      
+
       if (isReturnBooking === null) {
         audit(
           "BOOKING_PAYMENT_BLOCKED_UNKNOWN_RETURN",
@@ -394,18 +391,18 @@ export async function handleBookingConfirmationStep(flowCtx) {
           })
         );
       }
-      
+
       const paymentInfo = showPaymentInfo
         ? MSG.PAYMENT_INFO_PRIVATE_FIRST_VISIT
         : "";
-      
+
       audit(
         "BOOKING_PAYMENT_DECISION",
         sanitizeForLog({
           tenantId,
           traceId,
           tracePhone: maskPhone(phone),
-          planKey: s?.booking?.planKey || null,
+          planKey: sAfter?.booking?.planKey || null,
           isPrivateBooking,
           isReturnBooking,
           showPaymentInfo,
@@ -450,9 +447,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
             patientMessageMainSent: !!sentMainSuccess,
             patientMessagePortalLinkSent: !!sentPortalLink,
             escalationRequired: false,
-        
-            // 🔴 CRÍTICO
-            planKey: s?.booking?.planKey || null,
+            planKey: sAfter?.booking?.planKey || null,
             isReturnBooking,
             showPaymentInfo,
           })
