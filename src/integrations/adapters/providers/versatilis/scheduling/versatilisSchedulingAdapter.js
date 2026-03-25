@@ -86,9 +86,49 @@ function normalizeSlotsFromAgendaData(data) {
     .filter((item) => item.slotId && item.time);
 }
 
-// regra trazida do código antigo que estava funcionando:
-// usa ag.Data em formato dd/mm/yyyy e considera retorno se houver
-// qualquer histórico dentro de 30 dias.
+function extractHistoryDate(item) {
+  return (
+    item?.Data ??
+    item?.data ??
+    item?.DataAgendamento ??
+    item?.dataAgendamento ??
+    item?.DataConsulta ??
+    item?.dataConsulta ??
+    item?.DtAgendamento ??
+    item?.dtAgendamento ??
+    item?.DtConsulta ??
+    item?.dtConsulta ??
+    item?.DataAtendimento ??
+    item?.dataAtendimento ??
+    null
+  );
+}
+
+function parseHistoryDateToMs(rawValue) {
+  if (!rawValue) return NaN;
+
+  const raw = String(rawValue).trim();
+  if (!raw) return NaN;
+
+  // dd/mm/yyyy
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(raw);
+  if (br) {
+    const [, dd, mm, yyyy] = br;
+    return new Date(`${yyyy}-${mm}-${dd}T00:00:00-03:00`).getTime();
+  }
+
+  // yyyy-mm-dd
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (iso) {
+    const [, yyyy, mm, dd] = iso;
+    return new Date(`${yyyy}-${mm}-${dd}T00:00:00-03:00`).getTime();
+  }
+
+  // fallback
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
 function hasRecentValidAppointment(historyItems, now = Date.now()) {
   if (!Array.isArray(historyItems) || historyItems.length === 0) {
     return false;
@@ -96,17 +136,10 @@ function hasRecentValidAppointment(historyItems, now = Date.now()) {
 
   const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-  return historyItems.some((ag) => {
-    if (!ag?.Data) return false;
-
-    const raw = String(ag.Data).trim();
-    const parts = raw.split("/");
-    if (parts.length !== 3) return false;
-
-    const [dd, mm, yyyy] = parts;
-    const dateMs = new Date(
-      `${yyyy}-${mm}-${dd}T00:00:00-03:00`
-    ).getTime();
+  return historyItems.some((item) => {
+    const dateMs = parseHistoryDateToMs(
+      extractHistoryDate(item)
+    );
 
     if (!Number.isFinite(dateMs)) return false;
 
