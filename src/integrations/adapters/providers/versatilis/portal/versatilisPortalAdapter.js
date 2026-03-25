@@ -62,8 +62,17 @@ function resolvePlanExternalId(planKey, runtime) {
 
 function createPayload(registrationData, runtime) {
   const planId = resolvePlanExternalId(registrationData?.planKey, runtime);
-
   const passwordHash = md5HexLegacyVersatilisOnly(generateTempPassword(10));
+
+  const complementoRaw = composeAddressComplement(
+    registrationData?.addressComplement,
+    registrationData?.stateCode
+  );
+
+  const complementoFinal =
+    complementoRaw && String(complementoRaw).trim().length > 0
+      ? complementoRaw
+      : "0";
 
   return {
     Nome: registrationData?.fullName,
@@ -75,10 +84,7 @@ function createPayload(registrationData, runtime) {
     CEP: registrationData?.postalCode,
     Endereco: registrationData?.streetAddress,
     Numero: registrationData?.addressNumber,
-    Complemento: composeAddressComplement(
-      registrationData?.addressComplement,
-      registrationData?.stateCode
-    ),
+    Complemento: complementoFinal,
     Bairro: registrationData?.district,
     Cidade: registrationData?.city,
     CodPlano: planId ? String(planId) : "",
@@ -92,8 +98,13 @@ function createPayload(registrationData, runtime) {
 }
 
 function validatePayload(payload, planId) {
+  const OPTIONAL_FIELDS = new Set(["Complemento"]);
+
   const missing = Object.entries(payload)
-    .filter(([_, value]) => isEmptyValue(value))
+    .filter(([key, value]) => {
+      if (OPTIONAL_FIELDS.has(key)) return false;
+      return isEmptyValue(value);
+    })
     .map(([key]) => key);
 
   const errors = [];
@@ -154,7 +165,10 @@ function createVersatilisPortalAdapter(factoryCtx = {}) {
       const { missing, errors } = validatePayload(payload, planId);
 
       const shape = Object.fromEntries(
-        Object.entries(payload).map(([key, value]) => [key, describeShape(value)])
+        Object.entries(payload).map(([key, value]) => [
+          key,
+          describeShape(value),
+        ])
       );
 
       debugLog(
