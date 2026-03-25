@@ -377,7 +377,8 @@ export async function handleBookingConfirmationStep(flowCtx) {
         );
       }
 
-      const showPaymentInfo = false;
+      const showPaymentInfo =
+        isPrivateBooking && isReturnBooking === false;
 
       if (isReturnBooking === null) {
         audit(
