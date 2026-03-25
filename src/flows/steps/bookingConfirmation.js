@@ -59,6 +59,35 @@ export async function handleBookingConfirmationStep(flowCtx) {
 
   if (upper === "CONFIRMAR") {
     const s = await getSession(tenantId, phone);
+
+  // 🔴 CORREÇÃO: calcular retorno antes de confirmar
+  const returnCheck = await adapters.schedulingAdapter.checkReturnEligibility({
+    patientId: s?.booking?.patientId,
+    runtimeCtx,
+  });
+  
+  let isReturnResolved = null;
+  
+  if (returnCheck?.ok) {
+    isReturnResolved = !!returnCheck.data?.eligible;
+  
+    await updateSession(tenantId, phone, (sess) => {
+      sess.booking = sess.booking || {};
+      sess.booking.isReturn = isReturnResolved;
+    });
+  } else {
+    audit(
+      "BOOKING_RETURN_CHECK_FAILED",
+      sanitizeForLog({
+        tenantId,
+        traceId,
+        tracePhone: maskPhone(phone),
+        errorCode: returnCheck?.errorCode || null,
+        status: returnCheck?.status || null,
+      })
+    );
+  }
+    
     const slotId = Number(s?.pending?.slotId);
 
     const bookingRequest = {
@@ -330,10 +359,12 @@ export async function handleBookingConfirmationStep(flowCtx) {
       const isPrivateBooking =
         (s?.booking?.planKey || PLAN_KEYS.PRIVATE) === PLAN_KEYS.PRIVATE;
       
+      const sAfter = await getSession(tenantId, phone);
+
       let isReturnBooking = null;
       
-      if (typeof s?.booking?.isReturn === "boolean") {
-        isReturnBooking = s.booking.isReturn;
+      if (typeof sAfter?.booking?.isReturn === "boolean") {
+        isReturnBooking = sAfter.booking.isReturn;
       }
       
       if (isReturnBooking === null) {
