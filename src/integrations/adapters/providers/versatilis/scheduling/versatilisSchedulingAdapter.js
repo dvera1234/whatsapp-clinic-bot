@@ -129,23 +129,41 @@ function parseHistoryDateToMs(rawValue) {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
-function hasRecentValidAppointment(historyItems, now = Date.now()) {
+function getLastAppointmentDateMs(historyItems) {
   if (!Array.isArray(historyItems) || historyItems.length === 0) {
-    return false;
+    return NaN;
+  }
+
+  let latestMs = NaN;
+
+  for (const item of historyItems) {
+    const dateMs = parseHistoryDateToMs(extractHistoryDate(item));
+    if (!Number.isFinite(dateMs)) continue;
+
+    if (!Number.isFinite(latestMs) || dateMs > latestMs) {
+      latestMs = dateMs;
+    }
+  }
+
+  return latestMs;
+}
+
+function isReturnFromLastAppointment(historyItems, referenceDate) {
+  const referenceMs = parseHistoryDateToMs(referenceDate);
+  const lastAppointmentMs = getLastAppointmentDateMs(historyItems);
+
+  if (!Number.isFinite(referenceMs) || !Number.isFinite(lastAppointmentMs)) {
+    return null;
   }
 
   const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  const diff = referenceMs - lastAppointmentMs;
 
-  return historyItems.some((item) => {
-    const dateMs = parseHistoryDateToMs(
-      extractHistoryDate(item)
-    );
+  if (diff < 0) {
+    return false;
+  }
 
-    if (!Number.isFinite(dateMs)) return false;
-
-    const diff = now - dateMs;
-    return diff >= 0 && diff <= THIRTY_DAYS_MS;
-  });
+  return diff <= THIRTY_DAYS_MS;
 }
 
 function createVersatilisSchedulingAdapter(factoryCtx = {}) {
@@ -252,10 +270,10 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
       });
     },
 
-    async checkReturnEligibility({ patientId, runtimeCtx }) {
+    async checkReturnEligibility({ patientId, referenceDate, runtimeCtx }) {
       const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
       const externalPatientId = Number(patientId);
-
+    
       if (!externalPatientId) {
         return buildResult({
           ok: false,
@@ -263,11 +281,19 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
           errorCode: "INVALID_PATIENT_ID",
         });
       }
-
+    
+      if (!String(referenceDate || "").trim()) {
+        return buildResult({
+          ok: false,
+          status: 400,
+          errorCode: "INVALID_REFERENCE_DATE",
+        });
+      }
+    
       const path = `/api/Agendamento/HistoricoAgendamento?codUsuario=${encodeURIComponent(
         externalPatientId
       )}`;
-
+    
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
         runtime: ctx.runtime,
@@ -276,9 +302,10 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
           flow: "CHECK_RETURN_ELIGIBILITY",
+          referenceDate,
         }),
       });
-
+    
       if (!out.ok || !Array.isArray(out.data)) {
         return buildResult({
           ok: false,
@@ -287,9 +314,9 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
           errorCode: "RETURN_ELIGIBILITY_LOOKUP_FAILED",
         });
       }
-
-      const eligible = hasRecentValidAppointment(out.data);
-
+    
+      const eligible = isReturnFromLastAppointment(out.data, referenceDate);
+    
       return buildResult({
         ok: true,
         status: out.status,
