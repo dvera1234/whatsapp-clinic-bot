@@ -134,13 +134,25 @@ export async function handlePatientRegistrationStep(flowCtx) {
 
     // Fluxo novo paciente PARTICULAR: plano já está decidido
     if (lockedPlanKey === "PRIVATE") {
-      await sendAndSetState({
+      await services.sendButtons({
         tenantId,
-        phone,
-        body: MSG.ASK_EMAIL,
-        state: "WZ_EMAIL",
+        to: phone,
+        body:
+          MSG.PLAN_SELECTION_PROMPT_PRIVATE ||
+          "Confirme como deseja seguir:",
+        buttons: [
+          {
+            id: "PLAN_PRIVATE_CONFIRMED",
+            title: MSG.PLAN_OPTION_PRIVATE || "Particular",
+          },
+          {
+            id: "MENU_PRINCIPAL",
+            title: MSG.MENU_BACK_TO_MAIN || "Menu principal",
+          },
+        ],
         phoneNumberIdFallback,
       });
+      await setState(tenantId, phone, "WZ_PLANO");
       return true;
     }
 
@@ -204,7 +216,10 @@ export async function handlePatientRegistrationStep(flowCtx) {
 
     let resolvedPlanKey = null;
 
-    if (upper === "PLAN_PRIVATE") {
+    if (
+      upper === "PLAN_PRIVATE" ||
+      upper === "PLAN_PRIVATE_CONFIRMED"
+    ) {
       resolvedPlanKey = "PRIVATE";
     } else if (
       upper === "PLAN_INSURED" ||
