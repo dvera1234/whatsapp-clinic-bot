@@ -23,72 +23,87 @@ export async function handleSlotSelectionStep(flowCtx) {
   } = flowCtx;
 
   if (upper.startsWith("D_")) {
-    const appointmentDate = raw.slice(2).trim();
-    const s = await getSession(tenantId, phone);
+  const appointmentDate = raw.slice(2).trim();
+  const s = await getSession(tenantId, phone);
 
-    const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
-    const patientId = s?.booking?.patientId;
+  const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
+  const patientId = s?.booking?.patientId;
 
-    if (!patientId) {
-      await services.sendText({
-        tenantId,
-        to: phone,
-        body: MSG.BOOKING_SESSION_INVALID,
-        phoneNumberIdFallback,
-      });
-      await setState(tenantId, phone, "MAIN");
-      return true;
-    }
-
-    const out = await findSlotsByDate({
-      schedulingAdapter: adapters.schedulingAdapter,
-      runtimeCtx,
-      practitionerId: selectedPractitionerId,
-      patientId,
-      appointmentDate,
-      phone,
-    });
-
-    if (out.providerUnavailable) {
-      await handleProviderTemporaryUnavailable({
-        tenantId,
-        traceId,
-        phone,
-        phoneNumberIdFallback,
-        capability: "booking",
-        err: out.error,
-        MSG,
-        nextState: "MAIN",
-        services,
-      });
-      return true;
-    }
-
-    const slots = out.ok ? out.slots : [];
-
-    await updateSession(tenantId, phone, (sess) => {
-      sess.booking = {
-        ...(sess.booking || {}),
-        practitionerId: selectedPractitionerId,
-        patientId,
-        appointmentDate,
-        pageIndex: 0,
-        slots,
-      };
-    });
-
-    await setState(tenantId, phone, "SLOTS");
-    await showSlotsPage({
+  if (!patientId) {
+    await services.sendText({
       tenantId,
+      to: phone,
+      body: MSG.BOOKING_SESSION_INVALID,
+      phoneNumberIdFallback,
+    });
+    await setState(tenantId, phone, "MAIN");
+    return true;
+  }
+
+  const returnCheck = await adapters.schedulingAdapter.checkReturnEligibility({
+    patientId,
+    referenceDate: appointmentDate,
+    runtimeCtx,
+  });
+
+  let isReturn = null;
+  if (returnCheck?.ok && typeof returnCheck?.data?.eligible === "boolean") {
+    isReturn = returnCheck.data.eligible;
+  }
+
+  const out = await findSlotsByDate({
+    schedulingAdapter: adapters.schedulingAdapter,
+    runtimeCtx,
+    practitionerId: selectedPractitionerId,
+    patientId,
+    appointmentDate,
+    phone,
+  });
+
+  if (out.providerUnavailable) {
+    await handleProviderTemporaryUnavailable({
+      tenantId,
+      traceId,
       phone,
       phoneNumberIdFallback,
-      slots,
-      page: 0,
+      capability: "booking",
+      err: out.error,
       MSG,
+      nextState: "MAIN",
       services,
     });
     return true;
   }
+
+  const slots = out.ok ? out.slots : [];
+
+  await updateSession(tenantId, phone, (sess) => {
+    sess.booking = {
+      ...(sess.booking || {}),
+      practitionerId: selectedPractitionerId,
+      patientId,
+      appointmentDate,
+      pageIndex: 0,
+      slots,
+    };
+
+    if (typeof isReturn === "boolean") {
+      sess.booking.isReturn = isReturn;
+    }
+  });
+
+  await setState(tenantId, phone, "SLOTS");
+  await showSlotsPage({
+    tenantId,
+    phone,
+    phoneNumberIdFallback,
+    slots,
+    page: 0,
+    MSG,
+    services,
+  });
+  return true;
+}
 
   if (state === "ASK_DATE_PICK") {
     const s = await getSession(tenantId, phone);
