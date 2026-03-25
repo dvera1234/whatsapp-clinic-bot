@@ -178,15 +178,18 @@ function hasRecentValidAppointment(historyItems, now = new Date()) {
       return false;
     }
 
-    const diff = now.getTime() - parsedDate.getTime();
+   const diff = now.getTime() - parsedDate.getTime();
 
     if (diff < 0) {
       return false;
     }
-
-    return diff <= THIRTY_DAYS_MS;
-  });
-}
+    
+    // 🔴 tolerância de timezone / horário
+    const THRESHOLD = THIRTY_DAYS_MS + 24 * 60 * 60 * 1000;
+    
+    return diff <= THRESHOLD;
+    });
+  }
 
 function createVersatilisSchedulingAdapter(factoryCtx = {}) {
   return {
