@@ -327,6 +327,18 @@ export async function handleBookingConfirmationStep(flowCtx) {
       const showPaymentInfo =
         isPrivateBooking && isReturnBooking === false;
       
+      if (isReturnBooking === null) {
+        audit(
+          "BOOKING_PAYMENT_BLOCKED_UNKNOWN_RETURN",
+          sanitizeForLog({
+            tenantId,
+            traceId,
+            tracePhone: maskPhone(phone),
+            reason: "return_status_unknown",
+          })
+        );
+      }
+      
       const paymentInfo = showPaymentInfo
         ? MSG.PAYMENT_INFO_PRIVATE_FIRST_VISIT
         : "";
