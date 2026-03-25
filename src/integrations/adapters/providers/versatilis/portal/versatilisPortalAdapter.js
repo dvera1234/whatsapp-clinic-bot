@@ -214,6 +214,7 @@ function createVersatilisPortalAdapter(factoryCtx = {}) {
       const out = await versatilisFetch("/api/Login/CadastrarUsuario", {
         tenantId: ctx.tenantId,
         runtime: ctx.runtime,
+        capability: "access",
         method: "POST",
         jsonBody: payload,
         traceMeta: sanitizeForLog(
