@@ -346,9 +346,8 @@ export async function finishWizardAndGoToDates({
     
     if (typeof isReturn === "boolean") {
       s.booking.isReturn = isReturn;
-    } else {
-      delete s.booking.isReturn; // evita estado falso
     }
+    // não apagar se vier null/undefined
 
     if (planKeyFromWizard) {
       s.booking.planKey = planKeyFromWizard;
