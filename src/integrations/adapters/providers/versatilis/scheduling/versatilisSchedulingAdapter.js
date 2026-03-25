@@ -216,6 +216,7 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
         runtime: ctx.runtime,
+        capability: "booking",
         traceMeta: sanitizeForLog({
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
@@ -261,6 +262,7 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
       const out = await versatilisFetch("/api/Agenda/ConfirmarAgendamento", {
         tenantId: ctx.tenantId,
         runtime: ctx.runtime,
+        capability: "booking",
         method: "POST",
         jsonBody: payload,
         traceMeta: sanitizeForLog({
@@ -309,6 +311,7 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
         runtime: ctx.runtime,
+        capability: "booking",
         traceMeta: sanitizeForLog({
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
