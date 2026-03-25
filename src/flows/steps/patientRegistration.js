@@ -111,6 +111,12 @@ export async function handlePatientRegistrationStep(flowCtx) {
   }
 
   if (state === "WZ_SEXO") {
+    const sCurrent = await getSession(tenantId, phone);
+    const lockedPlanKey =
+      sCurrent?.booking?.planKey ||
+      sCurrent?.portal?.form?.planKey ||
+      null;
+
     await updateSession(tenantId, phone, (sess) => {
       sess.portal = sess.portal || {};
       sess.portal.form = sess.portal.form || {};
@@ -118,8 +124,51 @@ export async function handlePatientRegistrationStep(flowCtx) {
       if (upper === "SX_M") sess.portal.form.gender = "M";
       else if (upper === "SX_F") sess.portal.form.gender = "F";
       else sess.portal.form.gender = "NI";
+
+      sess.portal.form.mobilePhone = formatPhoneFromWA(phone);
+
+      if (lockedPlanKey === "PRIVATE" || lockedPlanKey === "INSURED") {
+        sess.portal.form.planKey = lockedPlanKey;
+      }
     });
 
+    // Fluxo novo paciente PARTICULAR: plano já está decidido
+    if (lockedPlanKey === "PRIVATE") {
+      await sendAndSetState({
+        tenantId,
+        phone,
+        body: MSG.ASK_EMAIL,
+        state: "WZ_EMAIL",
+        phoneNumberIdFallback,
+      });
+      return true;
+    }
+
+    // Fluxo novo paciente CONVÊNIO: mostrar apenas convênio aceito + menu
+    if (lockedPlanKey === "INSURED") {
+      await services.sendButtons({
+        tenantId,
+        to: phone,
+        body:
+          MSG.PLAN_SELECTION_PROMPT_INSURED ||
+          "Selecione o convênio desejado:",
+        buttons: [
+          {
+            id: "PLAN_INSURED_ACCEPTED",
+            title: MSG.PLAN_OPTION_INSURED || "Convênio",
+          },
+          {
+            id: "MENU_PRINCIPAL",
+            title: MSG.MENU_BACK_TO_MAIN || "Menu principal",
+          },
+        ],
+        phoneNumberIdFallback,
+      });
+      await setState(tenantId, phone, "WZ_PLANO");
+      return true;
+    }
+
+    // fallback seguro se entrar sem contexto travado
     await services.sendButtons({
       tenantId,
       to: phone,
@@ -135,7 +184,41 @@ export async function handlePatientRegistrationStep(flowCtx) {
   }
 
   if (state === "WZ_PLANO") {
-    if (upper !== "PLAN_PRIVATE" && upper !== "PLAN_INSURED") {
+    if (upper === "MENU_PRINCIPAL") {
+      await clearTransientPortalData(tenantId, phone);
+      await setState(tenantId, phone, "MAIN");
+      await services.sendText({
+        tenantId,
+        to: phone,
+        body: MSG.MENU || "Menu",
+        phoneNumberIdFallback,
+      });
+      return true;
+    }
+
+    const sCurrent = await getSession(tenantId, phone);
+    const lockedPlanKey =
+      sCurrent?.booking?.planKey ||
+      sCurrent?.portal?.form?.planKey ||
+      null;
+
+    let resolvedPlanKey = null;
+
+    if (upper === "PLAN_PRIVATE") {
+      resolvedPlanKey = "PRIVATE";
+    } else if (
+      upper === "PLAN_INSURED" ||
+      upper === "PLAN_INSURED_ACCEPTED"
+    ) {
+      resolvedPlanKey = "INSURED";
+    }
+
+    // reforço: se o fluxo já entrou travado em INSURED e o usuário clicou a única opção
+    if (!resolvedPlanKey && lockedPlanKey === "INSURED") {
+      resolvedPlanKey = "INSURED";
+    }
+
+    if (!resolvedPlanKey) {
       await services.sendText({
         tenantId,
         to: phone,
@@ -148,7 +231,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
     await updateSession(tenantId, phone, (sess) => {
       sess.portal = sess.portal || {};
       sess.portal.form = sess.portal.form || {};
-      sess.portal.form.planKey = upper === "PLAN_INSURED" ? "INSURED" : "PRIVATE";
+      sess.portal.form.planKey = resolvedPlanKey;
       sess.portal.form.mobilePhone = formatPhoneFromWA(phone);
     });
 
@@ -479,7 +562,10 @@ export async function handlePatientRegistrationStep(flowCtx) {
     }
 
     const sFinal = await getSession(tenantId, phone);
-    const finalPlanKey = sFinal?.portal?.form?.planKey;
+    const finalPlanKey =
+      sFinal?.portal?.form?.planKey ||
+      sFinal?.booking?.planKey ||
+      null;
 
     await clearTransientPortalData(tenantId, phone);
 
