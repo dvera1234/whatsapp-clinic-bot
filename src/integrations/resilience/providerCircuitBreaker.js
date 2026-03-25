@@ -126,7 +126,8 @@ async function registerSuccess({
 
     await redis.del(failureKey).catch(() => {});
   } catch {}
-
+}
+  
 async function registerFailure({
   tenantId,
   capability,
