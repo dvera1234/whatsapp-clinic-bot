@@ -21,7 +21,31 @@ export async function handlePlanSelectionStep(flowCtx) {
     return false;
   }
 
-  if (upper !== "PLAN_USE_PRIVATE" && upper !== "PLAN_USE_INSURED") {
+  const sCurrent = await getSession(tenantId, phone);
+  const lockedPlanKey = sCurrent?.booking?.planKey || null;
+  
+  let chosenKey = null;
+  
+  if (upper === "PLAN_USE_PRIVATE") {
+    chosenKey = PLAN_KEYS.PRIVATE;
+  } else if (upper === "PLAN_USE_INSURED" || upper === "PLAN_USE_INSURED_ACCEPTED") {
+    chosenKey = PLAN_KEYS.INSURED;
+  } else if (upper === "MENU_PRINCIPAL") {
+    await setState(tenantId, phone, "MAIN");
+    await services.sendText({
+      tenantId,
+      to: phone,
+      body: MSG.MENU || "Menu",
+      phoneNumberIdFallback,
+    });
+    return true;
+  } else if (lockedPlanKey === PLAN_KEYS.PRIVATE) {
+    chosenKey = PLAN_KEYS.PRIVATE;
+  } else if (lockedPlanKey === PLAN_KEYS.INSURED) {
+    chosenKey = PLAN_KEYS.INSURED;
+  }
+  
+  if (!chosenKey) {
     await services.sendText({
       tenantId,
       to: phone,
@@ -30,9 +54,6 @@ export async function handlePlanSelectionStep(flowCtx) {
     });
     return true;
   }
-
-  const chosenKey =
-    upper === "PLAN_USE_INSURED" ? PLAN_KEYS.INSURED : PLAN_KEYS.PRIVATE;
 
   await updateSession(tenantId, phone, (sess) => {
     sess.booking = sess.booking || {};
