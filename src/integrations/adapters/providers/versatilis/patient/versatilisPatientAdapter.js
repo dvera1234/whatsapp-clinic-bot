@@ -83,6 +83,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
         runtime,
+        capability: "identity",
         traceMeta: {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
@@ -226,6 +227,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
         runtime,
+        capability: "identity",
         traceMeta: {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
