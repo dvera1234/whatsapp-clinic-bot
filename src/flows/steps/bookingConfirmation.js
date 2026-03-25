@@ -301,12 +301,12 @@ export async function handleBookingConfirmationStep(flowCtx) {
         out?.data?.Message ||
         out?.data?.message ||
         "Agendamento confirmado com sucesso!";
-
+      
       const isPrivateBooking =
         (s?.booking?.planKey || PLAN_KEYS.PRIVATE) === PLAN_KEYS.PRIVATE;
       
-     let isReturnBooking = null;
-
+      let isReturnBooking = null;
+      
       if (typeof s?.booking?.isReturn === "boolean") {
         isReturnBooking = s.booking.isReturn;
       }
@@ -326,8 +326,6 @@ export async function handleBookingConfirmationStep(flowCtx) {
       
       const showPaymentInfo =
         isPrivateBooking && isReturnBooking === false;
-      
-      const showPaymentInfo = isPrivateBooking && !isReturnBooking;
       
       const paymentInfo = showPaymentInfo
         ? MSG.PAYMENT_INFO_PRIVATE_FIRST_VISIT
