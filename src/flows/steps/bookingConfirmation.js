@@ -58,37 +58,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
   }
 
   if (upper === "CONFIRMAR") {
-    let s = await getSession(tenantId, phone);
-
-    const returnCheck = await adapters.schedulingAdapter.checkReturnEligibility({
-      patientId: s?.booking?.patientId,
-      runtimeCtx,
-    });
-
-    let isReturnResolved = null;
-
-    if (returnCheck?.ok) {
-      isReturnResolved = !!returnCheck.data?.eligible;
-
-      await updateSession(tenantId, phone, (sess) => {
-        sess.booking = sess.booking || {};
-        sess.booking.isReturn = isReturnResolved;
-      });
-    } else {
-      audit(
-        "BOOKING_RETURN_CHECK_FAILED",
-        sanitizeForLog({
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          errorCode: returnCheck?.errorCode || null,
-          status: returnCheck?.status || null,
-        })
-      );
-    }
-
-    s = await getSession(tenantId, phone);
-
+    const s = await getSession(tenantId, phone);
     const slotId = Number(s?.pending?.slotId);
 
     const bookingRequest = {
