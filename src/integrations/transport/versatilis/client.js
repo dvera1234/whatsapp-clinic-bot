@@ -90,16 +90,6 @@ function sanitizePathForLog(path) {
   }
 }
 
-function inferCapabilityFromPath(path) {
-  const p = String(path || "").toLowerCase();
-
-  if (p.includes("/api/agenda/")) return "booking";
-  if (p.includes("/api/login/cadastrarusuario")) return "access";
-  if (p.includes("/api/login/")) return "identity";
-
-  return null;
-}
-
 async function providerFetch(
   path,
   {
@@ -225,7 +215,7 @@ async function providerFetch(
   const baseLog = sanitizeForLog(baseLogRaw);
 
   if (response.ok) {
-    debugLog("PROVIDER_CALL_OK", baseLog);
+   
   } else if (isExpected404) {
     const rateLimitKey = `expected404:${tenantId}:${method}:${safePath.split("?")[0]}`;
 
