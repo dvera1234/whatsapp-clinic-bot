@@ -290,64 +290,10 @@ export async function finishWizardAndGoToDates({
   MSG,
   services,
 }) {
-  let eligibilityResult;
-
-  try {
-    eligibilityResult = await schedulingAdapter.checkReturnEligibility({
-      patientId,
-      runtimeCtx: {
-        tenantId,
-        runtime,
-        traceId,
-        tracePhone: maskPhone(phone),
-      },
-    });
-  } catch (err) {
-    if (isProviderTemporaryUnavailableError(err)) {
-      await handleProviderTemporaryUnavailable({
-        tenantId,
-        traceId,
-        phone,
-        phoneNumberIdFallback,
-        capability: "booking",
-        err,
-        MSG,
-        nextState: "MAIN",
-        services,
-      });
-      return false;
-    }
-    throw err;
-  }
-
-  let isReturn = null;
-
-  if (eligibilityResult?.ok && typeof eligibilityResult?.data?.eligible === "boolean") {
-    isReturn = eligibilityResult.data.eligible;
-  }
-
-    audit(
-    "RETURN_ELIGIBILITY_CHECK",
-    sanitizeForLog({
-      tenantId,
-      traceId,
-      patientId,
-      providerOk: !!eligibilityResult?.ok,
-      eligible: isReturn,
-      rid: eligibilityResult?.rid || null,
-      httpStatus: eligibilityResult?.status || null,
-    })
-  );
-  
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.patientId = patientId;
     s.booking.practitionerId = practitionerId;
-    
-    if (typeof isReturn === "boolean") {
-      s.booking.isReturn = isReturn;
-    }
-    // não apagar se vier null/undefined
 
     if (planKeyFromWizard) {
       s.booking.planKey = planKeyFromWizard;
