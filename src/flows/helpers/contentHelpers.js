@@ -13,6 +13,14 @@ function requireText(messages, key) {
   return value;
 }
 
+function requireArray(messages, key) {
+  const value = messages?.[key];
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`TENANT_CONTENT_MISSING:${key}`);
+  }
+  return value;
+}
+
 function optionalText(messages, key, fallback) {
   const value = messages?.[key];
   return typeof value === "string" && value.trim() ? value : fallback;
@@ -51,7 +59,8 @@ export function getFlowText(runtime) {
     LGPD_RECUSA: requireText(messages, "lgpdRecusa"),
 
     PRIVATE_MENU: requireText(messages, "privateMenu"),
-    INSURANCE_MENU: requireText(messages, "insuranceMenu"),
+    INSURANCE_MENU_TITLE: requireText(messages, "insuranceMenuTitle"),
+    INSURANCE_OPTIONS: requireArray(messages, "insuranceOptions"),
     INSURANCE_INFO_1: requireText(messages, "insuranceInfo1"),
     INSURANCE_INFO_2: requireText(messages, "insuranceInfo2"),
     INSURANCE_INFO_3: requireText(messages, "insuranceInfo3"),
@@ -139,5 +148,11 @@ export function getFlowText(runtime) {
 
     ACTION_CONFIRM: requireText(messages, "actionConfirm"),
     ACTION_PICK_OTHER: requireText(messages, "actionPickOther"),
+
+    INACTIVITY_CLOSED_MESSAGE: optionalText(
+      messages,
+      "inactivityClosedMessage",
+      "✅ Atendimento encerrado por inatividade."
+    ),
   };
 }
