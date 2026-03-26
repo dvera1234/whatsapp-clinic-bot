@@ -8,6 +8,99 @@ import { audit } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
 
+function camelToConstKey(value = "") {
+  return String(value)
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[-\s]+/g, "_")
+    .toUpperCase();
+}
+
+function buildInsuranceMenuBody(MSG) {
+  const title = String(MSG.INSURANCE_MENU_TITLE || "").trim();
+  const options = Array.isArray(MSG.INSURANCE_OPTIONS)
+    ? MSG.INSURANCE_OPTIONS
+    : [];
+
+  const optionLines = options
+    .filter(
+      (item) =>
+        item &&
+        String(item.id || "").trim() &&
+        String(item.label || "").trim()
+    )
+    .map((item) => `${item.id}) ${item.label}`);
+
+  const footer = "0) Voltar ao menu inicial";
+
+  return [title, optionLines.join("\n"), footer].filter(Boolean).join("\n\n");
+}
+
+function findInsuranceOption(MSG, digits) {
+  const options = Array.isArray(MSG.INSURANCE_OPTIONS)
+    ? MSG.INSURANCE_OPTIONS
+    : [];
+
+  return (
+    options.find((item) => String(item?.id || "").trim() === String(digits)) ||
+    null
+  );
+}
+
+function resolveInsuranceInfoMessage(MSG, option) {
+  const rawKey = String(option?.messageKey || "").trim();
+  if (!rawKey) return "";
+
+  const constKey = camelToConstKey(rawKey);
+  return String(MSG?.[constKey] || "").trim();
+}
+
+async function startBookingWithPlan({
+  tenantId,
+  traceId,
+  phone,
+  phoneNumberIdFallback,
+  practitionerId,
+  planKey,
+  MSG,
+}) {
+  await updateSession(tenantId, phone, (s) => {
+    s.booking = {
+      ...(s.booking || {}),
+      planKey,
+      practitionerId,
+      patientId: null,
+      appointmentDate: null,
+      slots: [],
+      pageIndex: 0,
+      isReturn: false,
+    };
+
+    s.portal = {
+      step: "CPF",
+      patientId: null,
+      exists: false,
+      form: {},
+    };
+  });
+
+  audit("LGPD_NOTICE_PRESENTED", {
+    tenantId,
+    traceId,
+    tracePhone: maskPhone(phone),
+    consentTextVersion: LGPD_TEXT_VERSION,
+    consentTextHash: LGPD_TEXT_HASH,
+    timestamp: new Date().toISOString(),
+  });
+
+  await sendAndSetState({
+    tenantId,
+    phone,
+    body: MSG.LGPD_CONSENT,
+    state: "LGPD_CONSENT",
+    phoneNumberIdFallback,
+  });
+}
+
 export async function handleMainMenuStep(flowCtx) {
   const {
     tenantId,
@@ -36,7 +129,7 @@ export async function handleMainMenuStep(flowCtx) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: MSG.INSURANCE_MENU,
+        body: buildInsuranceMenuBody(MSG),
         state: "INSURANCE_MENU",
         phoneNumberIdFallback,
       });
@@ -77,41 +170,14 @@ export async function handleMainMenuStep(flowCtx) {
 
   if (state === "PRIVATE_MENU") {
     if (digits === "1") {
-      await updateSession(tenantId, phone, (s) => {
-        s.booking = {
-          ...(s.booking || {}),
-          planKey: PLAN_KEYS.PRIVATE,
-          practitionerId,
-          patientId: null,
-          appointmentDate: null,
-          slots: [],
-          pageIndex: 0,
-          isReturn: false,
-        };
-
-        s.portal = {
-          step: "CPF",
-          patientId: null,
-          exists: false,
-          form: {},
-        };
-      });
-
-      audit("LGPD_NOTICE_PRESENTED", {
+      await startBookingWithPlan({
         tenantId,
         traceId,
-        tracePhone: maskPhone(phone),
-        consentTextVersion: LGPD_TEXT_VERSION,
-        consentTextHash: LGPD_TEXT_HASH,
-        timestamp: new Date().toISOString(),
-      });
-
-      await sendAndSetState({
-        tenantId,
         phone,
-        body: MSG.LGPD_CONSENT,
-        state: "LGPD_CONSENT",
         phoneNumberIdFallback,
+        practitionerId,
+        planKey: PLAN_KEYS.PRIVATE,
+        MSG,
       });
       return true;
     }
@@ -137,55 +203,64 @@ export async function handleMainMenuStep(flowCtx) {
       return true;
     }
 
-    if (digits === "1") {
+    const selectedOption = findInsuranceOption(MSG, digits);
+
+    if (!selectedOption) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: MSG.INSURANCE_INFO_1,
+        body: buildInsuranceMenuBody(MSG),
+        state: "INSURANCE_MENU",
+        phoneNumberIdFallback,
+      });
+      return true;
+    }
+
+    if (selectedOption.actionType === "INSURANCE_INFO_ONLY") {
+      const infoMessage = resolveInsuranceInfoMessage(MSG, selectedOption);
+
+      if (!infoMessage) {
+        await sendAndSetState({
+          tenantId,
+          phone,
+          body: buildInsuranceMenuBody(MSG),
+          state: "INSURANCE_MENU",
+          phoneNumberIdFallback,
+        });
+        return true;
+      }
+
+      await updateSession(tenantId, phone, (s) => {
+        s.pending = {
+          ...(s.pending || {}),
+          insuranceOptionId: String(selectedOption.id),
+          insuranceActionType: selectedOption.actionType,
+          insuranceLabel: String(selectedOption.label || ""),
+        };
+      });
+
+      await sendAndSetState({
+        tenantId,
+        phone,
+        body: infoMessage,
         state: "INSURANCE_INFO",
         phoneNumberIdFallback,
       });
       return true;
     }
 
-    if (digits === "2") {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: MSG.INSURANCE_INFO_2,
-        state: "INSURANCE_INFO",
-        phoneNumberIdFallback,
-      });
-      return true;
-    }
-
-    if (digits === "3") {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: MSG.INSURANCE_INFO_3,
-        state: "INSURANCE_INFO",
-        phoneNumberIdFallback,
-      });
-      return true;
-    }
-
-    if (digits === "4") {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: MSG.INSURANCE_INFO_4,
-        state: "INSURANCE_INFO",
-        phoneNumberIdFallback,
-      });
-      return true;
-    }
-
-    if (digits === "5") {
+    if (selectedOption.actionType === "INSURANCE_DIRECT_BOOKING") {
       await updateSession(tenantId, phone, (s) => {
         s.booking = {
           ...(s.booking || {}),
           planKey: PLAN_KEYS.INSURED,
+        };
+
+        s.pending = {
+          ...(s.pending || {}),
+          insuranceOptionId: String(selectedOption.id),
+          insuranceActionType: selectedOption.actionType,
+          insuranceLabel: String(selectedOption.label || ""),
         };
       });
 
@@ -202,7 +277,7 @@ export async function handleMainMenuStep(flowCtx) {
     await sendAndSetState({
       tenantId,
       phone,
-      body: MSG.INSURANCE_MENU,
+      body: buildInsuranceMenuBody(MSG),
       state: "INSURANCE_MENU",
       phoneNumberIdFallback,
     });
@@ -229,7 +304,7 @@ export async function handleMainMenuStep(flowCtx) {
     await sendAndSetState({
       tenantId,
       phone,
-      body: MSG.INSURANCE_MENU,
+      body: buildInsuranceMenuBody(MSG),
       state: "INSURANCE_MENU",
       phoneNumberIdFallback,
     });
@@ -238,41 +313,14 @@ export async function handleMainMenuStep(flowCtx) {
 
   if (state === "INSURED_DIRECT") {
     if (digits === "1") {
-      await updateSession(tenantId, phone, (s) => {
-        s.booking = {
-          ...(s.booking || {}),
-          planKey: PLAN_KEYS.INSURED,
-          practitionerId,
-          patientId: null,
-          appointmentDate: null,
-          slots: [],
-          pageIndex: 0,
-          isReturn: false,
-        };
-
-        s.portal = {
-          step: "CPF",
-          patientId: null,
-          exists: false,
-          form: {},
-        };
-      });
-
-      audit("LGPD_NOTICE_PRESENTED", {
+      await startBookingWithPlan({
         tenantId,
         traceId,
-        tracePhone: maskPhone(phone),
-        consentTextVersion: LGPD_TEXT_VERSION,
-        consentTextHash: LGPD_TEXT_HASH,
-        timestamp: new Date().toISOString(),
-      });
-
-      await sendAndSetState({
-        tenantId,
         phone,
-        body: MSG.LGPD_CONSENT,
-        state: "LGPD_CONSENT",
         phoneNumberIdFallback,
+        practitionerId,
+        planKey: PLAN_KEYS.INSURED,
+        MSG,
       });
       return true;
     }
