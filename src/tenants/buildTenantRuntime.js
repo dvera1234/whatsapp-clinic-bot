@@ -284,7 +284,7 @@ export function buildTenantRuntime(config = {}) {
               },
       },
 
-      content: normalizeContent(config),
+      content: normalizeContent(config.content),
     },
   };
 }
