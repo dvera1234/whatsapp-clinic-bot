@@ -26,7 +26,50 @@ function getPlans(runtime) {
     : [];
 }
 
-// 🔴 CORREÇÃO PRINCIPAL AQUI
+// 🔥 BOTÕES WHATSAPP
+async function sendMainMenuWithButtons({
+  tenantId,
+  phone,
+  runtime,
+  phoneNumberIdFallback,
+  services,
+}) {
+  const menu = getMenu(runtime);
+  const title = String(menu?.text || "").trim();
+  const options = Array.isArray(menu?.options) ? menu.options : [];
+
+  const buttons = options
+    .filter(
+      (opt) =>
+        opt &&
+        String(opt.id || "").trim() &&
+        String(opt.label || "").trim()
+    )
+    .slice(0, 3) // limite WhatsApp
+    .map((opt) => ({
+      id: String(opt.id),
+      title: String(opt.label).slice(0, 20),
+    }));
+
+  // tenta enviar botões
+  try {
+    if (buttons.length > 0) {
+      await services.sendButtons({
+        tenantId,
+        to: phone,
+        body: title,
+        buttons,
+        phoneNumberIdFallback,
+      });
+      return true;
+    }
+  } catch (e) {
+    // fallback automático
+  }
+
+  return false;
+}
+
 function buildMainMenu(runtime) {
   const menu = getMenu(runtime);
 
@@ -34,16 +77,10 @@ function buildMainMenu(runtime) {
   const options = Array.isArray(menu?.options) ? menu.options : [];
 
   const lines = options
-    .filter(
-      (opt) =>
-        opt &&
-        String(opt.id || "").trim() &&
-        String(opt.label || "").trim() &&
-        String(opt.action || "").trim()
-    )
-    .map((opt) => `${String(opt.id).trim()}) ${String(opt.label).trim()}`);
+    .map((opt) => `${opt.id}) ${opt.label}`)
+    .join("\n");
 
-  return [title, lines.join("\n")].filter(Boolean).join("\n\n");
+  return [title, lines].filter(Boolean).join("\n\n");
 }
 
 function buildPlansMenu(runtime) {
@@ -55,40 +92,25 @@ function buildPlansMenu(runtime) {
   ).trim();
 
   const lines = plans
-    .filter(
-      (plan) =>
-        plan &&
-        String(plan.id || "").trim() &&
-        String(plan.label || "").trim()
-    )
-    .map((plan) => `${String(plan.id).trim()}) ${String(plan.label).trim()}`);
+    .map((plan) => `${plan.id}) ${plan.label}`)
+    .join("\n");
 
   const footer = String(
     messages?.planMenuFooter || "0) Voltar ao menu inicial"
   ).trim();
 
-  return [title, lines.join("\n"), footer].filter(Boolean).join("\n\n");
+  return [title, lines, footer].filter(Boolean).join("\n\n");
 }
 
 function findMenuOption(runtime, digits) {
-  const menu = getMenu(runtime);
-  const options = Array.isArray(menu?.options) ? menu.options : [];
+  const options = runtime?.content?.menu?.options || [];
 
-  return (
-    options.find(
-      (opt) => String(opt?.id || "").trim() === String(digits || "").trim()
-    ) || null
-  );
+  return options.find((opt) => opt.id === String(digits)) || null;
 }
 
 function findPlan(runtime, digits) {
   const plans = getPlans(runtime);
-
-  return (
-    plans.find(
-      (plan) => String(plan?.id || "").trim() === String(digits || "").trim()
-    ) || null
-  );
+  return plans.find((plan) => plan.id === String(digits)) || null;
 }
 
 // =========================
@@ -103,6 +125,7 @@ async function startBooking({
   practitionerId,
   planKey,
   runtime,
+  services,
 }) {
   const messages = getTenantMessages(runtime);
 
@@ -158,6 +181,7 @@ export async function handleMainMenuStep(flowCtx) {
     digits,
     state,
     practitionerId,
+    services,
   } = flowCtx;
 
   const messages = getTenantMessages(runtime);
@@ -170,17 +194,28 @@ export async function handleMainMenuStep(flowCtx) {
     const option = findMenuOption(runtime, digits);
 
     if (!option) {
-      await sendAndSetState({
+      const sentButtons = await sendMainMenuWithButtons({
         tenantId,
         phone,
-        body: buildMainMenu(runtime),
-        state: "MAIN",
+        runtime,
         phoneNumberIdFallback,
+        services,
       });
+
+      if (!sentButtons) {
+        await sendAndSetState({
+          tenantId,
+          phone,
+          body: buildMainMenu(runtime),
+          state: "MAIN",
+          phoneNumberIdFallback,
+        });
+      }
+
       return true;
     }
 
-    const dispatched = await dispatchAction(String(option.action).trim(), {
+    const dispatched = await dispatchAction(option.action, {
       ...flowCtx,
       menuOption: option,
       helpers: {
@@ -224,8 +259,8 @@ export async function handleMainMenuStep(flowCtx) {
       return true;
     }
 
-    if (String(plan.flow || "").trim() === "INFO_ONLY") {
-      const msg = String(messages?.[plan.messageKey] || "").trim();
+    if (plan.flow === "INFO_ONLY") {
+      const msg = messages?.[plan.messageKey];
 
       if (msg) {
         await sendAndSetState({
@@ -238,13 +273,6 @@ export async function handleMainMenuStep(flowCtx) {
         return true;
       }
 
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: buildPlansMenu(runtime),
-        state: "PLAN_PICK",
-        phoneNumberIdFallback,
-      });
       return true;
     }
 
@@ -256,6 +284,7 @@ export async function handleMainMenuStep(flowCtx) {
       practitionerId,
       planKey: plan.key,
       runtime,
+      services,
     });
 
     return true;
