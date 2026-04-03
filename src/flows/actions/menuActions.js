@@ -44,6 +44,7 @@ export async function handlePlanMenu(flowCtx) {
   ];
 
   await sendListMessage({
+    tenantId,
     to: phone,
     phoneNumberId: phoneNumberIdFallback,
     body: title,
