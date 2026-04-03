@@ -21,15 +21,18 @@ function getPlans(runtime) {
     : [];
 }
 
-function buildPlansMenu(runtime, MSG) {
+function buildPlansMenu(runtime) {
+  const messages = getTenantMessages(runtime);
   const plans = getPlans(runtime);
 
   const title =
-    MSG.PLAN_SELECTION_PROMPT ||
+    messages.planSelectionPrompt ||
     "Selecione uma opção:";
 
   const lines = plans.map((p) => `${p.id}) ${p.label}`);
-  const footer = "0) Voltar ao menu inicial";
+  const footer =
+    messages.planMenuFooter ||
+    "0) Voltar ao menu inicial";
 
   return [title, lines.join("\n"), footer]
     .filter(Boolean)
@@ -38,7 +41,7 @@ function buildPlansMenu(runtime, MSG) {
 
 function findPlan(runtime, digits) {
   const plans = getPlans(runtime);
-  return plans.find((p) => p.id === String(digits)) || null;
+  return plans.find((p) => String(p.id) === String(digits)) || null;
 }
 
 // =========================
@@ -52,8 +55,10 @@ async function startBooking({
   phoneNumberIdFallback,
   practitionerId,
   planKey,
-  MSG,
+  runtime,
 }) {
+  const messages = getTenantMessages(runtime);
+
   await updateSession(tenantId, phone, (s) => {
     s.booking = {
       ...(s.booking || {}),
@@ -86,7 +91,7 @@ async function startBooking({
   await sendAndSetState({
     tenantId,
     phone,
-    body: MSG.LGPD_CONSENT,
+    body: messages.lgpdConsent,
     state: "LGPD_CONSENT",
     phoneNumberIdFallback,
   });
@@ -105,9 +110,10 @@ export async function handleMainMenuStep(flowCtx) {
     phoneNumberIdFallback,
     digits,
     state,
-    MSG,
     practitionerId,
   } = flowCtx;
+
+  const messages = getTenantMessages(runtime);
 
   // =========================
   // MAIN MENU
@@ -118,7 +124,7 @@ export async function handleMainMenuStep(flowCtx) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: buildPlansMenu(runtime, MSG),
+        body: buildPlansMenu(runtime),
         state: "PLAN_PICK",
         phoneNumberIdFallback,
       });
@@ -129,7 +135,7 @@ export async function handleMainMenuStep(flowCtx) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: MSG.POS_MENU,
+        body: messages.posMenu,
         state: "POS",
         phoneNumberIdFallback,
       });
@@ -140,7 +146,7 @@ export async function handleMainMenuStep(flowCtx) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: MSG.ATENDENTE,
+        body: messages.attendant,
         state: "ATENDENTE",
         phoneNumberIdFallback,
       });
@@ -150,10 +156,11 @@ export async function handleMainMenuStep(flowCtx) {
     await sendAndSetState({
       tenantId,
       phone,
-      body: MSG.MENU,
+      body: messages.menu,
       state: "MAIN",
       phoneNumberIdFallback,
     });
+
     return true;
   }
 
@@ -163,7 +170,7 @@ export async function handleMainMenuStep(flowCtx) {
 
   if (state === "PLAN_PICK") {
     if (digits === "0") {
-      await resetToMain(tenantId, phone, phoneNumberIdFallback, MSG);
+      await resetToMain(tenantId, phone, phoneNumberIdFallback, messages);
       return true;
     }
 
@@ -173,20 +180,16 @@ export async function handleMainMenuStep(flowCtx) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: buildPlansMenu(runtime, MSG),
+        body: buildPlansMenu(runtime),
         state: "PLAN_PICK",
         phoneNumberIdFallback,
       });
       return true;
     }
 
-    // INFO ONLY → só mostra mensagem
+    // INFO ONLY
     if (plan.flow === "INFO_ONLY") {
-      const tenantMessages = getTenantMessages(runtime);
-      const msg =
-        tenantMessages?.[plan.messageKey] ||
-        MSG?.[plan.messageKey] ||
-        "";
+      const msg = messages?.[plan.messageKey] || "";
 
       if (msg) {
         await sendAndSetState({
@@ -200,7 +203,7 @@ export async function handleMainMenuStep(flowCtx) {
       }
     }
 
-    // BOOKING / DIRECT_BOOKING
+    // BOOKING
     await startBooking({
       tenantId,
       traceId,
@@ -208,7 +211,7 @@ export async function handleMainMenuStep(flowCtx) {
       phoneNumberIdFallback,
       practitionerId,
       planKey: plan.key,
-      MSG,
+      runtime,
     });
 
     return true;
