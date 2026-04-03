@@ -1,5 +1,34 @@
 import { db } from "./index.js";
 
+function readString(value) {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function parseJsonObject(value) {
+  if (!value) return {};
+
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return {};
+
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
+}
+
 export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
   const sql = `
     SELECT
@@ -57,24 +86,21 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
   };
 
   for (const row of rows) {
-    const capability = String(row.capability || "").trim();
+    const capability = readString(row.capability);
     if (!capability) continue;
 
+    const extraConfig = parseJsonObject(row.extra_config_json);
+
     providers[capability] = {
-      key: row.provider_key || "",
-      baseUrl: row.base_url || "",
-      user: row.username || "",
-      pass: row.password_encrypted || "",
-      ...(row.extra_config_json && typeof row.extra_config_json === "object"
-        ? row.extra_config_json
-        : {}),
+      key: readString(row.provider_key),
+      baseUrl: readString(row.base_url),
+      user: readString(row.username),
+      pass: readString(row.password_encrypted),
+      ...extraConfig,
     };
   }
 
-  const parsedMessages =
-    first.messages_json && typeof first.messages_json === "object"
-      ? first.messages_json
-      : {};
+  const parsedMessages = parseJsonObject(first.messages_json);
 
   return {
     tenantId: first.tenant_id,
@@ -98,11 +124,11 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     },
 
     portal: {
-      url: first.portal_url || "",
+      url: readString(first.portal_url),
     },
 
     support: {
-      waNumber: first.support_wa_number || "",
+      waNumber: readString(first.support_wa_number),
     },
 
     providers: {
@@ -131,20 +157,20 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       ...parsedMessages,
 
       branding: {
-        assistantName: first.assistant_name || "",
-        doctorName: first.doctor_name || "",
-        instagramUrl: first.instagram_url || "",
+        assistantName: readString(first.assistant_name),
+        doctorName: readString(first.doctor_name),
+        instagramUrl: readString(first.instagram_url),
       },
 
       clinic: {
-        name: first.clinic_name || "",
-        addressLine1: first.clinic_address_line1 || "",
-        addressLine2: first.clinic_address_line2 || "",
-        cityStateZip: first.clinic_city_state_zip || "",
+        name: readString(first.clinic_name),
+        addressLine1: readString(first.clinic_address_line1),
+        addressLine2: readString(first.clinic_address_line2),
+        cityStateZip: readString(first.clinic_city_state_zip),
       },
 
       postOp: {
-        recentWaNumber: first.post_op_recent_wa_number || "",
+        recentWaNumber: readString(first.post_op_recent_wa_number),
       },
     },
   };
