@@ -7,9 +7,9 @@ function getPlans(runtime) {
     : [];
 }
 
-function findPlanByInput(runtime, digits) {
+function findPlanByInput(runtime, raw) {
   const plans = getPlans(runtime);
-  return plans.find((p) => String(p.id) === String(digits)) || null;
+  return plans.find((p) => String(p.id) === String(raw)) || null;
 }
 
 function resolveMessage(runtime, MSG, key) {
@@ -24,7 +24,7 @@ export async function handlePlanSelectionStep(flowCtx) {
     traceId,
     phone,
     phoneNumberIdFallback,
-    digits,
+    raw, // 🔥 mudou aqui
     state,
     MSG,
     practitionerId,
@@ -34,26 +34,21 @@ export async function handlePlanSelectionStep(flowCtx) {
 
   if (state !== "PLAN_PICK") return false;
 
-  // 🔙 VOLTAR MENU
-  if (digits === "0") {
+  // 🔙 VOLTAR (opcional se quiser manter)
+  if (raw === "BACK_TO_MENU") {
     await setState(tenantId, phone, "MAIN");
-
-    const menuMsg =
-      runtime?.content?.messages?.menu ||
-      MSG?.MENU ||
-      "Menu";
 
     await services.sendText({
       tenantId,
       to: phone,
-      body: menuMsg,
+      body: runtime?.content?.menu?.text,
       phoneNumberIdFallback,
     });
 
     return true;
   }
 
-  const plan = findPlanByInput(runtime, digits);
+  const plan = findPlanByInput(runtime, raw);
 
   // ❌ INPUT INVÁLIDO
   if (!plan) {
@@ -68,7 +63,7 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
-  // 📄 INFO ONLY (NÃO SEGUE FLUXO)
+  // 📄 INFO ONLY
   if (plan.flow === "INFO_ONLY") {
     const msg = resolveMessage(runtime, MSG, plan.messageKey);
 
@@ -84,20 +79,17 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
-  // 📅 BOOKING / DIRECT_BOOKING
+  // 📅 BOOKING
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.planKey = plan.key;
 
-    if (s.portal?.issue) {
-      delete s.portal.issue;
-    }
+    if (s.portal?.issue) delete s.portal.issue;
   });
 
   const s = await getSession(tenantId, phone);
   const patientId = Number(s?.booking?.patientId || s?.portal?.patientId);
 
-  // ❌ SESSÃO INVÁLIDA
   if (!patientId) {
     await services.sendText({
       tenantId,
@@ -112,7 +104,6 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
-  // 🚀 SEGUE PARA DATAS
   await finishWizardAndGoToDates({
     schedulingAdapter: adapters.schedulingAdapter,
     tenantId,
