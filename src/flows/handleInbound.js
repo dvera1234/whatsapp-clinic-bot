@@ -87,7 +87,7 @@ async function handleInbound({
       tenantId,
       to: phone,
       body:
-        "⚠️ Ocorreu um erro de configuração. Nossa equipe já foi notificada.",
+        "⚠️ Ocorreu um erro de configuração temporário. Por favor, fale com nossa equipe.",
       phoneNumberIdFallback: effectivePhoneNumberId,
     });
 
