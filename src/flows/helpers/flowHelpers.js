@@ -38,31 +38,35 @@ export async function failSafeTenantConfigError({
 export async function clearTransientPortalData(tenantId, phone) {
   await updateSession(tenantId, phone, (s) => {
     if (!s?.portal) return;
+
     s.portal.form = {};
     delete s.portal.missing;
     delete s.portal.issue;
   });
 }
 
-export async function resetToMain(
+export async function resetToMain({
   tenantId,
   phone,
   phoneNumberIdFallback,
-  MSG
-) {
+  menuText,
+}) {
   await updateSession(tenantId, phone, (s) => {
     if (s?.portal) {
       s.portal.form = {};
       delete s.portal.issue;
       delete s.portal.missing;
     }
-    if (s?.pending) delete s.pending;
+
+    if (s?.pending) {
+      delete s.pending;
+    }
   });
 
   await sendAndSetState({
     tenantId,
     phone,
-    body: MSG.MENU,
+    body: String(menuText || "").trim(),
     state: "MAIN",
     phoneNumberIdFallback,
   });
@@ -86,7 +90,10 @@ export async function sendAndSetState({
         delete s.portal.issue;
         delete s.portal.missing;
       }
-      if (s?.pending) delete s.pending;
+
+      if (s?.pending) {
+        delete s.pending;
+      }
     });
   }
 
@@ -97,7 +104,9 @@ export async function sendAndSetState({
     phoneNumberIdFallback,
   });
 
-  if (!sent) return false;
+  if (!sent) {
+    return false;
+  }
 
   if (state) {
     await setState(tenantId, phone, state);
