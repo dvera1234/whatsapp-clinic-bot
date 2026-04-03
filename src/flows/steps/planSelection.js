@@ -1,5 +1,4 @@
 import { getSession, setState, updateSession } from "../../session/redisSession.js";
-import { PLAN_KEYS } from "../../config/constants.js";
 import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
 
 export async function handlePlanSelectionStep(flowCtx) {
@@ -21,30 +20,51 @@ export async function handlePlanSelectionStep(flowCtx) {
     return false;
   }
 
+  const plans = runtime?.content?.plans || [];
+
+  if (!Array.isArray(plans) || plans.length === 0) {
+    await services.sendText({
+      tenantId,
+      to: phone,
+      body: "Configuração de planos inválida.",
+      phoneNumberIdFallback,
+    });
+    await setState(tenantId, phone, "MAIN");
+    return true;
+  }
+
   const sCurrent = await getSession(tenantId, phone);
   const lockedPlanKey = sCurrent?.booking?.planKey || null;
-  
+
   let chosenKey = null;
-  
-  if (upper === "PLAN_USE_PRIVATE") {
-    chosenKey = PLAN_KEYS.PRIVATE;
-  } else if (upper === "PLAN_USE_INSURED" || upper === "PLAN_USE_INSURED_ACCEPTED") {
-    chosenKey = PLAN_KEYS.INSURED;
-  } else if (upper === "MENU_PRINCIPAL") {
+
+  // 🔥 MATCH DINÂMICO VIA JSON (ID DO BOTÃO)
+  const matchedPlan = plans.find((p) => {
+    const action = String(p?.action || "").toUpperCase();
+    return action === upper;
+  });
+
+  if (matchedPlan) {
+    chosenKey = matchedPlan.key;
+  }
+
+  // 🔁 fallback: manter plano já escolhido
+  if (!chosenKey && lockedPlanKey) {
+    chosenKey = lockedPlanKey;
+  }
+
+  // MENU
+  if (upper === "MENU_PRINCIPAL") {
     await setState(tenantId, phone, "MAIN");
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.MENU || "Menu",
+      body: MSG.MENU,
       phoneNumberIdFallback,
     });
     return true;
-  } else if (lockedPlanKey === PLAN_KEYS.PRIVATE) {
-    chosenKey = PLAN_KEYS.PRIVATE;
-  } else if (lockedPlanKey === PLAN_KEYS.INSURED) {
-    chosenKey = PLAN_KEYS.INSURED;
   }
-  
+
   if (!chosenKey) {
     await services.sendText({
       tenantId,
@@ -55,6 +75,7 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
+  // 💾 salva plano na sessão
   await updateSession(tenantId, phone, (sess) => {
     sess.booking = sess.booking || {};
     sess.booking.planKey = chosenKey;
