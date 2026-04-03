@@ -71,6 +71,11 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     };
   }
 
+  const parsedMessages =
+    first.messages_json && typeof first.messages_json === "object"
+      ? first.messages_json
+      : {};
+
   return {
     tenantId: first.tenant_id,
 
@@ -123,6 +128,8 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     },
 
     content: {
+      ...parsedMessages,
+
       branding: {
         assistantName: first.assistant_name || "",
         doctorName: first.doctor_name || "",
@@ -139,11 +146,6 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       postOp: {
         recentWaNumber: first.post_op_recent_wa_number || "",
       },
-
-      messages:
-        first.messages_json && typeof first.messages_json === "object"
-          ? first.messages_json
-          : {},
     },
   };
 }
