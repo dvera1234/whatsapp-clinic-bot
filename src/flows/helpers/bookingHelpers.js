@@ -7,6 +7,8 @@ import {
 } from "./auditHelpers.js";
 import { tpl } from "./contentHelpers.js";
 
+const PAGE_SIZE = 4;
+
 export function bookingConfirmKey(tenantId, phone, slotId) {
   const t = String(tenantId || "").trim();
   const p = String(phone || "").replace(/\D+/g, "");
@@ -202,9 +204,8 @@ export async function showNextDates({
     return false;
   }
 
-  const pageSize = 8;
-  const start = page * pageSize;
-  const end = start + pageSize;
+  const start = page * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
   const pageItems = dates.slice(start, end);
 
   const rows = pageItems.map((iso) => ({
@@ -217,7 +218,9 @@ export async function showNextDates({
     rows.push({
       id: `DATE_PAGE_${page + 1}`,
       title: MSG.BOOKING_VIEW_MORE || "Ver mais datas",
-      description: MSG.BOOKING_VIEW_MORE_DATES_DESCRIPTION || "Mostrar próximas datas disponíveis",
+      description:
+        MSG.BOOKING_VIEW_MORE_DATES_DESCRIPTION ||
+        "Mostrar próximas datas disponíveis",
     });
   }
 
@@ -226,7 +229,8 @@ export async function showNextDates({
     to: phone,
     body: MSG.BOOKING_PICK_DATE,
     buttonText: MSG.BOOKING_PICK_DATE_BUTTON || "Ver datas",
-    footerText: MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
+    footerText:
+      MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
     sections: buildListSections({
       title: MSG.BOOKING_DATES_SECTION_TITLE || "Datas disponíveis",
       rows,
@@ -246,9 +250,8 @@ export async function showSlotsPage({
   MSG,
   services,
 }) {
-  const pageSize = 8;
-  const start = page * pageSize;
-  const end = start + pageSize;
+  const start = page * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
   const pageItems = Array.isArray(slots) ? slots.slice(start, end) : [];
 
   if (!pageItems.length) {
@@ -264,14 +267,17 @@ export async function showSlotsPage({
       to: phone,
       body: MSG.BOOKING_CHANGE_DATE,
       buttonText: MSG.BOOKING_OPTIONS_BUTTON || "Ver opções",
-      footerText: MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
+      footerText:
+        MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
       sections: buildListSections({
         title: MSG.BOOKING_OPTIONS_SECTION_TITLE || "Opções",
         rows: [
           {
             id: "CHANGE_DATE",
             title: MSG.BOOKING_CHANGE_DATE || "Trocar data",
-            description: MSG.BOOKING_CHANGE_DATE_DESCRIPTION || "Selecionar outro dia disponível",
+            description:
+              MSG.BOOKING_CHANGE_DATE_DESCRIPTION ||
+              "Selecionar outro dia disponível",
           },
         ],
       }),
@@ -288,16 +294,20 @@ export async function showSlotsPage({
 
   if (end < slots.length) {
     rows.push({
-      id: `PAGE_${page + 1}`,
+      id: `SLOT_PAGE_${page + 1}`,
       title: MSG.BOOKING_VIEW_MORE || "Ver mais horários",
-      description: MSG.BOOKING_VIEW_MORE_SLOTS_DESCRIPTION || "Mostrar próximos horários disponíveis",
+      description:
+        MSG.BOOKING_VIEW_MORE_SLOTS_DESCRIPTION ||
+        "Mostrar próximos horários disponíveis",
     });
   }
 
   rows.push({
     id: "CHANGE_DATE",
     title: MSG.BOOKING_CHANGE_DATE || "Trocar data",
-    description: MSG.BOOKING_CHANGE_DATE_DESCRIPTION || "Selecionar outro dia disponível",
+    description:
+      MSG.BOOKING_CHANGE_DATE_DESCRIPTION ||
+      "Selecionar outro dia disponível",
   });
 
   await services.sendList({
@@ -305,7 +315,8 @@ export async function showSlotsPage({
     to: phone,
     body: MSG.BOOKING_AVAILABLE_SLOTS,
     buttonText: MSG.BOOKING_PICK_SLOT_BUTTON || "Ver horários",
-    footerText: MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
+    footerText:
+      MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
     sections: buildListSections({
       title: MSG.BOOKING_SLOTS_SECTION_TITLE || "Horários disponíveis",
       rows,
@@ -331,6 +342,8 @@ export async function finishWizardAndGoToDates({
     s.booking = s.booking || {};
     s.booking.patientId = patientId;
     s.booking.practitionerId = practitionerId;
+    s.booking.datePage = 0;
+    s.booking.slotPage = 0;
 
     if (planKeyFromWizard) {
       s.booking.planKey = planKeyFromWizard;
@@ -361,11 +374,7 @@ export async function finishWizardAndGoToDates({
   return shown;
 }
 
-export function buildBookingSuccessMessage({
-  MSG,
-  msgOk,
-  paymentInfo,
-}) {
+export function buildBookingSuccessMessage({ MSG, msgOk, paymentInfo }) {
   return tpl(MSG.BOOKING_SUCCESS_MAIN, {
     msgOk,
     paymentInfo,
