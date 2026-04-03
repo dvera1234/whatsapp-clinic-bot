@@ -11,6 +11,18 @@ export async function sendListMessage({
   buttonText = "Selecionar",
   sections = [],
 }) {
+  if (!tenantId) {
+    throw new Error("sendListMessage requires tenantId");
+  }
+
+  if (!to) {
+    throw new Error("sendListMessage requires to");
+  }
+
+  if (!body) {
+    throw new Error("sendListMessage requires body");
+  }
+
   if (!Array.isArray(sections) || !sections.length) {
     throw new Error("ListMessage requires at least one section");
   }
