@@ -23,7 +23,6 @@ import { maskPhone } from "../utils/mask.js";
 
 import { handleMainMenuStep } from "./steps/mainMenu.js";
 import { handlePlanSelectionStep } from "./steps/planSelection.js";
-import { handleInsuranceSelectionStep } from "./steps/insuranceSelection.js";
 import { handlePatientIdentificationStep } from "./steps/patientIdentification.js";
 import { handlePatientRegistrationStep } from "./steps/patientRegistration.js";
 import { handleSlotSelectionStep } from "./steps/slotSelection.js";
@@ -54,9 +53,6 @@ async function handleInbound({
     audit("TENANT_CONTEXT_MISSING", {
       traceId,
       tracePhone: maskPhone(phone),
-      hasContext: !!context,
-      hasPhoneNumberId: !!effectivePhoneNumberId,
-      blockedBeforeFlow: true,
     });
     return;
   }
@@ -64,13 +60,6 @@ async function handleInbound({
   const runtime = resolveRuntimeFromContext(context);
 
   if (!runtime) {
-    audit("RUNTIME_MISSING_BLOCKED", {
-      tenantId,
-      traceId,
-      tracePhone: maskPhone(phone),
-      blockedBeforeFlow: true,
-    });
-
     await failSafeTenantConfigError({
       tenantId,
       phone,
@@ -83,14 +72,6 @@ async function handleInbound({
   try {
     MSG = getFlowText(runtime);
   } catch (err) {
-    audit("TENANT_CONTENT_INVALID", {
-      tenantId,
-      traceId,
-      tracePhone: maskPhone(phone),
-      error: String(err?.message || err),
-      blockedBeforeFlow: true,
-    });
-
     await failSafeTenantConfigError({
       tenantId,
       phone,
@@ -99,11 +80,10 @@ async function handleInbound({
     return;
   }
 
+  // ✅ INATIVIDADE 100% JSON (SEM FALLBACK)
   configureInactivityHandler({
     sendText,
-    getMessage: () =>
-      runtime?.content?.messages?.inactivityClosureMessage ||
-      "Sessão encerrada por inatividade.",
+    getMessage: () => runtime.content.messages.inactivityClosureMessage,
   });
 
   let patientAdapter;
@@ -115,14 +95,6 @@ async function handleInbound({
     portalAdapter = createPortalAdapter({ tenantId, runtime });
     schedulingAdapter = createSchedulingAdapter({ tenantId, runtime });
   } catch (err) {
-    audit("TENANT_PROVIDER_FACTORY_INIT_FAILED", {
-      tenantId,
-      traceId,
-      tracePhone: maskPhone(phone),
-      error: String(err?.message || err),
-      blockedBeforeFlow: true,
-    });
-
     await failSafeTenantConfigError({
       tenantId,
       phone,
@@ -132,15 +104,6 @@ async function handleInbound({
   }
 
   const practitionerId = runtime?.clinic?.providerId ?? null;
-  const portalUrl = runtime?.portal?.url || "";
-  const supportWa = runtime?.support?.waNumber || "";
-
-  const runtimeCtx = {
-    tenantId,
-    runtime,
-    traceId,
-    tracePhone: maskPhone(phone),
-  };
 
   const raw = normalizeSpaces(inboundText);
   const upper = String(raw || "").toUpperCase();
@@ -154,22 +117,10 @@ async function handleInbound({
 
   const state = (await getState(tenantId, phone)) || "MAIN";
 
-  debugLog(
-    "FLOW_INBOUND_RECEIVED",
-    sanitizeForLog({
-      tenantId,
-      traceId,
-      phoneMasked: maskPhone(phone),
-      state,
-      inboundKind: digits ? "digits-or-button" : "text",
-    })
-  );
-
   const flowCtx = {
     context,
     tenantId,
     runtime,
-    runtimeCtx,
     traceId,
     phone,
     phoneNumberIdFallback: effectivePhoneNumberId,
@@ -179,12 +130,6 @@ async function handleInbound({
     state,
     MSG,
     practitionerId,
-    portalUrl,
-    supportWa,
-    observability: {
-      audit,
-      debugLog,
-    },
     adapters: {
       patientAdapter,
       portalAdapter,
@@ -196,82 +141,43 @@ async function handleInbound({
     },
   };
 
+  // RESET
   {
     const code = String(FLOW_RESET_CODE || "").trim();
-    if (code) {
-      const msg = String(raw || "").trim();
-      const msgU = msg.toUpperCase();
-      const codeU = code.toUpperCase();
-      const withHashU = `#${code}`.toUpperCase();
-
-      const hit =
-        msgU === codeU ||
-        msgU === withHashU ||
-        (code.startsWith("#") && msgU === codeU) ||
-        (!code.startsWith("#") && msgU === `#${codeU}`);
-
-      if (hit) {
-        audit("FLOW_RESET_TRIGGERED", {
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          stateBeforeReset: state,
-        });
-
-        await sendAndSetState({
-          tenantId,
-          phone,
-          body: MSG.MENU,
-          state: "MAIN",
-          phoneNumberIdFallback: effectivePhoneNumberId,
-          resetSession: true,
-        });
-        return;
-      }
-    }
-  }
-
-  if (await handlePortalFlowStep(flowCtx)) return;
-  if (await handlePlanSelectionStep(flowCtx)) return;
-  if (await handleInsuranceSelectionStep(flowCtx)) return;
-  if (await handleSlotSelectionStep(flowCtx)) return;
-  if (await handleBookingConfirmationStep(flowCtx)) return;
-  if (await handleSupportFlowStep(flowCtx)) return;
-
-  if (String(state || "").startsWith("WZ_")) {
-    if (await handlePatientIdentificationStep(flowCtx)) return;
-    if (await handlePatientRegistrationStep(flowCtx)) return;
-  }
-
-  if (!digits && !String(state || "").startsWith("WZ_")) {
-    if (await handleSupportFlowStep(flowCtx, { allowFreeTextAttendant: true })) {
+    if (code && raw.toUpperCase() === code.toUpperCase()) {
+      await sendAndSetState({
+        tenantId,
+        phone,
+        body: MSG.MENU,
+        state: "MAIN",
+        phoneNumberIdFallback: effectivePhoneNumberId,
+        resetSession: true,
+      });
       return;
     }
-
-    debugLog(
-      "FLOW_FREE_TEXT_OUTSIDE_EXPECTED_STATE",
-      sanitizeForLog({
-        tenantId,
-        traceId,
-        phoneMasked: maskPhone(phone),
-        state,
-      })
-    );
-
-    await sendAndSetState({
-      tenantId,
-      phone,
-      body: MSG.MENU,
-      state: "MAIN",
-      phoneNumberIdFallback: effectivePhoneNumberId,
-      clearTransientOnly: true,
-    });
-    return;
   }
 
+  // ✅ ORDEM CORRETA — ORQUESTRADOR PURO
+
   if (await handleMainMenuStep(flowCtx)) return;
+
+  if (await handlePlanSelectionStep(flowCtx)) return;
+
+  if (await handlePortalFlowStep(flowCtx)) return;
+
+  if (await handlePatientIdentificationStep(flowCtx)) return;
+
+  if (await handlePatientRegistrationStep(flowCtx)) return;
+
+  if (await handleSlotSelectionStep(flowCtx)) return;
+
+  if (await handleBookingConfirmationStep(flowCtx)) return;
+
   if (await handlePostFlowStep(flowCtx)) return;
 
+  if (await handleSupportFlowStep(flowCtx)) return;
+
+  // fallback
   await sendAndSetState({
     tenantId,
     phone,
