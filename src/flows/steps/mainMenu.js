@@ -1,6 +1,5 @@
 import { updateSession } from "../../session/redisSession.js";
 import {
-  PLAN_KEYS,
   LGPD_TEXT_VERSION,
   LGPD_TEXT_HASH,
 } from "../../config/constants.js";
@@ -8,76 +7,45 @@ import { audit } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
 
+// =========================
+// HELPERS
+// =========================
+
 function getTenantMessages(runtime) {
   return runtime?.content?.messages || {};
 }
 
-function getInsuranceOptions(runtime, MSG) {
-  const tenantMessages = getTenantMessages(runtime);
-
-  const runtimeOptions = Array.isArray(tenantMessages.insuranceOptions)
-    ? tenantMessages.insuranceOptions
+function getPlans(runtime) {
+  return Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
     : [];
-
-  if (runtimeOptions.length > 0) {
-    return runtimeOptions
-      .map((item) => ({
-        id: String(item?.id || "").trim(),
-        label: String(item?.label || "").trim(),
-        actionType: String(item?.actionType || "").trim(),
-        messageKey: String(item?.messageKey || "").trim() || null,
-      }))
-      .filter((item) => item.id && item.label && item.actionType);
-  }
-
-  const msgOptions = Array.isArray(MSG?.INSURANCE_OPTIONS)
-    ? MSG.INSURANCE_OPTIONS
-    : [];
-
-  return msgOptions
-    .map((item) => ({
-      id: String(item?.id || "").trim(),
-      label: String(item?.label || "").trim(),
-      actionType: String(item?.actionType || "").trim(),
-      messageKey: String(item?.messageKey || "").trim() || null,
-    }))
-    .filter((item) => item.id && item.label && item.actionType);
 }
 
-function buildInsuranceMenuBody(runtime, MSG) {
-  const tenantMessages = getTenantMessages(runtime);
-  const title = String(
-    tenantMessages.insuranceMenuTitle || MSG.INSURANCE_MENU_TITLE || ""
-  ).trim();
+function buildPlansMenu(runtime, MSG) {
+  const plans = getPlans(runtime);
 
-  const options = getInsuranceOptions(runtime, MSG);
+  const title =
+    MSG.PLAN_SELECTION_PROMPT ||
+    "Selecione uma opção:";
 
-  const optionLines = options.map((item) => `${item.id}) ${item.label}`);
+  const lines = plans.map((p) => `${p.id}) ${p.label}`);
   const footer = "0) Voltar ao menu inicial";
 
-  return [title, optionLines.join("\n"), footer].filter(Boolean).join("\n\n");
+  return [title, lines.join("\n"), footer]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
-function findInsuranceOption(runtime, MSG, digits) {
-  const options = getInsuranceOptions(runtime, MSG);
-  return (
-    options.find((item) => item.id === String(digits || "").trim()) || null
-  );
+function findPlan(runtime, digits) {
+  const plans = getPlans(runtime);
+  return plans.find((p) => p.id === String(digits)) || null;
 }
 
-function resolveInsuranceInfoMessage(runtime, MSG, option) {
-  const tenantMessages = getTenantMessages(runtime);
-  const rawKey = String(option?.messageKey || "").trim();
+// =========================
+// BOOKING START
+// =========================
 
-  if (!rawKey) return "";
-
-  const fromRuntime = String(tenantMessages?.[rawKey] || "").trim();
-  if (fromRuntime) return fromRuntime;
-
-  return String(MSG?.[rawKey] || "").trim();
-}
-
-async function startBookingWithPlan({
+async function startBooking({
   tenantId,
   traceId,
   phone,
@@ -124,6 +92,10 @@ async function startBookingWithPlan({
   });
 }
 
+// =========================
+// MAIN HANDLER
+// =========================
+
 export async function handleMainMenuStep(flowCtx) {
   const {
     tenantId,
@@ -137,24 +109,17 @@ export async function handleMainMenuStep(flowCtx) {
     practitionerId,
   } = flowCtx;
 
+  // =========================
+  // MAIN MENU
+  // =========================
+
   if (state === "MAIN") {
     if (digits === "1") {
       await sendAndSetState({
         tenantId,
         phone,
-        body: MSG.PRIVATE_MENU,
-        state: "PRIVATE_MENU",
-        phoneNumberIdFallback,
-      });
-      return true;
-    }
-
-    if (digits === "2") {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: buildInsuranceMenuBody(runtime, MSG),
-        state: "INSURANCE_MENU",
+        body: buildPlansMenu(runtime, MSG),
+        state: "PLAN_PICK",
         phoneNumberIdFallback,
       });
       return true;
@@ -192,208 +157,60 @@ export async function handleMainMenuStep(flowCtx) {
     return true;
   }
 
-  if (state === "PRIVATE_MENU") {
-    if (digits === "1") {
-      await startBookingWithPlan({
-        tenantId,
-        traceId,
-        phone,
-        phoneNumberIdFallback,
-        practitionerId,
-        planKey: PLAN_KEYS.PRIVATE,
-        MSG,
-      });
-      return true;
-    }
+  // =========================
+  // PLAN PICK (fallback leve)
+  // =========================
 
+  if (state === "PLAN_PICK") {
     if (digits === "0") {
       await resetToMain(tenantId, phone, phoneNumberIdFallback, MSG);
       return true;
     }
 
-    await sendAndSetState({
-      tenantId,
-      phone,
-      body: MSG.PRIVATE_MENU,
-      state: "PRIVATE_MENU",
-      phoneNumberIdFallback,
-    });
-    return true;
-  }
+    const plan = findPlan(runtime, digits);
 
-  if (state === "INSURANCE_MENU") {
-    if (digits === "0") {
-      await resetToMain(tenantId, phone, phoneNumberIdFallback, MSG);
-      return true;
-    }
-
-    const selectedOption = findInsuranceOption(runtime, MSG, digits);
-
-    if (!selectedOption) {
+    if (!plan) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: buildInsuranceMenuBody(runtime, MSG),
-        state: "INSURANCE_MENU",
+        body: buildPlansMenu(runtime, MSG),
+        state: "PLAN_PICK",
         phoneNumberIdFallback,
       });
       return true;
     }
 
-    if (selectedOption.actionType === "INSURANCE_INFO_ONLY") {
-      const infoMessage = resolveInsuranceInfoMessage(runtime, MSG, selectedOption);
+    // INFO ONLY → só mostra mensagem
+    if (plan.flow === "INFO_ONLY") {
+      const tenantMessages = getTenantMessages(runtime);
+      const msg =
+        tenantMessages?.[plan.messageKey] ||
+        MSG?.[plan.messageKey] ||
+        "";
 
-      if (!infoMessage) {
+      if (msg) {
         await sendAndSetState({
           tenantId,
           phone,
-          body: buildInsuranceMenuBody(runtime, MSG),
-          state: "INSURANCE_MENU",
+          body: msg,
+          state: "PLAN_PICK",
           phoneNumberIdFallback,
         });
         return true;
       }
-
-      await updateSession(tenantId, phone, (s) => {
-        s.pending = {
-          ...(s.pending || {}),
-          insuranceOptionId: selectedOption.id,
-          insuranceActionType: selectedOption.actionType,
-          insuranceLabel: selectedOption.label,
-          insuranceMessageKey: selectedOption.messageKey,
-        };
-      });
-
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: infoMessage,
-        state: "INSURANCE_INFO",
-        phoneNumberIdFallback,
-      });
-      return true;
     }
 
-    if (selectedOption.actionType === "INSURANCE_DIRECT_BOOKING") {
-      await updateSession(tenantId, phone, (s) => {
-        s.booking = {
-          ...(s.booking || {}),
-          planKey: PLAN_KEYS.INSURED,
-        };
-
-        s.pending = {
-          ...(s.pending || {}),
-          insuranceOptionId: selectedOption.id,
-          insuranceActionType: selectedOption.actionType,
-          insuranceLabel: selectedOption.label,
-          insuranceMessageKey: selectedOption.messageKey,
-        };
-      });
-
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: MSG.INSURED_DIRECT_MENU,
-        state: "INSURED_DIRECT",
-        phoneNumberIdFallback,
-      });
-      return true;
-    }
-
-    await sendAndSetState({
+    // BOOKING / DIRECT_BOOKING
+    await startBooking({
       tenantId,
+      traceId,
       phone,
-      body: buildInsuranceMenuBody(runtime, MSG),
-      state: "INSURANCE_MENU",
       phoneNumberIdFallback,
-    });
-    return true;
-  }
-
-  if (state === "INSURANCE_INFO") {
-    if (digits === "9") {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: MSG.PRIVATE_MENU,
-        state: "PRIVATE_MENU",
-        phoneNumberIdFallback,
-      });
-      return true;
-    }
-
-    if (digits === "0") {
-      await resetToMain(tenantId, phone, phoneNumberIdFallback, MSG);
-      return true;
-    }
-
-    const selectedOption = findInsuranceOption(
-      runtime,
+      practitionerId,
+      planKey: plan.key,
       MSG,
-      digits
-    );
-
-    if (selectedOption) {
-      const infoMessage = resolveInsuranceInfoMessage(runtime, MSG, selectedOption);
-
-      if (infoMessage) {
-        await updateSession(tenantId, phone, (s) => {
-          s.pending = {
-            ...(s.pending || {}),
-            insuranceOptionId: selectedOption.id,
-            insuranceActionType: selectedOption.actionType,
-            insuranceLabel: selectedOption.label,
-            insuranceMessageKey: selectedOption.messageKey,
-          };
-        });
-
-        await sendAndSetState({
-          tenantId,
-          phone,
-          body: infoMessage,
-          state: "INSURANCE_INFO",
-          phoneNumberIdFallback,
-        });
-        return true;
-      }
-    }
-
-    await sendAndSetState({
-      tenantId,
-      phone,
-      body: buildInsuranceMenuBody(runtime, MSG),
-      state: "INSURANCE_MENU",
-      phoneNumberIdFallback,
     });
-    return true;
-  }
 
-  if (state === "INSURED_DIRECT") {
-    if (digits === "1") {
-      await startBookingWithPlan({
-        tenantId,
-        traceId,
-        phone,
-        phoneNumberIdFallback,
-        practitionerId,
-        planKey: PLAN_KEYS.INSURED,
-        MSG,
-      });
-      return true;
-    }
-
-    if (digits === "0") {
-      await resetToMain(tenantId, phone, phoneNumberIdFallback, MSG);
-      return true;
-    }
-
-    await sendAndSetState({
-      tenantId,
-      phone,
-      body: MSG.INSURED_DIRECT_MENU,
-      state: "INSURED_DIRECT",
-      phoneNumberIdFallback,
-    });
     return true;
   }
 
