@@ -23,6 +23,7 @@ import { maskPhone } from "../utils/mask.js";
 
 import { handleMainMenuStep } from "./steps/mainMenu.js";
 import { handlePlanSelectionStep } from "./steps/planSelection.js";
+import { handleInsuranceSelectionStep } from "./steps/insuranceSelection.js";
 import { handlePatientIdentificationStep } from "./steps/patientIdentification.js";
 import { handlePatientRegistrationStep } from "./steps/patientRegistration.js";
 import { handleSlotSelectionStep } from "./steps/slotSelection.js";
@@ -164,36 +165,36 @@ async function handleInbound({
     })
   );
 
-    const flowCtx = {
-      context,
-      tenantId,
-      runtime,
-      runtimeCtx,
-      traceId,
-      phone,
-      phoneNumberIdFallback: effectivePhoneNumberId,
-      raw,
-      upper,
-      digits,
-      state,
-      MSG,
-      practitionerId,
-      portalUrl,
-      supportWa,
-      observability: {
-        audit,
-        debugLog,
-      },
-      adapters: {
-        patientAdapter,
-        portalAdapter,
-        schedulingAdapter,
-      },
-      services: {
-        sendText,
-        sendButtons,
-      },
-    };
+  const flowCtx = {
+    context,
+    tenantId,
+    runtime,
+    runtimeCtx,
+    traceId,
+    phone,
+    phoneNumberIdFallback: effectivePhoneNumberId,
+    raw,
+    upper,
+    digits,
+    state,
+    MSG,
+    practitionerId,
+    portalUrl,
+    supportWa,
+    observability: {
+      audit,
+      debugLog,
+    },
+    adapters: {
+      patientAdapter,
+      portalAdapter,
+      schedulingAdapter,
+    },
+    services: {
+      sendText,
+      sendButtons,
+    },
+  };
 
   {
     const code = String(FLOW_RESET_CODE || "").trim();
@@ -232,6 +233,7 @@ async function handleInbound({
 
   if (await handlePortalFlowStep(flowCtx)) return;
   if (await handlePlanSelectionStep(flowCtx)) return;
+  if (await handleInsuranceSelectionStep(flowCtx)) return;
   if (await handleSlotSelectionStep(flowCtx)) return;
   if (await handleBookingConfirmationStep(flowCtx)) return;
   if (await handleSupportFlowStep(flowCtx)) return;
@@ -241,7 +243,7 @@ async function handleInbound({
     if (await handlePatientRegistrationStep(flowCtx)) return;
   }
 
-    if (!digits && !String(state || "").startsWith("WZ_")) {
+  if (!digits && !String(state || "").startsWith("WZ_")) {
     if (await handleSupportFlowStep(flowCtx, { allowFreeTextAttendant: true })) {
       return;
     }
