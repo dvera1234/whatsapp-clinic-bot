@@ -1,54 +1,28 @@
-import { sendWhatsAppMessage } from "./sender.js";
+import { sendList } from "./sender.js";
 
 export async function sendListMessage({
+  tenantId,
   to,
   phoneNumberId,
+  phoneNumberIdFallback,
   header,
   body,
   footer,
   buttonText = "Selecionar",
   sections = [],
 }) {
-  if (!sections.length) {
+  if (!Array.isArray(sections) || !sections.length) {
     throw new Error("ListMessage requires at least one section");
   }
 
-  const payload = {
-    messaging_product: "whatsapp",
+  return sendList({
+    tenantId,
     to,
-    type: "interactive",
-    interactive: {
-      type: "list",
-      header: header
-        ? {
-            type: "text",
-            text: header,
-          }
-        : undefined,
-      body: {
-        text: body,
-      },
-      footer: footer
-        ? {
-            text: footer,
-          }
-        : undefined,
-      action: {
-        button: buttonText,
-        sections: sections.map((section) => ({
-          title: section.title,
-          rows: section.rows.map((row) => ({
-            id: String(row.id),
-            title: row.title,
-            description: row.description || "",
-          })),
-        })),
-      },
-    },
-  };
-
-  return sendWhatsAppMessage({
-    phoneNumberId,
-    payload,
+    body,
+    buttonText,
+    sections,
+    headerText: header,
+    footerText: footer,
+    phoneNumberIdFallback: phoneNumberIdFallback || phoneNumberId,
   });
 }
