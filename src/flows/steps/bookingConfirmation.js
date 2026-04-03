@@ -41,10 +41,13 @@ export async function handleBookingConfirmationStep(flowCtx) {
     const slots = s?.booking?.slots || [];
 
     await updateSession(tenantId, phone, (sess) => {
+      sess.booking = sess.booking || {};
+      sess.booking.slotPage = 0;
       delete sess.pending;
     });
 
     await setState(tenantId, phone, "SLOTS");
+
     await showSlotsPage({
       tenantId,
       phone,
@@ -54,6 +57,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
       MSG,
       services,
     });
+
     return true;
   }
 
@@ -88,6 +92,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
       });
 
       await setState(tenantId, phone, "SLOTS");
+
       await services.sendText({
         tenantId,
         to: phone,
@@ -100,10 +105,11 @@ export async function handleBookingConfirmationStep(flowCtx) {
         phone,
         phoneNumberIdFallback,
         slots,
-        page: 0,
+        page: s?.booking?.slotPage || 0,
         MSG,
         services,
       });
+
       return true;
     }
 
@@ -126,16 +132,13 @@ export async function handleBookingConfirmationStep(flowCtx) {
         (x) => Number(x.slotId) === slotId
       );
 
-      if (
-        !appointmentDate ||
-        !chosen?.time ||
-        !isSlotAllowed(appointmentDate, chosen.time)
-      ) {
+      if (!appointmentDate || !chosen?.time || !isSlotAllowed(appointmentDate, chosen.time)) {
         await updateSession(tenantId, phone, (sess) => {
           delete sess.pending;
         });
 
         await setState(tenantId, phone, "SLOTS");
+
         await services.sendText({
           tenantId,
           to: phone,
@@ -183,6 +186,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
 
         await updateSession(tenantId, phone, (sess) => {
           sess.booking = sess.booking || {};
+          sess.booking.slotPage = 0;
           sess.booking.slots = outSlots.ok ? outSlots.slots : [];
         });
 
@@ -197,6 +201,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
           MSG,
           services,
         });
+
         return true;
       }
 
@@ -280,6 +285,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
         });
 
         await setState(tenantId, phone, "SLOTS");
+
         await services.sendText({
           tenantId,
           to: phone,
@@ -304,15 +310,17 @@ export async function handleBookingConfirmationStep(flowCtx) {
         );
 
         const slots = s?.booking?.slots || [];
+
         await showSlotsPage({
           tenantId,
           phone,
           phoneNumberIdFallback,
           slots,
-          page: 0,
+          page: s?.booking?.slotPage || 0,
           MSG,
           services,
         });
+
         return true;
       }
 
@@ -347,8 +355,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
         );
       }
 
-      const showPaymentInfo =
-        isPrivateBooking && isReturnBooking === false;
+      const showPaymentInfo = isPrivateBooking && isReturnBooking === false;
 
       if (isReturnBooking === null) {
         audit(
@@ -463,5 +470,6 @@ export async function handleBookingConfirmationStep(flowCtx) {
     ],
     phoneNumberIdFallback,
   });
+
   return true;
 }
