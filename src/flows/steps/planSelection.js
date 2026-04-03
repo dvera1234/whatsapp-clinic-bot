@@ -24,7 +24,7 @@ export async function handlePlanSelectionStep(flowCtx) {
     traceId,
     phone,
     phoneNumberIdFallback,
-    raw, // 🔥 mudou aqui
+    raw,
     state,
     MSG,
     practitionerId,
@@ -34,7 +34,6 @@ export async function handlePlanSelectionStep(flowCtx) {
 
   if (state !== "PLAN_PICK") return false;
 
-  // 🔙 VOLTAR (opcional se quiser manter)
   if (raw === "BACK_TO_MENU") {
     await setState(tenantId, phone, "MAIN");
 
@@ -50,20 +49,20 @@ export async function handlePlanSelectionStep(flowCtx) {
 
   const plan = findPlanByInput(runtime, raw);
 
-  // ❌ INPUT INVÁLIDO
   if (!plan) {
     await services.sendText({
       tenantId,
       to: phone,
       body:
+        runtime?.content?.messages?.pickPlanButtonsOnly ||
         runtime?.content?.messages?.buttonsOnlyWarning ||
+        MSG?.PICK_PLAN_BUTTONS_ONLY ||
         MSG?.BUTTONS_ONLY_WARNING,
       phoneNumberIdFallback,
     });
     return true;
   }
 
-  // 📄 INFO ONLY
   if (plan.flow === "INFO_ONLY") {
     const msg = resolveMessage(runtime, MSG, plan.messageKey);
 
@@ -79,7 +78,6 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
-  // 📅 BOOKING
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.planKey = plan.key;
