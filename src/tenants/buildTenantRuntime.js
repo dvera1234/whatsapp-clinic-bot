@@ -50,10 +50,8 @@ function isSupportedBookingProvider(value) {
   return ["versatilis", "google_calendar"].includes(value);
 }
 
-function normalizeContent(config) {
-  return config?.content && typeof config.content === "object"
-    ? config.content
-    : {};
+function normalizeContent(content) {
+  return content && typeof content === "object" ? content : {};
 }
 
 export function buildTenantRuntime(config = {}) {
@@ -284,7 +282,7 @@ export function buildTenantRuntime(config = {}) {
               },
       },
 
-      content: normalizeContent(config.content),
+      content: normalizeContent(config?.content),
     },
   };
 }
