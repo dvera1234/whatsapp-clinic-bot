@@ -1,17 +1,43 @@
 import { sendAndSetState } from "../helpers/flowHelpers.js";
 
+// =========================
+// HELPERS
+// =========================
+
+function getMessages(runtime) {
+  return runtime?.content?.messages || {};
+}
+
+// =========================
+// ACTIONS
+// =========================
+
 export async function handlePlanMenu(flowCtx) {
-  const { tenantId, phone, runtime, phoneNumberIdFallback } = flowCtx;
+  const {
+    tenantId,
+    phone,
+    runtime,
+    phoneNumberIdFallback,
+    helpers,
+  } = flowCtx;
 
-  const plans = runtime?.content?.plans || [];
+  const buildPlansMenu = helpers?.buildPlansMenu;
 
-  const title =
-    runtime?.content?.messages?.planSelectionPrompt ||
-    "Selecione uma opção:";
+  const body =
+    typeof buildPlansMenu === "function"
+      ? buildPlansMenu(runtime)
+      : (() => {
+          const messages = getMessages(runtime);
+          const plans = runtime?.content?.plans || [];
 
-  const lines = plans.map((p) => `${p.id}) ${p.label}`);
+          const title =
+            messages?.planSelectionPrompt ||
+            "Selecione uma opção:";
 
-  const body = [title, lines.join("\n")].join("\n\n");
+          const lines = plans.map((p) => `${p.id}) ${p.label}`);
+
+          return [title, lines.join("\n")].join("\n\n");
+        })();
 
   await sendAndSetState({
     tenantId,
@@ -27,10 +53,12 @@ export async function handlePlanMenu(flowCtx) {
 export async function handlePos(flowCtx) {
   const { tenantId, phone, runtime, phoneNumberIdFallback } = flowCtx;
 
+  const messages = getMessages(runtime);
+
   await sendAndSetState({
     tenantId,
     phone,
-    body: runtime?.content?.messages?.posMenu,
+    body: messages?.posMenu || "Pós-operatório",
     state: "POS",
     phoneNumberIdFallback,
   });
@@ -41,10 +69,12 @@ export async function handlePos(flowCtx) {
 export async function handleAttendant(flowCtx) {
   const { tenantId, phone, runtime, phoneNumberIdFallback } = flowCtx;
 
+  const messages = getMessages(runtime);
+
   await sendAndSetState({
     tenantId,
     phone,
-    body: runtime?.content?.messages?.attendant,
+    body: messages?.attendant || "Falar com atendente",
     state: "ATENDENTE",
     phoneNumberIdFallback,
   });
