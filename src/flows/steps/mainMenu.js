@@ -26,9 +26,11 @@ function getPlans(runtime) {
     : [];
 }
 
+// 🔴 CORREÇÃO PRINCIPAL AQUI
 function buildMainMenu(runtime) {
   const menu = getMenu(runtime);
-  const title = String(menu?.prompt || "Menu:").trim();
+
+  const title = String(menu?.text || "").trim();
   const options = Array.isArray(menu?.options) ? menu.options : [];
 
   const lines = options
@@ -161,7 +163,7 @@ export async function handleMainMenuStep(flowCtx) {
   const messages = getTenantMessages(runtime);
 
   // =========================
-  // MAIN MENU DINÂMICO
+  // MAIN MENU
   // =========================
 
   if (state === "MAIN") {
@@ -186,9 +188,7 @@ export async function handleMainMenuStep(flowCtx) {
       },
     });
 
-    if (dispatched) {
-      return true;
-    }
+    if (dispatched) return true;
 
     await sendAndSetState({
       tenantId,
@@ -197,6 +197,7 @@ export async function handleMainMenuStep(flowCtx) {
       state: "MAIN",
       phoneNumberIdFallback,
     });
+
     return true;
   }
 
