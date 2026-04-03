@@ -17,8 +17,7 @@ import { createPortalAdapter } from "../integrations/adapters/factories/createPo
 import { createSchedulingAdapter } from "../integrations/adapters/factories/createSchedulingAdapter.js";
 
 import { onlyDigits, normalizeSpaces } from "../utils/validators.js";
-import { sanitizeForLog } from "../utils/logSanitizer.js";
-import { audit, debugLog } from "../observability/audit.js";
+import { audit } from "../observability/audit.js";
 import { maskPhone } from "../utils/mask.js";
 
 import { handleMainMenuStep } from "./steps/mainMenu.js";
@@ -36,7 +35,14 @@ import {
   failSafeTenantConfigError,
   sendAndSetState,
 } from "./helpers/flowHelpers.js";
+
 import { getFlowText } from "./helpers/contentHelpers.js";
+
+// 🔥 NEW
+import { registerDefaultActions } from "./actions/registerActions.js";
+
+// registra ações uma única vez
+registerDefaultActions();
 
 async function handleInbound({
   context = {},
@@ -71,7 +77,7 @@ async function handleInbound({
   let MSG;
   try {
     MSG = getFlowText(runtime);
-  } catch (err) {
+  } catch {
     await failSafeTenantConfigError({
       tenantId,
       phone,
@@ -80,7 +86,7 @@ async function handleInbound({
     return;
   }
 
-  // ✅ INATIVIDADE 100% JSON (SEM FALLBACK)
+  // 🔥 INATIVIDADE 100% JSON
   configureInactivityHandler({
     sendText,
     getMessage: () => runtime.content.messages.inactivityClosureMessage,
@@ -94,7 +100,7 @@ async function handleInbound({
     patientAdapter = createPatientAdapter({ tenantId, runtime });
     portalAdapter = createPortalAdapter({ tenantId, runtime });
     schedulingAdapter = createSchedulingAdapter({ tenantId, runtime });
-  } catch (err) {
+  } catch {
     await failSafeTenantConfigError({
       tenantId,
       phone,
@@ -106,7 +112,6 @@ async function handleInbound({
   const practitionerId = runtime?.clinic?.providerId ?? null;
 
   const raw = normalizeSpaces(inboundText);
-  const upper = String(raw || "").toUpperCase();
   const digits = onlyDigits(raw);
 
   await touchUser({
@@ -125,7 +130,6 @@ async function handleInbound({
     phone,
     phoneNumberIdFallback: effectivePhoneNumberId,
     raw,
-    upper,
     digits,
     state,
     MSG,
@@ -148,7 +152,7 @@ async function handleInbound({
       await sendAndSetState({
         tenantId,
         phone,
-        body: MSG.MENU,
+        body: runtime?.content?.messages?.menu,
         state: "MAIN",
         phoneNumberIdFallback: effectivePhoneNumberId,
         resetSession: true,
@@ -157,31 +161,22 @@ async function handleInbound({
     }
   }
 
-  // ✅ ORDEM CORRETA — ORQUESTRADOR PURO
-
+  // 🔥 PIPELINE (INALTERADO)
   if (await handleMainMenuStep(flowCtx)) return;
-
   if (await handlePlanSelectionStep(flowCtx)) return;
-
   if (await handlePortalFlowStep(flowCtx)) return;
-
   if (await handlePatientIdentificationStep(flowCtx)) return;
-
   if (await handlePatientRegistrationStep(flowCtx)) return;
-
   if (await handleSlotSelectionStep(flowCtx)) return;
-
   if (await handleBookingConfirmationStep(flowCtx)) return;
-
   if (await handlePostFlowStep(flowCtx)) return;
-
   if (await handleSupportFlowStep(flowCtx)) return;
 
   // fallback
   await sendAndSetState({
     tenantId,
     phone,
-    body: MSG.MENU,
+    body: runtime?.content?.messages?.menu,
     state: "MAIN",
     phoneNumberIdFallback: effectivePhoneNumberId,
   });
