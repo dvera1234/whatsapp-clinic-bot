@@ -32,6 +32,7 @@ export async function handleMainMenuStep(flowCtx) {
 
   // 👉 mostrar menu (LIST)
   await sendListMessage({
+    tenantId,
     to: phone,
     phoneNumberId: phoneNumberIdFallback,
     body: menu.text,
