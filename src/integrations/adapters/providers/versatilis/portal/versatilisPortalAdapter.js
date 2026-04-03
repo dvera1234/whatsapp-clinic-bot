@@ -51,13 +51,12 @@ function describeShape(value) {
 }
 
 function resolvePlanExternalId(planKey, runtime) {
-  return (
-    Number(
-      runtime?.planMappings?.[planKey]?.externalId ||
-        runtime?.integrations?.booking?.planMappings?.[planKey]?.externalId ||
-        0
-    ) || null
-  );
+  const externalId =
+    runtime?.planMappings?.[planKey]?.externalId != null
+      ? Number(runtime.planMappings[planKey].externalId)
+      : null;
+
+  return Number.isFinite(externalId) ? externalId : null;
 }
 
 function createPayload(registrationData, runtime) {
