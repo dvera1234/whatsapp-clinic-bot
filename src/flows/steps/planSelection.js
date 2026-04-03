@@ -1,6 +1,16 @@
 import { getSession, setState, updateSession } from "../../session/redisSession.js";
 import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
 
+function findPlan(runtime, digits) {
+  const plans = runtime?.content?.plans || [];
+  return plans.find(p => p.id === String(digits)) || null;
+}
+
+function resolveMessage(runtime, MSG, key) {
+  if (!key) return "";
+  return runtime?.content?.messages?.[key] || MSG?.[key] || "";
+}
+
 export async function handlePlanSelectionStep(flowCtx) {
   const {
     tenantId,
@@ -8,7 +18,7 @@ export async function handlePlanSelectionStep(flowCtx) {
     traceId,
     phone,
     phoneNumberIdFallback,
-    upper,
+    digits,
     state,
     MSG,
     practitionerId,
@@ -16,45 +26,9 @@ export async function handlePlanSelectionStep(flowCtx) {
     services,
   } = flowCtx;
 
-  if (state !== "PLAN_PICK") {
-    return false;
-  }
+  if (state !== "PLAN_PICK") return false;
 
-  const plans = runtime?.content?.plans || [];
-
-  if (!Array.isArray(plans) || plans.length === 0) {
-    await services.sendText({
-      tenantId,
-      to: phone,
-      body: "Configuração de planos inválida.",
-      phoneNumberIdFallback,
-    });
-    await setState(tenantId, phone, "MAIN");
-    return true;
-  }
-
-  const sCurrent = await getSession(tenantId, phone);
-  const lockedPlanKey = sCurrent?.booking?.planKey || null;
-
-  let chosenKey = null;
-
-  // 🔥 MATCH DINÂMICO VIA JSON (ID DO BOTÃO)
-  const matchedPlan = plans.find((p) => {
-    const action = String(p?.action || "").toUpperCase();
-    return action === upper;
-  });
-
-  if (matchedPlan) {
-    chosenKey = matchedPlan.key;
-  }
-
-  // 🔁 fallback: manter plano já escolhido
-  if (!chosenKey && lockedPlanKey) {
-    chosenKey = lockedPlanKey;
-  }
-
-  // MENU
-  if (upper === "MENU_PRINCIPAL") {
+  if (digits === "0") {
     await setState(tenantId, phone, "MAIN");
     await services.sendText({
       tenantId,
@@ -65,7 +39,9 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
-  if (!chosenKey) {
+  const plan = findPlan(runtime, digits);
+
+  if (!plan) {
     await services.sendText({
       tenantId,
       to: phone,
@@ -75,14 +51,26 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
-  // 💾 salva plano na sessão
-  await updateSession(tenantId, phone, (sess) => {
-    sess.booking = sess.booking || {};
-    sess.booking.planKey = chosenKey;
+  // INFO ONLY
+  if (plan.flow === "INFO_ONLY") {
+    const msg = resolveMessage(runtime, MSG, plan.messageKey);
 
-    if (sess.portal?.issue) {
-      delete sess.portal.issue;
-    }
+    await services.sendText({
+      tenantId,
+      to: phone,
+      body: msg,
+      phoneNumberIdFallback,
+    });
+
+    return true;
+  }
+
+  // BOOKING OU DIRECT_BOOKING → mesmo fluxo
+  await updateSession(tenantId, phone, (s) => {
+    s.booking = s.booking || {};
+    s.booking.planKey = plan.key;
+
+    if (s.portal?.issue) delete s.portal.issue;
   });
 
   const s = await getSession(tenantId, phone);
@@ -106,7 +94,7 @@ export async function handlePlanSelectionStep(flowCtx) {
     phone,
     phoneNumberIdFallback,
     patientId,
-    planKeyFromWizard: chosenKey,
+    planKeyFromWizard: plan.key,
     traceId,
     practitionerId,
     MSG,
