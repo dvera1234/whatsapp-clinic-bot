@@ -6,10 +6,15 @@ import {
 import { audit } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
+import { dispatchAction } from "../actions/actionDispatcher.js";
 
 // =========================
 // HELPERS
 // =========================
+
+function getTenantMessages(runtime) {
+  return runtime?.content?.messages || {};
+}
 
 function getMenu(runtime) {
   return runtime?.content?.menu || {};
@@ -23,41 +28,65 @@ function getPlans(runtime) {
 
 function buildMainMenu(runtime) {
   const menu = getMenu(runtime);
+  const title = String(menu?.prompt || "Menu:").trim();
+  const options = Array.isArray(menu?.options) ? menu.options : [];
 
-  const title = menu.prompt || "Menu:";
-  const options = Array.isArray(menu.options) ? menu.options : [];
+  const lines = options
+    .filter(
+      (opt) =>
+        opt &&
+        String(opt.id || "").trim() &&
+        String(opt.label || "").trim() &&
+        String(opt.action || "").trim()
+    )
+    .map((opt) => `${String(opt.id).trim()}) ${String(opt.label).trim()}`);
 
-  const lines = options.map((opt) => `${opt.id}) ${opt.label}`);
-
-  return [title, lines.join("\n")]
-    .filter(Boolean)
-    .join("\n\n");
+  return [title, lines.join("\n")].filter(Boolean).join("\n\n");
 }
 
 function buildPlansMenu(runtime) {
+  const messages = getTenantMessages(runtime);
   const plans = getPlans(runtime);
 
-  const title =
-    runtime?.content?.messages?.planSelectionPrompt ||
-    "Selecione uma opção:";
+  const title = String(
+    messages?.planSelectionPrompt || "Selecione uma opção:"
+  ).trim();
 
-  const lines = plans.map((p) => `${p.id}) ${p.label}`);
-  const footer = "0) Voltar ao menu inicial";
+  const lines = plans
+    .filter(
+      (plan) =>
+        plan &&
+        String(plan.id || "").trim() &&
+        String(plan.label || "").trim()
+    )
+    .map((plan) => `${String(plan.id).trim()}) ${String(plan.label).trim()}`);
 
-  return [title, lines.join("\n"), footer]
-    .filter(Boolean)
-    .join("\n\n");
+  const footer = String(
+    messages?.planMenuFooter || "0) Voltar ao menu inicial"
+  ).trim();
+
+  return [title, lines.join("\n"), footer].filter(Boolean).join("\n\n");
 }
 
 function findMenuOption(runtime, digits) {
   const menu = getMenu(runtime);
-  const options = Array.isArray(menu.options) ? menu.options : [];
-  return options.find((opt) => String(opt.id) === String(digits)) || null;
+  const options = Array.isArray(menu?.options) ? menu.options : [];
+
+  return (
+    options.find(
+      (opt) => String(opt?.id || "").trim() === String(digits || "").trim()
+    ) || null
+  );
 }
 
 function findPlan(runtime, digits) {
   const plans = getPlans(runtime);
-  return plans.find((p) => String(p.id) === String(digits)) || null;
+
+  return (
+    plans.find(
+      (plan) => String(plan?.id || "").trim() === String(digits || "").trim()
+    ) || null
+  );
 }
 
 // =========================
@@ -73,6 +102,8 @@ async function startBooking({
   planKey,
   runtime,
 }) {
+  const messages = getTenantMessages(runtime);
+
   await updateSession(tenantId, phone, (s) => {
     s.booking = {
       ...(s.booking || {}),
@@ -105,7 +136,7 @@ async function startBooking({
   await sendAndSetState({
     tenantId,
     phone,
-    body: runtime?.content?.messages?.lgpdConsent,
+    body: messages?.lgpdConsent,
     state: "LGPD_CONSENT",
     phoneNumberIdFallback,
   });
@@ -127,6 +158,8 @@ export async function handleMainMenuStep(flowCtx) {
     practitionerId,
   } = flowCtx;
 
+  const messages = getTenantMessages(runtime);
+
   // =========================
   // MAIN MENU DINÂMICO
   // =========================
@@ -145,47 +178,26 @@ export async function handleMainMenuStep(flowCtx) {
       return true;
     }
 
-    switch (option.action) {
-      case "PLAN_MENU":
-        await sendAndSetState({
-          tenantId,
-          phone,
-          body: buildPlansMenu(runtime),
-          state: "PLAN_PICK",
-          phoneNumberIdFallback,
-        });
-        return true;
+    const dispatched = await dispatchAction(String(option.action).trim(), {
+      ...flowCtx,
+      menuOption: option,
+      helpers: {
+        buildPlansMenu,
+      },
+    });
 
-      case "POS":
-        await sendAndSetState({
-          tenantId,
-          phone,
-          body: runtime?.content?.messages?.posMenu,
-          state: "POS",
-          phoneNumberIdFallback,
-        });
-        return true;
-
-      case "ATTENDANT":
-        await sendAndSetState({
-          tenantId,
-          phone,
-          body: runtime?.content?.messages?.attendant,
-          state: "ATENDENTE",
-          phoneNumberIdFallback,
-        });
-        return true;
-
-      default:
-        await sendAndSetState({
-          tenantId,
-          phone,
-          body: buildMainMenu(runtime),
-          state: "MAIN",
-          phoneNumberIdFallback,
-        });
-        return true;
+    if (dispatched) {
+      return true;
     }
+
+    await sendAndSetState({
+      tenantId,
+      phone,
+      body: buildMainMenu(runtime),
+      state: "MAIN",
+      phoneNumberIdFallback,
+    });
+    return true;
   }
 
   // =========================
@@ -194,7 +206,7 @@ export async function handleMainMenuStep(flowCtx) {
 
   if (state === "PLAN_PICK") {
     if (digits === "0") {
-      await resetToMain(tenantId, phone, phoneNumberIdFallback, runtime?.content?.messages);
+      await resetToMain(tenantId, phone, phoneNumberIdFallback, messages);
       return true;
     }
 
@@ -211,8 +223,8 @@ export async function handleMainMenuStep(flowCtx) {
       return true;
     }
 
-    if (plan.flow === "INFO_ONLY") {
-      const msg = runtime?.content?.messages?.[plan.messageKey] || "";
+    if (String(plan.flow || "").trim() === "INFO_ONLY") {
+      const msg = String(messages?.[plan.messageKey] || "").trim();
 
       if (msg) {
         await sendAndSetState({
@@ -224,6 +236,15 @@ export async function handleMainMenuStep(flowCtx) {
         });
         return true;
       }
+
+      await sendAndSetState({
+        tenantId,
+        phone,
+        body: buildPlansMenu(runtime),
+        state: "PLAN_PICK",
+        phoneNumberIdFallback,
+      });
+      return true;
     }
 
     await startBooking({
