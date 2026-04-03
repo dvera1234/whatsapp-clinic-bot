@@ -11,8 +11,8 @@ import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
 // HELPERS
 // =========================
 
-function getTenantMessages(runtime) {
-  return runtime?.content?.messages || {};
+function getMenu(runtime) {
+  return runtime?.content?.menu || {};
 }
 
 function getPlans(runtime) {
@@ -21,22 +21,38 @@ function getPlans(runtime) {
     : [];
 }
 
+function buildMainMenu(runtime) {
+  const menu = getMenu(runtime);
+
+  const title = menu.prompt || "Menu:";
+  const options = Array.isArray(menu.options) ? menu.options : [];
+
+  const lines = options.map((opt) => `${opt.id}) ${opt.label}`);
+
+  return [title, lines.join("\n")]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function buildPlansMenu(runtime) {
-  const messages = getTenantMessages(runtime);
   const plans = getPlans(runtime);
 
   const title =
-    messages.planSelectionPrompt ||
+    runtime?.content?.messages?.planSelectionPrompt ||
     "Selecione uma opção:";
 
   const lines = plans.map((p) => `${p.id}) ${p.label}`);
-  const footer =
-    messages.planMenuFooter ||
-    "0) Voltar ao menu inicial";
+  const footer = "0) Voltar ao menu inicial";
 
   return [title, lines.join("\n"), footer]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function findMenuOption(runtime, digits) {
+  const menu = getMenu(runtime);
+  const options = Array.isArray(menu.options) ? menu.options : [];
+  return options.find((opt) => String(opt.id) === String(digits)) || null;
 }
 
 function findPlan(runtime, digits) {
@@ -57,8 +73,6 @@ async function startBooking({
   planKey,
   runtime,
 }) {
-  const messages = getTenantMessages(runtime);
-
   await updateSession(tenantId, phone, (s) => {
     s.booking = {
       ...(s.booking || {}),
@@ -91,7 +105,7 @@ async function startBooking({
   await sendAndSetState({
     tenantId,
     phone,
-    body: messages.lgpdConsent,
+    body: runtime?.content?.messages?.lgpdConsent,
     state: "LGPD_CONSENT",
     phoneNumberIdFallback,
   });
@@ -113,64 +127,74 @@ export async function handleMainMenuStep(flowCtx) {
     practitionerId,
   } = flowCtx;
 
-  const messages = getTenantMessages(runtime);
-
   // =========================
-  // MAIN MENU
+  // MAIN MENU DINÂMICO
   // =========================
 
   if (state === "MAIN") {
-    if (digits === "1") {
+    const option = findMenuOption(runtime, digits);
+
+    if (!option) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: buildPlansMenu(runtime),
-        state: "PLAN_PICK",
+        body: buildMainMenu(runtime),
+        state: "MAIN",
         phoneNumberIdFallback,
       });
       return true;
     }
 
-    if (digits === "3") {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: messages.posMenu,
-        state: "POS",
-        phoneNumberIdFallback,
-      });
-      return true;
+    switch (option.action) {
+      case "PLAN_MENU":
+        await sendAndSetState({
+          tenantId,
+          phone,
+          body: buildPlansMenu(runtime),
+          state: "PLAN_PICK",
+          phoneNumberIdFallback,
+        });
+        return true;
+
+      case "POS":
+        await sendAndSetState({
+          tenantId,
+          phone,
+          body: runtime?.content?.messages?.posMenu,
+          state: "POS",
+          phoneNumberIdFallback,
+        });
+        return true;
+
+      case "ATTENDANT":
+        await sendAndSetState({
+          tenantId,
+          phone,
+          body: runtime?.content?.messages?.attendant,
+          state: "ATENDENTE",
+          phoneNumberIdFallback,
+        });
+        return true;
+
+      default:
+        await sendAndSetState({
+          tenantId,
+          phone,
+          body: buildMainMenu(runtime),
+          state: "MAIN",
+          phoneNumberIdFallback,
+        });
+        return true;
     }
-
-    if (digits === "4") {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: messages.attendant,
-        state: "ATENDENTE",
-        phoneNumberIdFallback,
-      });
-      return true;
-    }
-
-    await sendAndSetState({
-      tenantId,
-      phone,
-      body: messages.menu,
-      state: "MAIN",
-      phoneNumberIdFallback,
-    });
-
-    return true;
   }
 
   // =========================
-  // PLAN PICK (fallback leve)
+  // PLAN PICK
   // =========================
 
   if (state === "PLAN_PICK") {
     if (digits === "0") {
-      await resetToMain(tenantId, phone, phoneNumberIdFallback, messages);
+      await resetToMain(tenantId, phone, phoneNumberIdFallback, runtime?.content?.messages);
       return true;
     }
 
@@ -187,9 +211,8 @@ export async function handleMainMenuStep(flowCtx) {
       return true;
     }
 
-    // INFO ONLY
     if (plan.flow === "INFO_ONLY") {
-      const msg = messages?.[plan.messageKey] || "";
+      const msg = runtime?.content?.messages?.[plan.messageKey] || "";
 
       if (msg) {
         await sendAndSetState({
@@ -203,7 +226,6 @@ export async function handleMainMenuStep(flowCtx) {
       }
     }
 
-    // BOOKING
     await startBooking({
       tenantId,
       traceId,
