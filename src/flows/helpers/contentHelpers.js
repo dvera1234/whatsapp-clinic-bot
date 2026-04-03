@@ -5,152 +5,196 @@ export function tpl(template, vars = {}) {
   });
 }
 
-function requireText(messages, key) {
-  const value = messages?.[key];
+function requireNonEmptyString(value, fieldName) {
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`TENANT_CONTENT_MISSING:${key}`);
+    throw new Error(`TENANT_CONTENT_MISSING:${fieldName}`);
   }
   return value;
 }
 
-function requireArray(messages, key) {
-  const value = messages?.[key];
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`TENANT_CONTENT_MISSING:${key}`);
+export function getMenu(runtime) {
+  const menu = runtime?.content?.menu;
+
+  if (!menu || typeof menu !== "object") {
+    throw new Error("TENANT_CONTENT_MISSING:menu");
   }
-  return value;
+
+  requireNonEmptyString(menu.text, "menu.text");
+
+  if (!Array.isArray(menu.options)) {
+    throw new Error("TENANT_CONTENT_MISSING:menu.options");
+  }
+
+  return menu;
 }
 
-function optionalText(messages, key, fallback) {
+export function getPlans(runtime) {
+  const plans = runtime?.content?.plans;
+
+  if (!Array.isArray(plans)) {
+    throw new Error("TENANT_CONTENT_MISSING:plans");
+  }
+
+  return plans;
+}
+
+export function getPlanById(runtime, planId) {
+  return (
+    getPlans(runtime).find(
+      (plan) => String(plan?.id || "") === String(planId || "")
+    ) || null
+  );
+}
+
+export function getMessages(runtime) {
+  const messages = runtime?.content?.messages;
+
+  if (!messages || typeof messages !== "object") {
+    throw new Error("TENANT_CONTENT_MISSING:messages");
+  }
+
+  return messages;
+}
+
+export function getMessage(runtime, key, fallback = "") {
+  const messages = getMessages(runtime);
   const value = messages?.[key];
-  return typeof value === "string" && value.trim() ? value : fallback;
+
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+
+  return fallback;
+}
+
+export function requireMessage(runtime, key) {
+  return requireNonEmptyString(getMessages(runtime)?.[key], `messages.${key}`);
+}
+
+export function getFlowDefinition(runtime, flowKey) {
+  const flows = runtime?.content?.flows;
+
+  if (!flows || typeof flows !== "object") {
+    throw new Error("TENANT_CONTENT_MISSING:flows");
+  }
+
+  const flow = flows?.[flowKey];
+
+  if (!flow || typeof flow !== "object") {
+    throw new Error(`TENANT_CONTENT_MISSING:flows.${flowKey}`);
+  }
+
+  return flow;
 }
 
 export function getFlowText(runtime) {
-  const messages = runtime?.content?.messages || {};
-
   return {
-    ASK_CPF_PORTAL: requireText(messages, "askCpfPortal"),
-    CPF_INVALIDO: requireText(messages, "cpfInvalido"),
-    PLAN_DIVERGENCIA: requireText(messages, "planDivergencia"),
-    BTN_PLAN_PRIVATE: requireText(messages, "btnPlanPrivate"),
-    BTN_PLAN_INSURED: requireText(messages, "btnPlanInsured"),
-    BTN_FALAR_ATENDENTE: requireText(messages, "btnFalarAtendente"),
+    ASK_CPF_PORTAL: requireMessage(runtime, "askCpfPortal"),
+    CPF_INVALIDO: requireMessage(runtime, "cpfInvalido"),
+    PLAN_DIVERGENCIA: requireMessage(runtime, "planDivergencia"),
+    BTN_PLAN_PRIVATE: requireMessage(runtime, "btnPlanPrivate"),
+    BTN_PLAN_INSURED: requireMessage(runtime, "btnPlanInsured"),
+    BTN_FALAR_ATENDENTE: requireMessage(runtime, "btnFalarAtendente"),
 
-    PORTAL_NEED_DATA: requireText(messages, "portalNeedData"),
-    PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO: requireText(
-      messages,
+    PORTAL_NEED_DATA: requireMessage(runtime, "portalNeedData"),
+    PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO: requireMessage(
+      runtime,
       "portalExistenteIncompletoBloqueio"
     ),
 
-    ASK_NOME: requireText(messages, "askNome"),
-    ASK_DTNASC: requireText(messages, "askDtNasc"),
-    ASK_EMAIL: requireText(messages, "askEmail"),
-    ASK_CEP: requireText(messages, "askCep"),
-    ASK_ENDERECO: requireText(messages, "askEndereco"),
-    ASK_NUMERO: requireText(messages, "askNumero"),
-    ASK_COMPLEMENTO: requireText(messages, "askComplemento"),
-    ASK_BAIRRO: requireText(messages, "askBairro"),
-    ASK_CIDADE: requireText(messages, "askCidade"),
-    ASK_UF: requireText(messages, "askUf"),
+    ASK_NOME: requireMessage(runtime, "askNome"),
+    ASK_DTNASC: requireMessage(runtime, "askDtNasc"),
+    ASK_EMAIL: requireMessage(runtime, "askEmail"),
+    ASK_CEP: requireMessage(runtime, "askCep"),
+    ASK_ENDERECO: requireMessage(runtime, "askEndereco"),
+    ASK_NUMERO: requireMessage(runtime, "askNumero"),
+    ASK_COMPLEMENTO: requireMessage(runtime, "askComplemento"),
+    ASK_BAIRRO: requireMessage(runtime, "askBairro"),
+    ASK_CIDADE: requireMessage(runtime, "askCidade"),
+    ASK_UF: requireMessage(runtime, "askUf"),
 
-    MENU: requireText(messages, "menu"),
-    LGPD_CONSENT: requireText(messages, "lgpdConsent"),
-    LGPD_RECUSA: requireText(messages, "lgpdRecusa"),
+    MENU: getMenu(runtime).text,
+    LGPD_CONSENT: requireMessage(runtime, "lgpdConsent"),
+    LGPD_RECUSA: requireMessage(runtime, "lgpdRecusa"),
 
-    PRIVATE_MENU: requireText(messages, "privateMenu"),
-    INSURANCE_MENU_TITLE: requireText(messages, "insuranceMenuTitle"),
-    INSURANCE_OPTIONS: requireArray(messages, "insuranceOptions"),
-    INSURANCE_INFO_1: requireText(messages, "insuranceInfo1"),
-    INSURANCE_INFO_2: requireText(messages, "insuranceInfo2"),
-    INSURANCE_INFO_3: requireText(messages, "insuranceInfo3"),
-    INSURANCE_INFO_4: requireText(messages, "insuranceInfo4"),
-    INSURED_DIRECT_MENU: requireText(messages, "insuredDirectMenu"),
+    BUTTONS_ONLY_WARNING: requireMessage(runtime, "buttonsOnlyWarning"),
+    PICK_PLAN_BUTTONS_ONLY: requireMessage(runtime, "pickPlanButtonsOnly"),
 
-    POS_MENU: requireText(messages, "posMenu"),
-    POS_RECENTE: requireText(messages, "posRecente"),
-    POS_TARDIO: requireText(messages, "posTardio"),
-    ATENDENTE: requireText(messages, "atendente"),
-    AJUDA_PERGUNTA: requireText(messages, "ajudaPergunta"),
-    REDIS_UNAVAILABLE: optionalText(
-      messages,
-      "redisUnavailable",
-      "⚠️ Não foi possível continuar o atendimento agora. Por favor, tente novamente em instantes."
-    ),
-    PROVIDER_UNAVAILABLE: optionalText(
-      messages,
-      "providerUnavailable",
-      "⚠️ Nosso sistema está temporariamente indisponível no momento. Por favor, tente novamente em instantes."
-    ),
-
-    BUTTONS_ONLY_WARNING: requireText(messages, "buttonsOnlyWarning"),
-    PICK_PLAN_BUTTONS_ONLY: requireText(messages, "pickPlanButtonsOnly"),
-
-    BOOKING_SESSION_INVALID: requireText(messages, "bookingSessionInvalid"),
-    BOOKING_SLOT_CONFIRM: requireText(messages, "bookingSlotConfirm"),
-    BOOKING_SLOT_INVALID: requireText(messages, "bookingSlotInvalid"),
-    BOOKING_PATIENT_NOT_IDENTIFIED: requireText(
-      messages,
+    BOOKING_SESSION_INVALID: requireMessage(runtime, "bookingSessionInvalid"),
+    BOOKING_SLOT_CONFIRM: requireMessage(runtime, "bookingSlotConfirm"),
+    BOOKING_SLOT_INVALID: requireMessage(runtime, "bookingSlotInvalid"),
+    BOOKING_PATIENT_NOT_IDENTIFIED: requireMessage(
+      runtime,
       "bookingPatientNotIdentified"
     ),
-    BOOKING_ALREADY_PROCESSING: requireText(
-      messages,
+    BOOKING_ALREADY_PROCESSING: requireMessage(
+      runtime,
       "bookingAlreadyProcessing"
     ),
-    BOOKING_SLOT_NOT_FOUND: requireText(messages, "bookingSlotNotFound"),
-    BOOKING_SLOT_TOO_SOON: requireText(messages, "bookingSlotTooSoon"),
-    BOOKING_CONFIRM_FAILURE: requireText(messages, "bookingConfirmFailure"),
-    BOOKING_SUCCESS_FALLBACK: requireText(messages, "bookingSuccessFallback"),
-    BOOKING_NO_DATES: requireText(messages, "bookingNoDates"),
-    BOOKING_PICK_DATE: requireText(messages, "bookingPickDate"),
-    BOOKING_NO_SLOTS: requireText(messages, "bookingNoSlots"),
-    BOOKING_CHANGE_DATE: requireText(messages, "bookingChangeDate"),
-    BOOKING_AVAILABLE_SLOTS: requireText(messages, "bookingAvailableSlots"),
-    BOOKING_OPTIONS: requireText(messages, "bookingOptions"),
-    BOOKING_VIEW_MORE: requireText(messages, "bookingViewMore"),
+    BOOKING_SLOT_NOT_FOUND: requireMessage(runtime, "bookingSlotNotFound"),
+    BOOKING_SLOT_TOO_SOON: requireMessage(runtime, "bookingSlotTooSoon"),
+    BOOKING_CONFIRM_FAILURE: requireMessage(runtime, "bookingConfirmFailure"),
+    BOOKING_SUCCESS_FALLBACK: requireMessage(runtime, "bookingSuccessFallback"),
+    BOOKING_NO_DATES: requireMessage(runtime, "bookingNoDates"),
+    BOOKING_PICK_DATE: requireMessage(runtime, "bookingPickDate"),
+    BOOKING_NO_SLOTS: requireMessage(runtime, "bookingNoSlots"),
+    BOOKING_CHANGE_DATE: requireMessage(runtime, "bookingChangeDate"),
+    BOOKING_AVAILABLE_SLOTS: requireMessage(runtime, "bookingAvailableSlots"),
+    BOOKING_OPTIONS: requireMessage(runtime, "bookingOptions"),
+    BOOKING_VIEW_MORE: requireMessage(runtime, "bookingViewMore"),
 
-    WIZARD_NEW_PATIENT_NAME: requireText(messages, "wizardNewPatientName"),
-    PROFILE_LOOKUP_FAILURE: requireText(messages, "profileLookupFailure"),
-    PLAN_VALIDATION_FAILURE: requireText(messages, "planValidationFailure"),
-    NAME_INVALID: requireText(messages, "nameInvalid"),
-    DATE_INVALID: requireText(messages, "dateInvalid"),
-    EMAIL_INVALID: requireText(messages, "emailInvalid"),
-    CEP_INVALID: requireText(messages, "cepInvalid"),
-    ADDRESS_INVALID: requireText(messages, "addressInvalid"),
-    ADDRESS_NUMBER_INVALID: requireText(messages, "addressNumberInvalid"),
-    DISTRICT_INVALID: requireText(messages, "districtInvalid"),
-    CITY_INVALID: requireText(messages, "cityInvalid"),
-    UF_INVALID: requireText(messages, "ufInvalid"),
-    REGISTRATION_CREATE_FAILURE: requireText(
-      messages,
+    WIZARD_NEW_PATIENT_NAME: requireMessage(runtime, "wizardNewPatientName"),
+    PROFILE_LOOKUP_FAILURE: requireMessage(runtime, "profileLookupFailure"),
+    PLAN_VALIDATION_FAILURE: requireMessage(runtime, "planValidationFailure"),
+    NAME_INVALID: requireMessage(runtime, "nameInvalid"),
+    DATE_INVALID: requireMessage(runtime, "dateInvalid"),
+    EMAIL_INVALID: requireMessage(runtime, "emailInvalid"),
+    CEP_INVALID: requireMessage(runtime, "cepInvalid"),
+    ADDRESS_INVALID: requireMessage(runtime, "addressInvalid"),
+    ADDRESS_NUMBER_INVALID: requireMessage(runtime, "addressNumberInvalid"),
+    DISTRICT_INVALID: requireMessage(runtime, "districtInvalid"),
+    CITY_INVALID: requireMessage(runtime, "cityInvalid"),
+    UF_INVALID: requireMessage(runtime, "ufInvalid"),
+    REGISTRATION_CREATE_FAILURE: requireMessage(
+      runtime,
       "registrationCreateFailure"
     ),
 
-    ATTENDANT_DESCRIBE: requireText(messages, "attendantDescribe"),
-    SUPPORT_LINK_MESSAGE: requireText(messages, "supportLinkMessage"),
-    PLAN_NOT_ENABLED_MESSAGE: requireText(messages, "planNotEnabledMessage"),
+    ATTENDANT_DESCRIBE: requireMessage(runtime, "attendantDescribe"),
+    SUPPORT_LINK_MESSAGE: requireMessage(runtime, "supportLinkMessage"),
+    PLAN_NOT_ENABLED_MESSAGE: requireMessage(runtime, "planNotEnabledMessage"),
 
-    BOOKING_SUCCESS_MAIN: requireText(messages, "bookingSuccessMain"),
-    PORTAL_LINK_PREFIX: requireText(messages, "portalLinkPrefix"),
-    PAYMENT_INFO_PRIVATE_FIRST_VISIT: requireText(
-      messages,
+    BOOKING_SUCCESS_MAIN: requireMessage(runtime, "bookingSuccessMain"),
+    PORTAL_LINK_PREFIX: requireMessage(runtime, "portalLinkPrefix"),
+    PAYMENT_INFO_PRIVATE_FIRST_VISIT: requireMessage(
+      runtime,
       "paymentInfoPrivateFirstVisit"
     ),
 
-    SEX_PROMPT: requireText(messages, "sexPrompt"),
-    SEX_MALE: requireText(messages, "sexMale"),
-    SEX_FEMALE: requireText(messages, "sexFemale"),
-    SEX_NO_INFO: requireText(messages, "sexNoInfo"),
+    SEX_PROMPT: requireMessage(runtime, "sexPrompt"),
+    SEX_MALE: requireMessage(runtime, "sexMale"),
+    SEX_FEMALE: requireMessage(runtime, "sexFemale"),
+    SEX_NO_INFO: requireMessage(runtime, "sexNoInfo"),
 
-    PLAN_SELECTION_PROMPT: requireText(messages, "planSelectionPrompt"),
-    PLAN_OPTION_PRIVATE: requireText(messages, "planOptionPrivate"),
-    PLAN_OPTION_INSURED: requireText(messages, "planOptionInsured"),
+    PLAN_SELECTION_PROMPT: requireMessage(runtime, "planSelectionPrompt"),
+    PLAN_OPTION_PRIVATE: requireMessage(runtime, "planOptionPrivate"),
+    PLAN_OPTION_INSURED: requireMessage(runtime, "planOptionInsured"),
 
-    ACTION_CONFIRM: requireText(messages, "actionConfirm"),
-    ACTION_PICK_OTHER: requireText(messages, "actionPickOther"),
+    ACTION_CONFIRM: requireMessage(runtime, "actionConfirm"),
+    ACTION_PICK_OTHER: requireMessage(runtime, "actionPickOther"),
 
-    INACTIVITY_CLOSED_MESSAGE: optionalText(
-      messages,
+    REDIS_UNAVAILABLE: getMessage(
+      runtime,
+      "redisUnavailable",
+      "⚠️ Não foi possível continuar o atendimento agora. Por favor, tente novamente em instantes."
+    ),
+    PROVIDER_UNAVAILABLE: getMessage(
+      runtime,
+      "providerUnavailable",
+      "⚠️ Nosso sistema está temporariamente indisponível no momento. Por favor, tente novamente em instantes."
+    ),
+    INACTIVITY_CLOSED_MESSAGE: getMessage(
+      runtime,
       "inactivityClosedMessage",
       "✅ Atendimento encerrado por inatividade."
     ),
