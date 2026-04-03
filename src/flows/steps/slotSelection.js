@@ -7,9 +7,7 @@ import {
   showNextDates,
   showSlotsPage,
 } from "../helpers/bookingHelpers.js";
-import {
-  handleProviderTemporaryUnavailable,
-} from "../helpers/auditHelpers.js";
+import { handleProviderTemporaryUnavailable } from "../helpers/auditHelpers.js";
 
 export async function handleSlotSelectionStep(flowCtx) {
   const {
@@ -32,9 +30,6 @@ export async function handleSlotSelectionStep(flowCtx) {
     return false;
   }
 
-  // =========================
-  // CHANGE DATE
-  // =========================
   if (raw === "CHANGE_DATE") {
     await updateSession(tenantId, phone, (sess) => {
       sess.booking = sess.booking || {};
@@ -89,9 +84,6 @@ export async function handleSlotSelectionStep(flowCtx) {
     return true;
   }
 
-  // =========================
-  // DATE PAGE
-  // =========================
   if (raw.startsWith("DATE_PAGE_")) {
     const page = Number(raw.replace("DATE_PAGE_", ""));
 
@@ -159,9 +151,6 @@ export async function handleSlotSelectionStep(flowCtx) {
     return true;
   }
 
-  // =========================
-  // DATE SELECTION
-  // =========================
   if (raw.startsWith("DATE_")) {
     const appointmentDate = String(raw.replace("DATE_", "")).trim();
 
@@ -265,9 +254,6 @@ export async function handleSlotSelectionStep(flowCtx) {
     return true;
   }
 
-  // =========================
-  // SLOT PAGE
-  // =========================
   if (raw.startsWith("SLOT_PAGE_")) {
     const page = Number(raw.replace("SLOT_PAGE_", ""));
 
@@ -316,9 +302,6 @@ export async function handleSlotSelectionStep(flowCtx) {
     return true;
   }
 
-  // =========================
-  // SLOT SELECTION
-  // =========================
   if (raw.startsWith("SLOT_")) {
     const slotId = Number(raw.replace("SLOT_", ""));
 
@@ -387,6 +370,8 @@ export async function handleSlotSelectionStep(flowCtx) {
       };
     });
 
+    await setState(tenantId, phone, "WAIT_CONFIRM");
+
     audit(
       "SLOT_SELECTED",
       sanitizeForLog({
@@ -399,12 +384,24 @@ export async function handleSlotSelectionStep(flowCtx) {
       })
     );
 
-    return false;
+    await services.sendButtons({
+      tenantId,
+      to: phone,
+      body: tplConfirmMessage({
+        MSG,
+        appointmentDate: s?.booking?.appointmentDate || null,
+        appointmentTime: chosen?.time || null,
+      }),
+      buttons: [
+        { id: "CONFIRMAR", title: MSG.ACTION_CONFIRM },
+        { id: "ESCOLHER_OUTRO", title: MSG.ACTION_PICK_OTHER },
+      ],
+      phoneNumberIdFallback,
+    });
+
+    return true;
   }
 
-  // =========================
-  // INVALID INPUT INSIDE BOOKING FLOW
-  // =========================
   await audit(
     "INVALID_SLOT_SELECTION_INPUT",
     sanitizeForLog({
@@ -473,4 +470,18 @@ export async function handleSlotSelectionStep(flowCtx) {
   }
 
   return false;
+}
+
+function tplConfirmMessage({ MSG, appointmentDate, appointmentTime }) {
+  const dateText = appointmentDate
+    ? String(appointmentDate).replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1")
+    : "";
+
+  if (MSG.BOOKING_CONFIRM_PROMPT) {
+    return String(MSG.BOOKING_CONFIRM_PROMPT)
+      .replaceAll("{appointmentDate}", dateText)
+      .replaceAll("{appointmentTime}", appointmentTime || "");
+  }
+
+  return `Confirma este agendamento?\n\n📅 Data: ${dateText}\n⏰ Horário: ${appointmentTime || "-"}`;
 }
