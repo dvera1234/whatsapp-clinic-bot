@@ -8,9 +8,7 @@ import {
 
 import { sendText, sendButtons } from "../whatsapp/sender.js";
 
-import {
-  FLOW_RESET_CODE,
-} from "../config/constants.js";
+import { FLOW_RESET_CODE } from "../config/constants.js";
 
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
 import { createPortalAdapter } from "../integrations/adapters/factories/createPortalAdapter.js";
@@ -38,23 +36,22 @@ import {
 
 import { getFlowText } from "./helpers/contentHelpers.js";
 
-// 🔥 NOVO: validator
 import { validateTenantContent } from "../tenants/validateTenantContent.js";
 
-// 🔥 NEW
 import { registerDefaultActions } from "./actions/registerActions.js";
 
-// registra ações uma única vez
 registerDefaultActions();
 
 async function handleInbound({
   context = {},
   phone,
   text: inboundText,
+  message, // 🔥 IMPORTANTE: precisa vir do webhook
   phoneNumberIdFallback,
 }) {
   const traceId = String(context?.traceId || crypto.randomUUID());
   const tenantId = String(context?.tenantId || "").trim();
+
   const effectivePhoneNumberId =
     context?.phoneNumberId || phoneNumberIdFallback || null;
 
@@ -77,7 +74,7 @@ async function handleInbound({
     return;
   }
 
-  // 🔴 VALIDAÇÃO DO JSON DO TENANT (CRÍTICO)
+  // ✅ VALIDAÇÃO JSON TENANT
   const validation = validateTenantContent(runtime.content);
 
   if (!validation.ok) {
@@ -110,7 +107,7 @@ async function handleInbound({
     return;
   }
 
-  // 🔥 INATIVIDADE 100% JSON
+  // 🔥 INATIVIDADE DINÂMICA
   configureInactivityHandler({
     sendText,
     getMessage: () => runtime.content.messages.inactivityClosedMessage,
@@ -135,8 +132,19 @@ async function handleInbound({
 
   const practitionerId = runtime?.clinic?.providerId ?? null;
 
-  const raw = normalizeSpaces(inboundText);
+  // =========================
+  // 🔥 INPUT NORMALIZATION (AQUI ESTÁ A MUDANÇA CRÍTICA)
+  // =========================
+
+  const listReplyId =
+    message?.interactive?.list_reply?.id || null;
+
+  const rawInput = listReplyId || inboundText || "";
+
+  const raw = normalizeSpaces(rawInput);
   const digits = onlyDigits(raw);
+
+  // =========================
 
   await touchUser({
     tenantId,
@@ -169,9 +177,13 @@ async function handleInbound({
     },
   };
 
+  // =========================
   // RESET
+  // =========================
+
   {
     const code = String(FLOW_RESET_CODE || "").trim();
+
     if (code && raw.toUpperCase() === code.toUpperCase()) {
       await sendAndSetState({
         tenantId,
@@ -185,7 +197,10 @@ async function handleInbound({
     }
   }
 
-  // 🔥 PIPELINE (INALTERADO)
+  // =========================
+  // PIPELINE (INALTERADO)
+  // =========================
+
   if (await handleMainMenuStep(flowCtx)) return;
   if (await handlePlanSelectionStep(flowCtx)) return;
   if (await handlePortalFlowStep(flowCtx)) return;
@@ -196,7 +211,10 @@ async function handleInbound({
   if (await handlePostFlowStep(flowCtx)) return;
   if (await handleSupportFlowStep(flowCtx)) return;
 
-  // fallback
+  // =========================
+  // FALLBACK
+  // =========================
+
   await sendAndSetState({
     tenantId,
     phone,
