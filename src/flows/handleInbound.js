@@ -38,6 +38,9 @@ import {
 
 import { getFlowText } from "./helpers/contentHelpers.js";
 
+// 🔥 NOVO: validator
+import { validateTenantContent } from "../tenants/validateTenantContent.js";
+
 // 🔥 NEW
 import { registerDefaultActions } from "./actions/registerActions.js";
 
@@ -74,6 +77,27 @@ async function handleInbound({
     return;
   }
 
+  // 🔴 VALIDAÇÃO DO JSON DO TENANT (CRÍTICO)
+  const validation = validateTenantContent(runtime.content);
+
+  if (!validation.ok) {
+    audit("TENANT_CONTENT_INVALID", {
+      tenantId,
+      traceId,
+      errors: validation.errors,
+    });
+
+    await sendText({
+      tenantId,
+      to: phone,
+      body:
+        "⚠️ Ocorreu um erro de configuração. Nossa equipe já foi notificada.",
+      phoneNumberIdFallback: effectivePhoneNumberId,
+    });
+
+    return;
+  }
+
   let MSG;
   try {
     MSG = getFlowText(runtime);
@@ -89,7 +113,7 @@ async function handleInbound({
   // 🔥 INATIVIDADE 100% JSON
   configureInactivityHandler({
     sendText,
-    getMessage: () => runtime.content.messages.inactivityClosureMessage,
+    getMessage: () => runtime.content.messages.inactivityClosedMessage,
   });
 
   let patientAdapter;
@@ -152,7 +176,7 @@ async function handleInbound({
       await sendAndSetState({
         tenantId,
         phone,
-        body: runtime?.content?.messages?.menu,
+        body: runtime?.content?.menu?.text,
         state: "MAIN",
         phoneNumberIdFallback: effectivePhoneNumberId,
         resetSession: true,
@@ -176,7 +200,7 @@ async function handleInbound({
   await sendAndSetState({
     tenantId,
     phone,
-    body: runtime?.content?.messages?.menu,
+    body: runtime?.content?.menu?.text,
     state: "MAIN",
     phoneNumberIdFallback: effectivePhoneNumberId,
   });
