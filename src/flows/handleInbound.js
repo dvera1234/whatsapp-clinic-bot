@@ -6,7 +6,7 @@ import {
   getState,
 } from "../session/redisSession.js";
 
-import { sendText, sendButtons } from "../whatsapp/sender.js";
+import { sendText, sendButtons, sendList } from "../whatsapp/sender.js";
 
 import { FLOW_RESET_CODE } from "../config/constants.js";
 
@@ -46,7 +46,7 @@ async function handleInbound({
   context = {},
   phone,
   text: inboundText,
-  message, // 🔥 IMPORTANTE: precisa vir do webhook
+  message,
   phoneNumberIdFallback,
 }) {
   const traceId = String(context?.traceId || crypto.randomUUID());
@@ -74,7 +74,6 @@ async function handleInbound({
     return;
   }
 
-  // ✅ VALIDAÇÃO JSON TENANT
   const validation = validateTenantContent(runtime.content);
 
   if (!validation.ok) {
@@ -107,7 +106,6 @@ async function handleInbound({
     return;
   }
 
-  // 🔥 INATIVIDADE DINÂMICA
   configureInactivityHandler({
     sendText,
     getMessage: () => runtime.content.messages.inactivityClosedMessage,
@@ -132,19 +130,13 @@ async function handleInbound({
 
   const practitionerId = runtime?.clinic?.providerId ?? null;
 
-  // =========================
-  // 🔥 INPUT NORMALIZATION (AQUI ESTÁ A MUDANÇA CRÍTICA)
-  // =========================
+  const listReplyId = message?.interactive?.list_reply?.id || null;
+  const buttonReplyId = message?.interactive?.button_reply?.id || null;
 
-  const listReplyId =
-    message?.interactive?.list_reply?.id || null;
-
-  const rawInput = listReplyId || inboundText || "";
-
+  const rawInput = listReplyId || buttonReplyId || inboundText || "";
   const raw = normalizeSpaces(rawInput);
   const digits = onlyDigits(raw);
-
-  // =========================
+  const upper = String(raw || "").toUpperCase();
 
   await touchUser({
     tenantId,
@@ -154,14 +146,23 @@ async function handleInbound({
 
   const state = (await getState(tenantId, phone)) || "MAIN";
 
+  const runtimeCtx = {
+    tenantId,
+    runtime,
+    traceId,
+    tracePhone: maskPhone(phone),
+  };
+
   const flowCtx = {
     context,
     tenantId,
     runtime,
+    runtimeCtx,
     traceId,
     phone,
     phoneNumberIdFallback: effectivePhoneNumberId,
     raw,
+    upper,
     digits,
     state,
     MSG,
@@ -174,12 +175,9 @@ async function handleInbound({
     services: {
       sendText,
       sendButtons,
+      sendList,
     },
   };
-
-  // =========================
-  // RESET
-  // =========================
 
   {
     const code = String(FLOW_RESET_CODE || "").trim();
@@ -197,10 +195,6 @@ async function handleInbound({
     }
   }
 
-  // =========================
-  // PIPELINE (INALTERADO)
-  // =========================
-
   if (await handleMainMenuStep(flowCtx)) return;
   if (await handlePlanSelectionStep(flowCtx)) return;
   if (await handlePortalFlowStep(flowCtx)) return;
@@ -210,10 +204,6 @@ async function handleInbound({
   if (await handleBookingConfirmationStep(flowCtx)) return;
   if (await handlePostFlowStep(flowCtx)) return;
   if (await handleSupportFlowStep(flowCtx)) return;
-
-  // =========================
-  // FALLBACK
-  // =========================
 
   await sendAndSetState({
     tenantId,
