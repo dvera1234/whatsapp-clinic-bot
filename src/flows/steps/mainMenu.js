@@ -8,50 +8,73 @@ import { audit } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
 
-function camelToConstKey(value = "") {
-  return String(value)
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/[-\s]+/g, "_")
-    .toUpperCase();
+function getTenantMessages(runtime) {
+  return runtime?.content?.messages || {};
 }
 
-function buildInsuranceMenuBody(MSG) {
-  const title = String(MSG.INSURANCE_MENU_TITLE || "").trim();
-  const options = Array.isArray(MSG.INSURANCE_OPTIONS)
+function getInsuranceOptions(runtime, MSG) {
+  const tenantMessages = getTenantMessages(runtime);
+
+  const runtimeOptions = Array.isArray(tenantMessages.insuranceOptions)
+    ? tenantMessages.insuranceOptions
+    : [];
+
+  if (runtimeOptions.length > 0) {
+    return runtimeOptions
+      .map((item) => ({
+        id: String(item?.id || "").trim(),
+        label: String(item?.label || "").trim(),
+        actionType: String(item?.actionType || "").trim(),
+        messageKey: String(item?.messageKey || "").trim() || null,
+      }))
+      .filter((item) => item.id && item.label && item.actionType);
+  }
+
+  const msgOptions = Array.isArray(MSG?.INSURANCE_OPTIONS)
     ? MSG.INSURANCE_OPTIONS
     : [];
 
-  const optionLines = options
-    .filter(
-      (item) =>
-        item &&
-        String(item.id || "").trim() &&
-        String(item.label || "").trim()
-    )
-    .map((item) => `${item.id}) ${item.label}`);
+  return msgOptions
+    .map((item) => ({
+      id: String(item?.id || "").trim(),
+      label: String(item?.label || "").trim(),
+      actionType: String(item?.actionType || "").trim(),
+      messageKey: String(item?.messageKey || "").trim() || null,
+    }))
+    .filter((item) => item.id && item.label && item.actionType);
+}
 
+function buildInsuranceMenuBody(runtime, MSG) {
+  const tenantMessages = getTenantMessages(runtime);
+  const title = String(
+    tenantMessages.insuranceMenuTitle || MSG.INSURANCE_MENU_TITLE || ""
+  ).trim();
+
+  const options = getInsuranceOptions(runtime, MSG);
+
+  const optionLines = options.map((item) => `${item.id}) ${item.label}`);
   const footer = "0) Voltar ao menu inicial";
 
   return [title, optionLines.join("\n"), footer].filter(Boolean).join("\n\n");
 }
 
-function findInsuranceOption(MSG, digits) {
-  const options = Array.isArray(MSG.INSURANCE_OPTIONS)
-    ? MSG.INSURANCE_OPTIONS
-    : [];
-
+function findInsuranceOption(runtime, MSG, digits) {
+  const options = getInsuranceOptions(runtime, MSG);
   return (
-    options.find((item) => String(item?.id || "").trim() === String(digits)) ||
-    null
+    options.find((item) => item.id === String(digits || "").trim()) || null
   );
 }
 
-function resolveInsuranceInfoMessage(MSG, option) {
+function resolveInsuranceInfoMessage(runtime, MSG, option) {
+  const tenantMessages = getTenantMessages(runtime);
   const rawKey = String(option?.messageKey || "").trim();
+
   if (!rawKey) return "";
 
-  const constKey = camelToConstKey(rawKey);
-  return String(MSG?.[constKey] || "").trim();
+  const fromRuntime = String(tenantMessages?.[rawKey] || "").trim();
+  if (fromRuntime) return fromRuntime;
+
+  return String(MSG?.[rawKey] || "").trim();
 }
 
 async function startBookingWithPlan({
@@ -104,6 +127,7 @@ async function startBookingWithPlan({
 export async function handleMainMenuStep(flowCtx) {
   const {
     tenantId,
+    runtime,
     traceId,
     phone,
     phoneNumberIdFallback,
@@ -129,7 +153,7 @@ export async function handleMainMenuStep(flowCtx) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: buildInsuranceMenuBody(MSG),
+        body: buildInsuranceMenuBody(runtime, MSG),
         state: "INSURANCE_MENU",
         phoneNumberIdFallback,
       });
@@ -203,13 +227,13 @@ export async function handleMainMenuStep(flowCtx) {
       return true;
     }
 
-    const selectedOption = findInsuranceOption(MSG, digits);
+    const selectedOption = findInsuranceOption(runtime, MSG, digits);
 
     if (!selectedOption) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: buildInsuranceMenuBody(MSG),
+        body: buildInsuranceMenuBody(runtime, MSG),
         state: "INSURANCE_MENU",
         phoneNumberIdFallback,
       });
@@ -217,13 +241,13 @@ export async function handleMainMenuStep(flowCtx) {
     }
 
     if (selectedOption.actionType === "INSURANCE_INFO_ONLY") {
-      const infoMessage = resolveInsuranceInfoMessage(MSG, selectedOption);
+      const infoMessage = resolveInsuranceInfoMessage(runtime, MSG, selectedOption);
 
       if (!infoMessage) {
         await sendAndSetState({
           tenantId,
           phone,
-          body: buildInsuranceMenuBody(MSG),
+          body: buildInsuranceMenuBody(runtime, MSG),
           state: "INSURANCE_MENU",
           phoneNumberIdFallback,
         });
@@ -233,9 +257,10 @@ export async function handleMainMenuStep(flowCtx) {
       await updateSession(tenantId, phone, (s) => {
         s.pending = {
           ...(s.pending || {}),
-          insuranceOptionId: String(selectedOption.id),
+          insuranceOptionId: selectedOption.id,
           insuranceActionType: selectedOption.actionType,
-          insuranceLabel: String(selectedOption.label || ""),
+          insuranceLabel: selectedOption.label,
+          insuranceMessageKey: selectedOption.messageKey,
         };
       });
 
@@ -258,9 +283,10 @@ export async function handleMainMenuStep(flowCtx) {
 
         s.pending = {
           ...(s.pending || {}),
-          insuranceOptionId: String(selectedOption.id),
+          insuranceOptionId: selectedOption.id,
           insuranceActionType: selectedOption.actionType,
-          insuranceLabel: String(selectedOption.label || ""),
+          insuranceLabel: selectedOption.label,
+          insuranceMessageKey: selectedOption.messageKey,
         };
       });
 
@@ -277,7 +303,7 @@ export async function handleMainMenuStep(flowCtx) {
     await sendAndSetState({
       tenantId,
       phone,
-      body: buildInsuranceMenuBody(MSG),
+      body: buildInsuranceMenuBody(runtime, MSG),
       state: "INSURANCE_MENU",
       phoneNumberIdFallback,
     });
@@ -301,10 +327,41 @@ export async function handleMainMenuStep(flowCtx) {
       return true;
     }
 
+    const selectedOption = findInsuranceOption(
+      runtime,
+      MSG,
+      digits
+    );
+
+    if (selectedOption) {
+      const infoMessage = resolveInsuranceInfoMessage(runtime, MSG, selectedOption);
+
+      if (infoMessage) {
+        await updateSession(tenantId, phone, (s) => {
+          s.pending = {
+            ...(s.pending || {}),
+            insuranceOptionId: selectedOption.id,
+            insuranceActionType: selectedOption.actionType,
+            insuranceLabel: selectedOption.label,
+            insuranceMessageKey: selectedOption.messageKey,
+          };
+        });
+
+        await sendAndSetState({
+          tenantId,
+          phone,
+          body: infoMessage,
+          state: "INSURANCE_INFO",
+          phoneNumberIdFallback,
+        });
+        return true;
+      }
+    }
+
     await sendAndSetState({
       tenantId,
       phone,
-      body: buildInsuranceMenuBody(MSG),
+      body: buildInsuranceMenuBody(runtime, MSG),
       state: "INSURANCE_MENU",
       phoneNumberIdFallback,
     });
