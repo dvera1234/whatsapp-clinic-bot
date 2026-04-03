@@ -1,3 +1,4 @@
+import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { sendAndSetState } from "../helpers/flowHelpers.js";
 
 // =========================
@@ -18,31 +19,42 @@ export async function handlePlanMenu(flowCtx) {
     phone,
     runtime,
     phoneNumberIdFallback,
-    helpers,
   } = flowCtx;
 
-  const buildPlansMenu = helpers?.buildPlansMenu;
+  const messages = getMessages(runtime);
+  const plans = runtime?.content?.plans || [];
 
-  const body =
-    typeof buildPlansMenu === "function"
-      ? buildPlansMenu(runtime)
-      : (() => {
-          const messages = getMessages(runtime);
-          const plans = runtime?.content?.plans || [];
+  if (!plans.length) {
+    throw new Error("TENANT_CONTENT_INVALID:plans_empty");
+  }
 
-          const title =
-            messages?.planSelectionPrompt ||
-            "Selecione uma opção:";
+  const title =
+    messages?.planSelectionPrompt ||
+    "Selecione uma opção:";
 
-          const lines = plans.map((p) => `${p.id}) ${p.label}`);
+  const sections = [
+    {
+      title: "Opções disponíveis",
+      rows: plans.map((p) => ({
+        id: String(p.id),
+        title: p.label,
+        description: p.description || "",
+      })),
+    },
+  ];
 
-          return [title, lines.join("\n")].join("\n\n");
-        })();
+  await sendListMessage({
+    to: phone,
+    phoneNumberId: phoneNumberIdFallback,
+    body: title,
+    buttonText: "Selecionar",
+    sections,
+  });
 
   await sendAndSetState({
     tenantId,
     phone,
-    body,
+    body: null, // importante: não envia texto duplicado
     state: "PLAN_PICK",
     phoneNumberIdFallback,
   });
