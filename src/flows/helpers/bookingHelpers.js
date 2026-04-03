@@ -1,5 +1,3 @@
-import { audit } from "../../observability/audit.js";
-import { sanitizeForLog } from "../../utils/logSanitizer.js";
 import { setState, updateSession } from "../../session/redisSession.js";
 import { MIN_LEAD_HOURS, TZ_OFFSET } from "../../config/constants.js";
 import { maskPhone } from "../../utils/mask.js";
@@ -32,6 +30,15 @@ export function formatBRFromISO(isoDate) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
   if (!m) return isoDate;
   return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+function buildListSections({ title, rows }) {
+  return [
+    {
+      title,
+      rows,
+    },
+  ];
 }
 
 export async function findSlotsByDate({
@@ -96,9 +103,9 @@ export async function fetchNextAvailableDates({
   runtimeCtx,
   practitionerId,
   patientId,
-  phone = "", 
-  daysLookahead = 30, // suficiente para UX real
-  limit = 3,
+  phone = "",
+  daysLookahead = 60,
+  limit = 20,
 }) {
   const dates = [];
   const start = new Date();
@@ -136,11 +143,6 @@ export async function fetchNextAvailableDates({
 
     if (out.ok && out.slots.length > 0) {
       dates.push(appointmentDate);
-    
-      // 🔴 otimização crítica
-      if (dates.length >= limit) {
-        break;
-      }
     }
   }
 
@@ -161,6 +163,7 @@ export async function showNextDates({
   patientId,
   MSG,
   services,
+  page = 0,
 }) {
   const result = await fetchNextAvailableDates({
     schedulingAdapter,
@@ -169,7 +172,7 @@ export async function showNextDates({
     patientId,
     phone,
     daysLookahead: 60,
-    limit: 3,
+    limit: 20,
   });
 
   if (result.providerUnavailable) {
@@ -199,20 +202,39 @@ export async function showNextDates({
     return false;
   }
 
-  const buttons = dates.map((iso) => ({
-    id: `D_${iso}`,
+  const pageSize = 8;
+  const start = page * pageSize;
+  const end = start + pageSize;
+  const pageItems = dates.slice(start, end);
+
+  const rows = pageItems.map((iso) => ({
+    id: `DATE_${iso}`,
     title: formatBRFromISO(iso),
+    description: MSG.BOOKING_DATE_ROW_DESCRIPTION || "Selecionar esta data",
   }));
 
-  await services.sendButtons({
+  if (end < dates.length) {
+    rows.push({
+      id: `DATE_PAGE_${page + 1}`,
+      title: MSG.BOOKING_VIEW_MORE || "Ver mais datas",
+      description: MSG.BOOKING_VIEW_MORE_DATES_DESCRIPTION || "Mostrar próximas datas disponíveis",
+    });
+  }
+
+  const sent = await services.sendList({
     tenantId: runtimeCtx?.tenantId,
     to: phone,
     body: MSG.BOOKING_PICK_DATE,
-    buttons,
+    buttonText: MSG.BOOKING_PICK_DATE_BUTTON || "Ver datas",
+    footerText: MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
+    sections: buildListSections({
+      title: MSG.BOOKING_DATES_SECTION_TITLE || "Datas disponíveis",
+      rows,
+    }),
     phoneNumberIdFallback,
   });
 
-  return true;
+  return !!sent;
 }
 
 export async function showSlotsPage({
@@ -224,11 +246,10 @@ export async function showSlotsPage({
   MSG,
   services,
 }) {
-  const pageSize = 3;
+  const pageSize = 8;
   const start = page * pageSize;
   const end = start + pageSize;
-
-  const pageItems = slots.slice(start, end);
+  const pageItems = Array.isArray(slots) ? slots.slice(start, end) : [];
 
   if (!pageItems.length) {
     await services.sendText({
@@ -238,41 +259,57 @@ export async function showSlotsPage({
       phoneNumberIdFallback,
     });
 
-    await services.sendButtons({
+    await services.sendList({
       tenantId,
       to: phone,
       body: MSG.BOOKING_CHANGE_DATE,
-      buttons: [{ id: "TROCAR_DATA", title: MSG.BOOKING_CHANGE_DATE }],
+      buttonText: MSG.BOOKING_OPTIONS_BUTTON || "Ver opções",
+      footerText: MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
+      sections: buildListSections({
+        title: MSG.BOOKING_OPTIONS_SECTION_TITLE || "Opções",
+        rows: [
+          {
+            id: "CHANGE_DATE",
+            title: MSG.BOOKING_CHANGE_DATE || "Trocar data",
+            description: MSG.BOOKING_CHANGE_DATE_DESCRIPTION || "Selecionar outro dia disponível",
+          },
+        ],
+      }),
       phoneNumberIdFallback,
     });
     return;
   }
 
-  const buttons = pageItems.map((x) => ({
-    id: `H_${x.slotId}`,
+  const rows = pageItems.map((x) => ({
+    id: `SLOT_${x.slotId}`,
     title: x.time,
+    description: MSG.BOOKING_SLOT_ROW_DESCRIPTION || "Selecionar este horário",
   }));
 
-  await services.sendButtons({
+  if (end < slots.length) {
+    rows.push({
+      id: `PAGE_${page + 1}`,
+      title: MSG.BOOKING_VIEW_MORE || "Ver mais horários",
+      description: MSG.BOOKING_VIEW_MORE_SLOTS_DESCRIPTION || "Mostrar próximos horários disponíveis",
+    });
+  }
+
+  rows.push({
+    id: "CHANGE_DATE",
+    title: MSG.BOOKING_CHANGE_DATE || "Trocar data",
+    description: MSG.BOOKING_CHANGE_DATE_DESCRIPTION || "Selecionar outro dia disponível",
+  });
+
+  await services.sendList({
     tenantId,
     to: phone,
     body: MSG.BOOKING_AVAILABLE_SLOTS,
-    buttons,
-    phoneNumberIdFallback,
-  });
-
-  const extraButtons = [];
-
-  if (end < slots.length) {
-    extraButtons.push({ id: `PAGE_${page + 1}`, title: MSG.BOOKING_VIEW_MORE });
-  }
-  extraButtons.push({ id: "TROCAR_DATA", title: MSG.BOOKING_CHANGE_DATE });
-
-  await services.sendButtons({
-    tenantId,
-    to: phone,
-    body: MSG.BOOKING_OPTIONS,
-    buttons: extraButtons,
+    buttonText: MSG.BOOKING_PICK_SLOT_BUTTON || "Ver horários",
+    footerText: MSG.BUTTONS_ONLY_WARNING || "Use a lista para selecionar uma opção.",
+    sections: buildListSections({
+      title: MSG.BOOKING_SLOTS_SECTION_TITLE || "Horários disponíveis",
+      rows,
+    }),
     phoneNumberIdFallback,
   });
 }
@@ -314,6 +351,7 @@ export async function finishWizardAndGoToDates({
     patientId,
     MSG,
     services,
+    page: 0,
   });
 
   if (shown) {
