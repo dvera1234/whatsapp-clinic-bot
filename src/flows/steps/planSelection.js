@@ -1,9 +1,15 @@
 import { getSession, setState, updateSession } from "../../session/redisSession.js";
 import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
 
-function findPlan(runtime, digits) {
-  const plans = runtime?.content?.plans || [];
-  return plans.find(p => p.id === String(digits)) || null;
+function getPlans(runtime) {
+  return Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+}
+
+function findPlanByInput(runtime, digits) {
+  const plans = getPlans(runtime);
+  return plans.find((p) => String(p.id) === String(digits)) || null;
 }
 
 function resolveMessage(runtime, MSG, key) {
@@ -28,65 +34,85 @@ export async function handlePlanSelectionStep(flowCtx) {
 
   if (state !== "PLAN_PICK") return false;
 
+  // 🔙 VOLTAR MENU
   if (digits === "0") {
     await setState(tenantId, phone, "MAIN");
+
+    const menuMsg =
+      runtime?.content?.messages?.menu ||
+      MSG?.MENU ||
+      "Menu";
+
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.MENU,
+      body: menuMsg,
       phoneNumberIdFallback,
     });
+
     return true;
   }
 
-  const plan = findPlan(runtime, digits);
+  const plan = findPlanByInput(runtime, digits);
 
+  // ❌ INPUT INVÁLIDO
   if (!plan) {
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.BUTTONS_ONLY_WARNING,
+      body:
+        runtime?.content?.messages?.buttonsOnlyWarning ||
+        MSG?.BUTTONS_ONLY_WARNING,
       phoneNumberIdFallback,
     });
     return true;
   }
 
-  // INFO ONLY
+  // 📄 INFO ONLY (NÃO SEGUE FLUXO)
   if (plan.flow === "INFO_ONLY") {
     const msg = resolveMessage(runtime, MSG, plan.messageKey);
 
-    await services.sendText({
-      tenantId,
-      to: phone,
-      body: msg,
-      phoneNumberIdFallback,
-    });
+    if (msg) {
+      await services.sendText({
+        tenantId,
+        to: phone,
+        body: msg,
+        phoneNumberIdFallback,
+      });
+    }
 
     return true;
   }
 
-  // BOOKING OU DIRECT_BOOKING → mesmo fluxo
+  // 📅 BOOKING / DIRECT_BOOKING
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
     s.booking.planKey = plan.key;
 
-    if (s.portal?.issue) delete s.portal.issue;
+    if (s.portal?.issue) {
+      delete s.portal.issue;
+    }
   });
 
   const s = await getSession(tenantId, phone);
   const patientId = Number(s?.booking?.patientId || s?.portal?.patientId);
 
+  // ❌ SESSÃO INVÁLIDA
   if (!patientId) {
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.BOOKING_SESSION_INVALID,
+      body:
+        runtime?.content?.messages?.bookingSessionInvalid ||
+        MSG?.BOOKING_SESSION_INVALID,
       phoneNumberIdFallback,
     });
+
     await setState(tenantId, phone, "MAIN");
     return true;
   }
 
+  // 🚀 SEGUE PARA DATAS
   await finishWizardAndGoToDates({
     schedulingAdapter: adapters.schedulingAdapter,
     tenantId,
