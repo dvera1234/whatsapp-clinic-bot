@@ -152,12 +152,7 @@ export async function handleSupportFlowStep(
   }
 
   if (state === "ATENDENTE") {
-    await resetToMain({
-      tenantId,
-      phone,
-      phoneNumberIdFallback,
-      menuText: runtime?.content?.menu?.text,
-    });
+    await resetToMain(flowCtx);
     return true;
   }
 
