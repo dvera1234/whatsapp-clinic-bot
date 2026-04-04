@@ -10,6 +10,15 @@ import {
   sendSupportLink,
 } from "../helpers/supportHelpers.js";
 
+function resolveSupportWa(flowCtx) {
+  return (
+    flowCtx?.supportWa ||
+    flowCtx?.runtime?.support?.waNumber ||
+    flowCtx?.runtime?.content?.support?.waNumber ||
+    ""
+  );
+}
+
 export async function handleSupportFlowStep(
   flowCtx,
   { allowFreeTextAttendant = false } = {}
@@ -21,12 +30,13 @@ export async function handleSupportFlowStep(
     phoneNumberIdFallback,
     raw,
     upper,
-    digits,
     state,
     MSG,
-    supportWa,
     services,
+    runtime,
   } = flowCtx;
+
+  const supportWa = resolveSupportWa(flowCtx);
 
   if (upper === "FALAR_ATENDENTE") {
     const s = await getSession(tenantId, phone);
@@ -82,7 +92,18 @@ export async function handleSupportFlowStep(
     return true;
   }
 
-  if (allowFreeTextAttendant && state === "ATENDENTE" && !digits) {
+  if (state === "ATENDENTE_DESCRICAO") {
+    if (!raw) {
+      await sendAndSetState({
+        tenantId,
+        phone,
+        body: MSG.ATTENDANT_DESCRIBE,
+        state: "ATENDENTE_DESCRICAO",
+        phoneNumberIdFallback,
+      });
+      return true;
+    }
+
     const prefill = buildSafeSupportPrefill({
       tenantId,
       traceId,
@@ -106,18 +127,36 @@ export async function handleSupportFlowStep(
     return true;
   }
 
-  if (state === "ATENDENTE" && digits === "0") {
-    await resetToMain(tenantId, phone, phoneNumberIdFallback, MSG);
+  if (allowFreeTextAttendant && state === "ATENDENTE" && raw) {
+    const prefill = buildSafeSupportPrefill({
+      tenantId,
+      traceId,
+      phone,
+      reason: "Paciente solicitou atendimento humano.",
+      details: raw,
+    });
+
+    await sendSupportLink({
+      tenantId,
+      phone,
+      phoneNumberIdFallback,
+      prefill,
+      supportWa,
+      nextState: "MAIN",
+      MSG,
+      services,
+    });
+
+    await clearTransientPortalData(tenantId, phone);
     return true;
   }
 
-  if (state === "ATENDENTE" && digits) {
-    await sendAndSetState({
+  if (state === "ATENDENTE") {
+    await resetToMain({
       tenantId,
       phone,
-      body: MSG.ATTENDANT_DESCRIBE,
-      state: "ATENDENTE",
       phoneNumberIdFallback,
+      menuText: runtime?.content?.menu?.text,
     });
     return true;
   }
