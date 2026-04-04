@@ -1,6 +1,7 @@
 import { setState } from "../../session/redisSession.js";
 import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
+import { renderStateUi } from "../helpers/stateRenderHelpers.js";
 
 function getMenu(runtime) {
   return runtime?.content?.menu || null;
@@ -22,8 +23,8 @@ function ensureOptions(menuLike, fieldName) {
   return options;
 }
 
-function buildSections(menuLike) {
-  const options = ensureOptions(menuLike, "menu");
+function buildSections(menuLike, fieldName = "menu") {
+  const options = ensureOptions(menuLike, fieldName);
   const sectionTitle =
     String(menuLike?.sectionTitle || "").trim() || "Opções disponíveis";
 
@@ -89,7 +90,7 @@ export async function actionOpenSubmenu(flowCtx) {
     phoneNumberId: phoneNumberIdFallback,
     body,
     buttonText: String(submenu?.buttonText || "").trim() || "Selecionar",
-    sections: buildSections(submenu),
+    sections: buildSections(submenu, `submenus.${submenuKey}`),
   });
 
   await setState(tenantId, phone, getMenuStateKey(submenuKey));
@@ -97,21 +98,7 @@ export async function actionOpenSubmenu(flowCtx) {
 }
 
 export async function actionGoMain(flowCtx) {
-  const {
-    tenantId,
-    runtime,
-    phone,
-    phoneNumberIdFallback,
-  } = flowCtx;
-
-  await resetToMain({
-    tenantId,
-    phone,
-    phoneNumberIdFallback,
-    menuText: runtime?.content?.menu?.text,
-  });
-
-  return true;
+  return await resetToMain(flowCtx);
 }
 
 export async function actionPlanMenu(flowCtx) {
@@ -146,7 +133,9 @@ export async function actionPlanMenu(flowCtx) {
     to: phone,
     phoneNumberId: phoneNumberIdFallback,
     body,
-    buttonText: String(runtime?.content?.messages?.bookingOptionsButton || "").trim() || "Selecionar",
+    buttonText:
+      String(runtime?.content?.messages?.bookingOptionsButton || "").trim() ||
+      "Selecionar",
     sections: [
       {
         title:
@@ -184,6 +173,31 @@ export async function actionGoState(flowCtx) {
     messageKey && runtime?.content?.messages?.[messageKey]
       ? runtime.content.messages[messageKey]
       : String(menuOption?.text || "").trim();
+
+  const isRenderableMenuState =
+    targetState === "MAIN" || targetState.startsWith("MENU:");
+
+  if (isRenderableMenuState) {
+    if (body) {
+      await sendAndSetState({
+        tenantId,
+        phone,
+        body,
+        state: null,
+        phoneNumberIdFallback,
+      });
+    }
+
+    await setState(tenantId, phone, targetState);
+
+    return await renderStateUi(
+      {
+        ...flowCtx,
+        state: targetState,
+      },
+      targetState
+    );
+  }
 
   await sendAndSetState({
     tenantId,
