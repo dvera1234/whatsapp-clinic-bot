@@ -5,7 +5,7 @@ function normalizeState(state) {
   return String(state || "").trim();
 }
 
-export async function renderStateUi(flowCtx, explicitState = null) {
+export async function renderState(flowCtx, explicitState = null) {
   const targetState = normalizeState(explicitState || flowCtx?.state);
 
   if (!targetState) {
@@ -34,7 +34,7 @@ export async function setStateAndRender(flowCtx, targetState) {
 
   await setState(flowCtx.tenantId, flowCtx.phone, normalized);
 
-  return await renderStateUi(
+  return await renderState(
     {
       ...flowCtx,
       state: normalized,
