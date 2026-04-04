@@ -1,7 +1,7 @@
 import { setState } from "../../session/redisSession.js";
 import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
-import { renderStateUi } from "../helpers/stateRenderHelpers.js";
+import { renderState } from "../helpers/stateRenderHelpers.js";
 
 function getMenu(runtime) {
   return runtime?.content?.menu || null;
@@ -177,26 +177,16 @@ export async function actionGoState(flowCtx) {
   const isRenderableMenuState =
     targetState === "MAIN" || targetState.startsWith("MENU:");
 
+  // 🔥 CORREÇÃO REAL AQUI
   if (isRenderableMenuState) {
-    if (body) {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body,
-        state: null,
-        phoneNumberIdFallback,
-      });
-    }
-
-    await setState(tenantId, phone, targetState);
-
-    return await renderStateUi(
-      {
-        ...flowCtx,
-        state: targetState,
-      },
-      targetState
-    );
+    return await sendAndSetState({
+      tenantId,
+      phone,
+      body: body || null,
+      state: targetState,
+      phoneNumberIdFallback,
+      flowCtx,
+    });
   }
 
   await sendAndSetState({
