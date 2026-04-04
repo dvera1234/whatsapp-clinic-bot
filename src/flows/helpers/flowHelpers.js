@@ -4,6 +4,7 @@ import {
   clearSession,
 } from "../../session/redisSession.js";
 import { sendText } from "../../whatsapp/sender.js";
+import { setStateAndRender } from "./stateRenderHelpers.js";
 
 export function resolveRuntimeFromContext(context = {}) {
   const runtime =
@@ -45,12 +46,12 @@ export async function clearTransientPortalData(tenantId, phone) {
   });
 }
 
-export async function resetToMain({
-  tenantId,
-  phone,
-  phoneNumberIdFallback,
-  menuText,
-}) {
+export async function resetToMain(flowCtx) {
+  const {
+    tenantId,
+    phone,
+  } = flowCtx;
+
   await updateSession(tenantId, phone, (s) => {
     if (s?.portal) {
       s.portal.form = {};
@@ -63,13 +64,7 @@ export async function resetToMain({
     }
   });
 
-  await sendAndSetState({
-    tenantId,
-    phone,
-    body: String(menuText || "").trim(),
-    state: "MAIN",
-    phoneNumberIdFallback,
-  });
+  return await setStateAndRender(flowCtx, "MAIN");
 }
 
 export async function sendAndSetState({
@@ -97,15 +92,19 @@ export async function sendAndSetState({
     });
   }
 
-  const sent = await sendText({
-    tenantId,
-    to: phone,
-    body,
-    phoneNumberIdFallback,
-  });
+  const normalizedBody = String(body || "").trim();
 
-  if (!sent) {
-    return false;
+  if (normalizedBody) {
+    const sent = await sendText({
+      tenantId,
+      to: phone,
+      body: normalizedBody,
+      phoneNumberIdFallback,
+    });
+
+    if (!sent) {
+      return false;
+    }
   }
 
   if (state) {
