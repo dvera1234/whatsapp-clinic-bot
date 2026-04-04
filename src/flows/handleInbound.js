@@ -4,6 +4,8 @@ import {
   configureInactivityHandler,
   touchUser,
   getState,
+  clearSession,
+  setState,
 } from "../session/redisSession.js";
 
 import { sendText, sendButtons, sendList } from "../whatsapp/sender.js";
@@ -30,9 +32,9 @@ import { handleSupportFlowStep } from "./steps/supportFlow.js";
 import {
   resolveRuntimeFromContext,
   failSafeTenantConfigError,
-  sendAndSetState,
 } from "./helpers/flowHelpers.js";
 
+import { renderState } from "./helpers/stateRenderHelpers.js";
 import { getFlowText } from "./helpers/contentHelpers.js";
 
 import { validateTenantContent } from "../tenants/validateTenantContent.js";
@@ -193,15 +195,18 @@ async function handleInbound({
   {
     const code = String(FLOW_RESET_CODE || "").trim();
 
-    if (code && raw.toUpperCase() === code.toUpperCase()) {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: runtime?.content?.menu?.text,
+    if (code && upper === code.toUpperCase()) {
+      await clearSession(tenantId, phone);
+      await setState(tenantId, phone, "MAIN");
+
+      await renderState({
+        ...flowCtx,
+        raw: "",
+        upper: "",
+        digits: "",
         state: "MAIN",
-        phoneNumberIdFallback: effectivePhoneNumberId,
-        resetSession: true,
       });
+
       return;
     }
   }
@@ -215,12 +220,14 @@ async function handleInbound({
   if (await handleBookingConfirmationStep(flowCtx)) return;
   if (await handleSupportFlowStep(flowCtx)) return;
 
-  await sendAndSetState({
-    tenantId,
-    phone,
-    body: runtime?.content?.menu?.text,
+  await setState(tenantId, phone, "MAIN");
+
+  await renderState({
+    ...flowCtx,
+    raw: "",
+    upper: "",
+    digits: "",
     state: "MAIN",
-    phoneNumberIdFallback: effectivePhoneNumberId,
   });
 }
 
