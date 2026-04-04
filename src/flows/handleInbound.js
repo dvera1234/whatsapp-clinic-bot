@@ -15,7 +15,7 @@ import { createPortalAdapter } from "../integrations/adapters/factories/createPo
 import { createSchedulingAdapter } from "../integrations/adapters/factories/createSchedulingAdapter.js";
 
 import { onlyDigits, normalizeSpaces } from "../utils/validators.js";
-import { audit } from "../observability/audit.js";
+import { audit, errLog } from "../observability/audit.js";
 import { maskPhone } from "../utils/mask.js";
 
 import { handleMainMenuStep } from "./steps/mainMenu.js";
@@ -26,7 +26,6 @@ import { handleSlotSelectionStep } from "./steps/slotSelection.js";
 import { handleBookingConfirmationStep } from "./steps/bookingConfirmation.js";
 import { handlePortalFlowStep } from "./steps/portalFlow.js";
 import { handleSupportFlowStep } from "./steps/supportFlow.js";
-import { handlePostFlowStep } from "./steps/postFlow.js";
 
 import {
   resolveRuntimeFromContext,
@@ -97,7 +96,13 @@ async function handleInbound({
   let MSG;
   try {
     MSG = getFlowText(runtime);
-  } catch {
+  } catch (err) {
+    errLog("FLOW_TEXT_BUILD_FAILED", {
+      tenantId,
+      traceId,
+      error: String(err?.message || err),
+    });
+
     await failSafeTenantConfigError({
       tenantId,
       phone,
@@ -119,7 +124,13 @@ async function handleInbound({
     patientAdapter = createPatientAdapter({ tenantId, runtime });
     portalAdapter = createPortalAdapter({ tenantId, runtime });
     schedulingAdapter = createSchedulingAdapter({ tenantId, runtime });
-  } catch {
+  } catch (err) {
+    errLog("FLOW_ADAPTER_INIT_FAILED", {
+      tenantId,
+      traceId,
+      error: String(err?.message || err),
+    });
+
     await failSafeTenantConfigError({
       tenantId,
       phone,
@@ -202,7 +213,6 @@ async function handleInbound({
   if (await handlePatientRegistrationStep(flowCtx)) return;
   if (await handleSlotSelectionStep(flowCtx)) return;
   if (await handleBookingConfirmationStep(flowCtx)) return;
-  if (await handlePostFlowStep(flowCtx)) return;
   if (await handleSupportFlowStep(flowCtx)) return;
 
   await sendAndSetState({
