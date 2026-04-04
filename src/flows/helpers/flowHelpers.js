@@ -6,6 +6,11 @@ import {
 import { sendText } from "../../whatsapp/sender.js";
 import { setStateAndRender } from "./stateRenderHelpers.js";
 
+function isRenderableMenuState(state) {
+  const normalized = String(state || "").trim();
+  return normalized === "MAIN" || normalized.startsWith("MENU:");
+}
+
 export function resolveRuntimeFromContext(context = {}) {
   const runtime =
     context?.runtime ||
@@ -47,10 +52,7 @@ export async function clearTransientPortalData(tenantId, phone) {
 }
 
 export async function resetToMain(flowCtx) {
-  const {
-    tenantId,
-    phone,
-  } = flowCtx;
+  const { tenantId, phone } = flowCtx;
 
   await updateSession(tenantId, phone, (s) => {
     if (s?.portal) {
@@ -75,6 +77,7 @@ export async function sendAndSetState({
   phoneNumberIdFallback,
   resetSession = false,
   clearTransientOnly = false,
+  flowCtx = null,
 }) {
   if (resetSession) {
     await clearSession(tenantId, phone);
@@ -107,9 +110,31 @@ export async function sendAndSetState({
     }
   }
 
-  if (state) {
-    await setState(tenantId, phone, state);
+  const normalizedState = String(state || "").trim();
+
+  if (!normalizedState) {
+    return true;
   }
 
+  if (isRenderableMenuState(normalizedState)) {
+    if (!flowCtx) {
+      throw new Error(
+        `sendAndSetState requires flowCtx when state is renderable: ${normalizedState}`
+      );
+    }
+
+    return await setStateAndRender(
+      {
+        ...flowCtx,
+        tenantId,
+        phone,
+        phoneNumberIdFallback,
+        state: normalizedState,
+      },
+      normalizedState
+    );
+  }
+
+  await setState(tenantId, phone, normalizedState);
   return true;
 }
