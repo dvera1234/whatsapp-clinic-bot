@@ -17,6 +17,7 @@ import {
 } from "../helpers/auditHelpers.js";
 import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
 import { clearTransientPortalData, sendAndSetState } from "../helpers/flowHelpers.js";
+import { renderState } from "../helpers/stateRenderHelpers.js";
 import { tpl } from "../helpers/contentHelpers.js";
 import {
   formatPhoneFromWA,
@@ -132,7 +133,6 @@ export async function handlePatientRegistrationStep(flowCtx) {
       }
     });
 
-    // Fluxo novo paciente PARTICULAR: plano já está decidido
     if (lockedPlanKey === "PRIVATE") {
       await services.sendButtons({
         tenantId,
@@ -156,7 +156,6 @@ export async function handlePatientRegistrationStep(flowCtx) {
       return true;
     }
 
-    // Fluxo novo paciente CONVÊNIO: mostrar apenas convênio aceito + menu
     if (lockedPlanKey === "INSURED") {
       await services.sendButtons({
         tenantId,
@@ -180,7 +179,6 @@ export async function handlePatientRegistrationStep(flowCtx) {
       return true;
     }
 
-    // fallback seguro se entrar sem contexto travado
     await services.sendButtons({
       tenantId,
       to: phone,
@@ -199,11 +197,12 @@ export async function handlePatientRegistrationStep(flowCtx) {
     if (upper === "MENU_PRINCIPAL") {
       await clearTransientPortalData(tenantId, phone);
       await setState(tenantId, phone, "MAIN");
-      await services.sendText({
-        tenantId,
-        to: phone,
-        body: MSG.MENU || "Menu",
-        phoneNumberIdFallback,
+      await renderState({
+        ...flowCtx,
+        state: "MAIN",
+        raw: "",
+        upper: "",
+        digits: "",
       });
       return true;
     }
@@ -228,7 +227,6 @@ export async function handlePatientRegistrationStep(flowCtx) {
       resolvedPlanKey = "INSURED";
     }
 
-    // reforço: se o fluxo já entrou travado em INSURED e o usuário clicou a única opção
     if (!resolvedPlanKey && lockedPlanKey === "INSURED") {
       resolvedPlanKey = "INSURED";
     }
