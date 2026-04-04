@@ -9,10 +9,6 @@ function getSubmenu(runtime, submenuKey) {
   return runtime?.content?.submenus?.[submenuKey] || null;
 }
 
-function buildMenuStateKey(submenuKey) {
-  return `MENU:${String(submenuKey || "").trim()}`;
-}
-
 function parseSubmenuState(state) {
   const raw = String(state || "").trim();
   if (!raw.startsWith("MENU:")) return null;
@@ -21,8 +17,18 @@ function parseSubmenuState(state) {
   return submenuKey || null;
 }
 
-function buildSections(menuLike) {
+function ensureOptions(menuLike, fieldName) {
   const options = Array.isArray(menuLike?.options) ? menuLike.options : [];
+
+  if (!options.length) {
+    throw new Error(`TENANT_CONTENT_INVALID:${fieldName}.options_empty`);
+  }
+
+  return options;
+}
+
+function buildSections(menuLike, fieldName) {
+  const options = ensureOptions(menuLike, fieldName);
   const sectionTitle =
     String(menuLike?.sectionTitle || "").trim() || "Opções disponíveis";
 
@@ -43,14 +49,21 @@ async function showMenu({
   phone,
   phoneNumberIdFallback,
   menuLike,
+  fieldName,
 }) {
+  const body = String(menuLike?.text || "").trim();
+
+  if (!body) {
+    throw new Error(`TENANT_CONTENT_INVALID:${fieldName}.text_missing`);
+  }
+
   await sendListMessage({
     tenantId,
     to: phone,
     phoneNumberId: phoneNumberIdFallback,
-    body: String(menuLike?.text || "").trim(),
+    body,
     buttonText: String(menuLike?.buttonText || "").trim() || "Selecionar",
-    sections: buildSections(menuLike),
+    sections: buildSections(menuLike, fieldName),
   });
 }
 
@@ -70,7 +83,7 @@ export async function handleMainMenuStep(flowCtx) {
       throw new Error("TENANT_CONTENT_INVALID:menu_missing");
     }
 
-    const options = Array.isArray(menu?.options) ? menu.options : [];
+    const options = ensureOptions(menu, "menu");
     const selected = options.find((opt) => String(opt.id) === String(raw));
 
     if (selected) {
@@ -85,6 +98,7 @@ export async function handleMainMenuStep(flowCtx) {
       phone,
       phoneNumberIdFallback,
       menuLike: menu,
+      fieldName: "menu",
     });
 
     return true;
@@ -100,7 +114,7 @@ export async function handleMainMenuStep(flowCtx) {
     throw new Error(`TENANT_CONTENT_INVALID:submenu_missing:${submenuKey}`);
   }
 
-  const options = Array.isArray(submenu?.options) ? submenu.options : [];
+  const options = ensureOptions(submenu, `submenus.${submenuKey}`);
   const selected = options.find((opt) => String(opt.id) === String(raw));
 
   if (selected) {
@@ -116,6 +130,7 @@ export async function handleMainMenuStep(flowCtx) {
     phone,
     phoneNumberIdFallback,
     menuLike: submenu,
+    fieldName: `submenus.${submenuKey}`,
   });
 
   return true;
