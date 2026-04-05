@@ -20,7 +20,7 @@ export async function handlePortalFlowStep(flowCtx) {
     tenantId,
     traceId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     digits,
     state,
     MSG,
@@ -48,7 +48,7 @@ export async function handlePortalFlowStep(flowCtx) {
           runtime?.content?.messages?.askCpfPortal ||
           MSG?.ASK_CPF_PORTAL,
         state: "WZ_CPF",
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -70,7 +70,7 @@ export async function handlePortalFlowStep(flowCtx) {
         body:
           runtime?.content?.messages?.lgpdRecusa ||
           MSG?.LGPD_RECUSA,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
 
       await clearSession(tenantId, phone);
@@ -85,7 +85,7 @@ export async function handlePortalFlowStep(flowCtx) {
         runtime?.content?.messages?.buttonsOnlyWarning ||
         MSG?.LGPD_BUTTONS_ONLY ||
         MSG?.BUTTONS_ONLY_WARNING,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
 
     await setStateAndRender(flowCtx, "LGPD_CONSENT");
@@ -107,7 +107,7 @@ export async function handlePortalFlowStep(flowCtx) {
     await sendSupportLink({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       prefill,
       supportWa,
       nextState: "MAIN",
