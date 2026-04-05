@@ -3,20 +3,16 @@ import {
   updateSession,
   clearSession,
 } from "../../session/redisSession.js";
+
 import { sendText } from "../../whatsapp/sender.js";
 import { setStateAndRender } from "./stateRenderHelpers.js";
 
-function isRenderableMenuState(state) {
-  const normalized = String(state || "").trim();
-  return normalized === "MAIN" || normalized.startsWith("MENU:");
-}
+// =========================
+// RUNTIME
+// =========================
 
 export function resolveRuntimeFromContext(context = {}) {
-  const runtime =
-    context?.runtime ||
-    context?.tenantRuntime ||
-    context?.resolvedRuntime ||
-    null;
+  const runtime = context?.runtime;
 
   if (!runtime || typeof runtime !== "object") {
     return null;
@@ -24,6 +20,10 @@ export function resolveRuntimeFromContext(context = {}) {
 
   return runtime;
 }
+
+// =========================
+// FAIL SAFE
+// =========================
 
 export async function failSafeTenantConfigError({
   tenantId,
@@ -41,33 +41,41 @@ export async function failSafeTenantConfigError({
   } catch {}
 }
 
+// =========================
+// SESSION CLEAN
+// =========================
+
 export async function clearTransientPortalData(tenantId, phone) {
   await updateSession(tenantId, phone, (s) => {
-    if (!s?.portal) return;
+    if (!s) return;
 
-    s.portal.form = {};
-    delete s.portal.missing;
-    delete s.portal.issue;
+    if (s.portal) {
+      s.portal.form = {};
+      delete s.portal.missing;
+      delete s.portal.issue;
+    }
+
+    if (s.pending) {
+      delete s.pending;
+    }
   });
 }
+
+// =========================
+// RESET FLOW
+// =========================
 
 export async function resetToMain(flowCtx) {
   const { tenantId, phone } = flowCtx;
 
-  await updateSession(tenantId, phone, (s) => {
-    if (s?.portal) {
-      s.portal.form = {};
-      delete s.portal.issue;
-      delete s.portal.missing;
-    }
-
-    if (s?.pending) {
-      delete s.pending;
-    }
-  });
+  await clearSession(tenantId, phone);
 
   return await setStateAndRender(flowCtx, "MAIN");
 }
+
+// =========================
+// CORE SEND + STATE
+// =========================
 
 export async function sendAndSetState({
   tenantId,
@@ -75,26 +83,7 @@ export async function sendAndSetState({
   body,
   state,
   phoneNumberIdFallback,
-  resetSession = false,
-  clearTransientOnly = false,
-  flowCtx = null,
 }) {
-  if (resetSession) {
-    await clearSession(tenantId, phone);
-  } else if (clearTransientOnly) {
-    await updateSession(tenantId, phone, (s) => {
-      if (s?.portal) {
-        s.portal.form = {};
-        delete s.portal.issue;
-        delete s.portal.missing;
-      }
-
-      if (s?.pending) {
-        delete s.pending;
-      }
-    });
-  }
-
   const normalizedBody = String(body || "").trim();
 
   if (normalizedBody) {
@@ -105,35 +94,12 @@ export async function sendAndSetState({
       phoneNumberIdFallback,
     });
 
-    if (!sent) {
-      return false;
-    }
+    if (!sent) return false;
   }
 
   const normalizedState = String(state || "").trim();
 
-  if (!normalizedState) {
-    return true;
-  }
-
-  if (isRenderableMenuState(normalizedState)) {
-    if (!flowCtx) {
-      throw new Error(
-        `sendAndSetState requires flowCtx when state is renderable: ${normalizedState}`
-      );
-    }
-
-    return await setStateAndRender(
-      {
-        ...flowCtx,
-        tenantId,
-        phone,
-        phoneNumberIdFallback,
-        state: normalizedState,
-      },
-      normalizedState
-    );
-  }
+  if (!normalizedState) return true;
 
   await setState(tenantId, phone, normalizedState);
   return true;
