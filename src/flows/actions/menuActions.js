@@ -2,6 +2,11 @@ import { setState } from "../../session/redisSession.js";
 import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
 import { renderState } from "../helpers/stateRenderHelpers.js";
+import { handlePlanSelectionStep } from "../steps/planSelection.js";
+
+// =========================
+// HELPERS
+// =========================
 
 function getMenu(runtime) {
   return runtime?.content?.menu || null;
@@ -59,6 +64,10 @@ function filterPlans(plans, filter) {
 
   return plans;
 }
+
+// =========================
+// ACTIONS
+// =========================
 
 export async function actionOpenSubmenu(flowCtx) {
   const {
@@ -152,6 +161,67 @@ export async function actionPlanMenu(flowCtx) {
 
   await setState(tenantId, phone, "PLAN_PICK");
   return true;
+}
+
+// 🔥 NOVO — SELECT_PLAN (corrige teu bug)
+export async function actionSelectPlan(flowCtx) {
+  const {
+    tenantId,
+    phone,
+    menuOption,
+  } = flowCtx;
+
+  const planId = String(menuOption?.planId || "").trim();
+  if (!planId) {
+    throw new Error("TENANT_CONTENT_INVALID:planId_missing");
+  }
+
+  await setState(tenantId, phone, "PLAN_PICK");
+
+  return await handlePlanSelectionStep({
+    ...flowCtx,
+    raw: planId,
+    upper: planId.toUpperCase(),
+    digits: "",
+    state: "PLAN_PICK",
+  });
+}
+
+// 🔥 NOVO — SELECT_CURRENT_PLAN
+export async function actionSelectCurrentPlan(flowCtx) {
+  const { runtime, menuOption } = flowCtx;
+
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  const currentPlanKey = String(menuOption?.planKey || "").trim();
+
+  let selectedPlan = null;
+
+  if (currentPlanKey) {
+    selectedPlan =
+      plans.find((p) => String(p?.key || "").trim() === currentPlanKey) || null;
+  }
+
+  if (!selectedPlan) {
+    selectedPlan =
+      plans.find((p) => String(p?.key || "").trim() === "MEDSENIOR") || null;
+  }
+
+  if (!selectedPlan?.id) {
+    throw new Error("TENANT_CONTENT_INVALID:current_plan_not_resolved");
+  }
+
+  await setState(flowCtx.tenantId, flowCtx.phone, "PLAN_PICK");
+
+  return await handlePlanSelectionStep({
+    ...flowCtx,
+    raw: String(selectedPlan.id),
+    upper: String(selectedPlan.id).toUpperCase(),
+    digits: "",
+    state: "PLAN_PICK",
+  });
 }
 
 export async function actionGoState(flowCtx) {
