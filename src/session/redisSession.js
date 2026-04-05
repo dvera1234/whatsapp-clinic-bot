@@ -47,7 +47,7 @@ function detectUnexpectedSessionKeys(s) {
   const allowed = new Set([
     "state",
     "lastUserTs",
-    "lastPhoneNumberIdFallback",
+    "lastPhoneNumberId",
     "booking",
     "portal",
     "pending",
@@ -60,7 +60,7 @@ function sanitizeSessionForSave(s) {
   return {
     state: s?.state ?? null,
     lastUserTs: Number(s?.lastUserTs || 0),
-    lastPhoneNumberIdFallback: String(s?.lastPhoneNumberIdFallback || ""),
+    lastPhoneNumberId: String(s?.lastPhoneNumberId || ""),
     booking: s?.booking
       ? {
           planKey:
@@ -169,7 +169,7 @@ async function ensureSession(tenantId, phone) {
     (await loadSession(tenantId, phone)) || {
       state: null,
       lastUserTs: 0,
-      lastPhoneNumberIdFallback: "",
+      lastPhoneNumberId: "",
       booking: null,
       portal: null,
       pending: null,
@@ -254,7 +254,7 @@ function scheduleInactivityWarning({ tenantId, phone }) {
         tenantId: normalizedTenantId,
         to: normalizedPhone,
         body: msg,
-        phoneNumberIdFallback: s.lastPhoneNumberIdFallback || "",
+        phoneNumberId: s.lastPhoneNumberId || "",
       });
 
       await clearSession(normalizedTenantId, normalizedPhone);
@@ -287,12 +287,12 @@ function scheduleInactivityWarning({ tenantId, phone }) {
 async function touchUser(arg1, arg2) {
   let tenantId;
   let phone;
-  let phoneNumberIdFallback;
+  let phoneNumberId;
 
   if (typeof arg1 === "object" && arg1 !== null) {
     tenantId = arg1.tenantId;
     phone = arg1.phone;
-    phoneNumberIdFallback = arg1.phoneNumberIdFallback;
+    phoneNumberId = arg1.phoneNumberId;
   } else {
     tenantId = arg1;
     phone = arg2;
@@ -300,8 +300,8 @@ async function touchUser(arg1, arg2) {
 
   const s = await updateSession(tenantId, phone, (sess) => {
     sess.lastUserTs = Date.now();
-    if (phoneNumberIdFallback) {
-      sess.lastPhoneNumberIdFallback = String(phoneNumberIdFallback);
+    if (phoneNumberId) {
+      sess.lastPhoneNumberId = String(phoneNumberId);
     }
   });
 
