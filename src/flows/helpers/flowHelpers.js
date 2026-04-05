@@ -7,10 +7,6 @@ import {
 import { sendText } from "../../whatsapp/sender.js";
 import { setStateAndRender } from "./stateRenderHelpers.js";
 
-// =========================
-// RUNTIME
-// =========================
-
 export function resolveRuntimeFromContext(context = {}) {
   const runtime = context?.runtime;
 
@@ -21,14 +17,10 @@ export function resolveRuntimeFromContext(context = {}) {
   return runtime;
 }
 
-// =========================
-// FAIL SAFE
-// =========================
-
 export async function failSafeTenantConfigError({
   tenantId,
   phone,
-  phoneNumberIdFallback,
+  phoneNumberId,
 }) {
   try {
     await sendText({
@@ -36,14 +28,10 @@ export async function failSafeTenantConfigError({
       to: phone,
       body:
         "⚠️ Não foi possível continuar seu atendimento automático neste momento. Por favor, tente novamente em instantes.",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
   } catch {}
 }
-
-// =========================
-// SESSION CLEAN
-// =========================
 
 export async function clearTransientPortalData(tenantId, phone) {
   await updateSession(tenantId, phone, (s) => {
@@ -61,10 +49,6 @@ export async function clearTransientPortalData(tenantId, phone) {
   });
 }
 
-// =========================
-// RESET FLOW
-// =========================
-
 export async function resetToMain(flowCtx) {
   const { tenantId, phone } = flowCtx;
 
@@ -73,16 +57,12 @@ export async function resetToMain(flowCtx) {
   return await setStateAndRender(flowCtx, "MAIN");
 }
 
-// =========================
-// CORE SEND + STATE
-// =========================
-
 export async function sendAndSetState({
   tenantId,
   phone,
   body,
   state,
-  phoneNumberIdFallback,
+  phoneNumberId,
 }) {
   const normalizedBody = String(body || "").trim();
 
@@ -91,7 +71,7 @@ export async function sendAndSetState({
       tenantId,
       to: phone,
       body: normalizedBody,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
 
     if (!sent) return false;
