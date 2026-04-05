@@ -47,7 +47,7 @@ function buildSections(menuLike, fieldName) {
 async function showMenu({
   tenantId,
   phone,
-  phoneNumberIdFallback,
+  phoneNumberId,
   menuLike,
   fieldName,
 }) {
@@ -60,7 +60,7 @@ async function showMenu({
   await sendListMessage({
     tenantId,
     to: phone,
-    phoneNumberId: phoneNumberIdFallback,
+    phoneNumberId,
     body,
     buttonText: String(menuLike?.buttonText || "").trim() || "Selecionar",
     sections: buildSections(menuLike, fieldName),
@@ -72,7 +72,7 @@ export async function handleMainMenuStep(flowCtx) {
     tenantId,
     runtime,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     raw,
     state,
   } = flowCtx;
@@ -96,7 +96,7 @@ export async function handleMainMenuStep(flowCtx) {
     await showMenu({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       menuLike: menu,
       fieldName: "menu",
     });
@@ -128,7 +128,7 @@ export async function handleMainMenuStep(flowCtx) {
   await showMenu({
     tenantId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     menuLike: submenu,
     fieldName: `submenus.${submenuKey}`,
   });
