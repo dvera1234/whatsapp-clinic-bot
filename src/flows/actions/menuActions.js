@@ -177,7 +177,6 @@ export async function actionGoState(flowCtx) {
   const isRenderableMenuState =
     targetState === "MAIN" || targetState.startsWith("MENU:");
 
-  // 🔥 CORREÇÃO REAL AQUI
   if (isRenderableMenuState) {
     return await sendAndSetState({
       tenantId,
@@ -219,11 +218,29 @@ export async function actionShowMessage(flowCtx) {
     throw new Error(`TENANT_CONTENT_INVALID:messages.${messageKey}`);
   }
 
+  const nextState = menuOption?.nextState
+    ? String(menuOption.nextState).trim()
+    : null;
+
+  const isRenderableMenuState =
+    nextState === "MAIN" || String(nextState || "").startsWith("MENU:");
+
+  if (isRenderableMenuState) {
+    return await sendAndSetState({
+      tenantId,
+      phone,
+      body,
+      state: nextState,
+      phoneNumberIdFallback,
+      flowCtx,
+    });
+  }
+
   await sendAndSetState({
     tenantId,
     phone,
     body,
-    state: menuOption?.nextState ? String(menuOption.nextState) : null,
+    state: nextState || null,
     phoneNumberIdFallback,
   });
 
