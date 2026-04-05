@@ -6,7 +6,6 @@ import {
 import {
   LGPD_TEXT_VERSION,
   LGPD_TEXT_HASH,
-  PLAN_KEYS,
 } from "../../config/constants.js";
 import {
   onlyCpfDigits,
@@ -65,7 +64,9 @@ export async function handlePatientIdentificationStep(flowCtx) {
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.CPF_INVALIDO,
+      body:
+        runtime?.content?.messages?.cpfInvalido ||
+        MSG?.CPF_INVALIDO,
       phoneNumberIdFallback,
     });
     return true;
@@ -135,17 +136,23 @@ export async function handlePatientIdentificationStep(flowCtx) {
   );
 
   if (!patientId) {
-    await updateSession(tenantId, phone, (s2) => {
-      s2.portal = s2.portal || {};
-      s2.portal.exists = false;
-      s2.portal.form = s2.portal.form || {};
-      s2.portal.form.document = document;
+    await updateSession(tenantId, phone, (sess) => {
+      sess.portal = sess.portal || {};
+      sess.portal.exists = false;
+      sess.portal.form = sess.portal.form || {};
+      sess.portal.form.document = document;
+      sess.portal.patientId = null;
+
+      sess.booking = sess.booking || {};
+      delete sess.booking.patientId;
     });
 
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.WIZARD_NEW_PATIENT_NAME,
+      body:
+        runtime?.content?.messages?.wizardNewPatientName ||
+        MSG?.WIZARD_NEW_PATIENT_NAME,
       phoneNumberIdFallback,
     });
 
@@ -159,6 +166,9 @@ export async function handlePatientIdentificationStep(flowCtx) {
     sess.portal.form.document = document;
     sess.portal.exists = true;
     sess.portal.patientId = patientId;
+
+    sess.booking = sess.booking || {};
+    sess.booking.patientId = patientId;
   });
 
   let profileResult;
@@ -185,90 +195,90 @@ export async function handlePatientIdentificationStep(flowCtx) {
     throw err;
   }
 
-  if (profileResult.ok && profileResult.data) {
-    const profile = profileResult.data;
-
-    await updateSession(tenantId, phone, (sess) => {
-      sess.portal = sess.portal || {};
-      sess.portal.form = sess.portal.form || {};
-
-      const fullName = cleanStr(profile?.Nome);
-      if (fullName && !sess.portal.form.fullName) {
-        sess.portal.form.fullName = fullName;
-      }
-
-      const email = cleanStr(profile?.Email);
-      if (isValidEmail(email) && !sess.portal.form.email) {
-        sess.portal.form.email = email;
-      }
-
-      const mobilePhone = cleanStr(profile?.Celular).replace(/\D+/g, "");
-      if (mobilePhone.length >= 10 && !sess.portal.form.mobilePhone) {
-        sess.portal.form.mobilePhone = mobilePhone;
-      }
-
-      const phoneNumber = cleanStr(profile?.Telefone).replace(/\D+/g, "");
-      if (phoneNumber.length >= 10 && !sess.portal.form.phone) {
-        sess.portal.form.phone = phoneNumber;
-      }
-
-      const postalCode = String(profile?.CEP ?? "").replace(/\D+/g, "");
-      if (postalCode.length === 8 && !sess.portal.form.postalCode) {
-        sess.portal.form.postalCode = postalCode;
-      }
-
-      const streetAddress = cleanStr(profile?.Endereco);
-      if (streetAddress && !sess.portal.form.streetAddress) {
-        sess.portal.form.streetAddress = streetAddress;
-      }
-
-      const addressNumber = cleanStr(profile?.Numero);
-      if (addressNumber && !sess.portal.form.addressNumber) {
-        sess.portal.form.addressNumber = addressNumber;
-      }
-
-      const addressComplement = cleanStr(profile?.Complemento);
-      if (addressComplement && !sess.portal.form.addressComplement) {
-        sess.portal.form.addressComplement = addressComplement;
-      }
-
-      const district = cleanStr(profile?.Bairro);
-      if (district && !sess.portal.form.district) {
-        sess.portal.form.district = district;
-      }
-
-      const city = cleanStr(profile?.Cidade);
-      if (city && !sess.portal.form.city) {
-        sess.portal.form.city = city;
-      }
-
-      const birthDateRaw = cleanStr(profile?.DtNasc);
-      let birthDateISO = parseBRDateToISO(birthDateRaw) || null;
-
-      if (!birthDateISO) {
-        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(birthDateRaw);
-        if (m) birthDateISO = `${m[1]}-${m[2]}-${m[3]}`;
-      }
-
-      if (birthDateISO && !sess.portal.form.birthDateISO) {
-        sess.portal.form.birthDateISO = birthDateISO;
-      }
-    });
-  }
-
   if (!profileResult.ok || !profileResult.data) {
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.PROFILE_LOOKUP_FAILURE,
+      body:
+        runtime?.content?.messages?.profileLookupFailure ||
+        MSG?.PROFILE_LOOKUP_FAILURE,
       phoneNumberIdFallback,
     });
     await setState(tenantId, phone, "MAIN");
     return true;
   }
 
+  const profile = profileResult.data;
+
+  await updateSession(tenantId, phone, (sess) => {
+    sess.portal = sess.portal || {};
+    sess.portal.form = sess.portal.form || {};
+
+    const fullName = cleanStr(profile?.Nome);
+    if (fullName && !sess.portal.form.fullName) {
+      sess.portal.form.fullName = fullName;
+    }
+
+    const email = cleanStr(profile?.Email);
+    if (isValidEmail(email) && !sess.portal.form.email) {
+      sess.portal.form.email = email;
+    }
+
+    const mobilePhone = cleanStr(profile?.Celular).replace(/\D+/g, "");
+    if (mobilePhone.length >= 10 && !sess.portal.form.mobilePhone) {
+      sess.portal.form.mobilePhone = mobilePhone;
+    }
+
+    const phoneNumber = cleanStr(profile?.Telefone).replace(/\D+/g, "");
+    if (phoneNumber.length >= 10 && !sess.portal.form.phone) {
+      sess.portal.form.phone = phoneNumber;
+    }
+
+    const postalCode = String(profile?.CEP ?? "").replace(/\D+/g, "");
+    if (postalCode.length === 8 && !sess.portal.form.postalCode) {
+      sess.portal.form.postalCode = postalCode;
+    }
+
+    const streetAddress = cleanStr(profile?.Endereco);
+    if (streetAddress && !sess.portal.form.streetAddress) {
+      sess.portal.form.streetAddress = streetAddress;
+    }
+
+    const addressNumber = cleanStr(profile?.Numero);
+    if (addressNumber && !sess.portal.form.addressNumber) {
+      sess.portal.form.addressNumber = addressNumber;
+    }
+
+    const addressComplement = cleanStr(profile?.Complemento);
+    if (addressComplement && !sess.portal.form.addressComplement) {
+      sess.portal.form.addressComplement = addressComplement;
+    }
+
+    const district = cleanStr(profile?.Bairro);
+    if (district && !sess.portal.form.district) {
+      sess.portal.form.district = district;
+    }
+
+    const city = cleanStr(profile?.Cidade);
+    if (city && !sess.portal.form.city) {
+      sess.portal.form.city = city;
+    }
+
+    const birthDateRaw = cleanStr(profile?.DtNasc);
+    let birthDateISO = parseBRDateToISO(birthDateRaw) || null;
+
+    if (!birthDateISO) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(birthDateRaw);
+      if (m) birthDateISO = `${m[1]}-${m[2]}-${m[3]}`;
+    }
+
+    if (birthDateISO && !sess.portal.form.birthDateISO) {
+      sess.portal.form.birthDateISO = birthDateISO;
+    }
+  });
+
   const validationResult = adapters.patientAdapter.validateRegistrationData({
-    profile: profileResult.data,
+    profile,
   });
 
   const validation =
@@ -278,173 +288,23 @@ export async function handlePatientIdentificationStep(flowCtx) {
 
   if (validation.ok) {
     const sCurrent = await getSession(tenantId, phone);
-    const flowPlanKey = sCurrent?.booking?.planKey || PLAN_KEYS.PRIVATE;
+    const selectedPlanKey =
+      String(sCurrent?.booking?.planKey || "").trim() || null;
 
-    const planIdsResult = adapters.patientAdapter.listActivePlans({
-      profile: profileResult.data,
-    });
-
-    const planIds =
-      planIdsResult?.ok && Array.isArray(planIdsResult?.data)
-        ? planIdsResult.data
-        : [];
-
-    const hasPrivatePlanResult = adapters.patientAdapter.hasPlan({
-      profile: profileResult.data,
-      planKey: PLAN_KEYS.PRIVATE,
-      runtimeCtx,
-    });
-
-    const hasInsuredPlanResult = adapters.patientAdapter.hasPlan({
-      profile: profileResult.data,
-      planKey: PLAN_KEYS.INSURED,
-      runtimeCtx,
-    });
-
-    const hasPrivatePlan =
-      hasPrivatePlanResult?.ok && hasPrivatePlanResult?.data === true;
-
-    const hasInsuredPlan =
-      hasInsuredPlanResult?.ok && hasInsuredPlanResult?.data === true;
-
-    await updateSession(tenantId, phone, (sess) => {
-      sess.booking = sess.booking || {};
-      sess.booking.patientId = patientId;
-    });
-
-    if (
-      hasPrivatePlan &&
-      !hasInsuredPlan &&
-      flowPlanKey === PLAN_KEYS.PRIVATE
-    ) {
-      await finishWizardAndGoToDates({
-        schedulingAdapter: adapters.schedulingAdapter,
-        tenantId,
-        runtime,
-        phone,
-        phoneNumberIdFallback,
-        patientId,
-        planKeyFromWizard: flowPlanKey,
-        traceId,
-        practitionerId,
-        MSG,
-        services,
-      });
-      return true;
-    }
-
-    if (
-      !hasPrivatePlan &&
-      hasInsuredPlan &&
-      flowPlanKey === PLAN_KEYS.INSURED
-    ) {
-      await finishWizardAndGoToDates({
-        schedulingAdapter: adapters.schedulingAdapter,
-        tenantId,
-        runtime,
-        phone,
-        phoneNumberIdFallback,
-        patientId,
-        planKeyFromWizard: flowPlanKey,
-        traceId,
-        practitionerId,
-        MSG,
-        services,
-      });
-      return true;
-    }
-
-    if (
-      hasPrivatePlan &&
-      !hasInsuredPlan &&
-      flowPlanKey === PLAN_KEYS.INSURED
-    ) {
-      await updateSession(tenantId, phone, (sess) => {
-        sess.portal = sess.portal || {};
-        sess.portal.issue = {
-          type: "PLAN_NOT_ENABLED",
-          wantedPlan: PLAN_KEYS.INSURED,
-          note: "Paciente possui apenas plano privado ativo no cadastro.",
-          patientId: Number(patientId) || null,
-          planIdsDetected: Array.isArray(planIds)
-            ? planIds.map(Number)
-            : [],
-        };
-      });
-
-      audit(
-        "PLAN_INCONSISTENCY_INSURED_PLAN_NOT_ENABLED",
-        sanitizeForLog({
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          patientId: Number(patientId) || null,
-          flowPlanKey,
-          planIdsDetected: Array.isArray(planIds)
-            ? planIds.map(Number)
-            : [],
-          escalationRequired: true,
-        })
-      );
-
-      await services.sendButtons({
-        tenantId,
-        to: phone,
-        body: MSG.PLAN_NOT_ENABLED_MESSAGE,
-        buttons: [
-          { id: "PLAN_USE_PRIVATE", title: MSG.BTN_PLAN_PRIVATE },
-          { id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE },
-        ],
-        phoneNumberIdFallback,
-      });
-
-      await setState(tenantId, phone, "PLAN_PICK");
-      return true;
-    }
-
-    if (
-      !hasPrivatePlan &&
-      hasInsuredPlan &&
-      flowPlanKey === PLAN_KEYS.PRIVATE
-    ) {
-      await services.sendButtons({
-        tenantId,
-        to: phone,
-        body: MSG.PLAN_DIVERGENCIA,
-        buttons: [
-          { id: "PLAN_USE_PRIVATE", title: MSG.BTN_PLAN_PRIVATE },
-          { id: "PLAN_USE_INSURED", title: MSG.BTN_PLAN_INSURED },
-        ],
-        phoneNumberIdFallback,
-      });
-
-      await setState(tenantId, phone, "PLAN_PICK");
-      return true;
-    }
-
-    audit(
-      "PLAN_VALIDATION_DEBUG",
-      sanitizeForLog({
-        tenantId,
-        traceId,
-        tracePhone: maskPhone(phone),
-        patientId: Number(patientId) || null,
-        flowPlanKey,
-        planIdsDetected: Array.isArray(planIds) ? planIds.map(Number) : [],
-        hasPrivatePlan,
-        hasInsuredPlan,
-        validationResult: "PLAN_VALIDATION_FAILURE_BRANCH",
-      })
-    );
-
-    await services.sendText({
+    await finishWizardAndGoToDates({
+      schedulingAdapter: adapters.schedulingAdapter,
       tenantId,
-      to: phone,
-      body: MSG.PLAN_VALIDATION_FAILURE,
+      runtime,
+      phone,
       phoneNumberIdFallback,
+      patientId,
+      planKeyFromWizard: selectedPlanKey,
+      traceId,
+      practitionerId,
+      MSG,
+      services,
     });
 
-    await setState(tenantId, phone, "MAIN");
     return true;
   }
 
@@ -470,10 +330,21 @@ export async function handlePatientIdentificationStep(flowCtx) {
   await services.sendButtons({
     tenantId,
     to: phone,
-    body: tpl(MSG.PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO, {
-      faltas: formatMissing(validation.missing),
-    }),
-    buttons: [{ id: "FALAR_ATENDENTE", title: MSG.BTN_FALAR_ATENDENTE }],
+    body: tpl(
+      runtime?.content?.messages?.portalExistenteIncompletoBloqueio ||
+        MSG?.PORTAL_EXISTENTE_INCOMPLETO_BLOQUEIO,
+      {
+        faltas: formatMissing(validation.missing),
+      }
+    ),
+    buttons: [
+      {
+        id: "FALAR_ATENDENTE",
+        title:
+          runtime?.content?.messages?.btnFalarAtendente ||
+          MSG?.BTN_FALAR_ATENDENTE,
+      },
+    ],
     phoneNumberIdFallback,
   });
 
