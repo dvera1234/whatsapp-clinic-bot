@@ -236,8 +236,9 @@ router.post("/webhook", async (req, res) => {
     await handleInbound({
       context,
       phone: from,
-      text,
-      phoneNumberIdFallback: phoneNumberId,
+      text: text,
+      message: msg,
+      phoneNumberId,
     });
   } catch (err) {
     errLog("WEBHOOK_POST_ERROR", {
