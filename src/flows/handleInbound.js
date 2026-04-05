@@ -48,13 +48,13 @@ async function handleInbound({
   phone,
   text: inboundText,
   message,
-  phoneNumberIdFallback,
+  phoneNumberId,
 }) {
   const traceId = String(context?.traceId || crypto.randomUUID());
   const tenantId = String(context?.tenantId || "").trim();
 
   const effectivePhoneNumberId =
-    context?.phoneNumberId || phoneNumberIdFallback || null;
+    context?.phoneNumberId || phoneNumberId || null;
 
   if (!tenantId) {
     audit("TENANT_CONTEXT_MISSING", {
@@ -70,7 +70,7 @@ async function handleInbound({
     await failSafeTenantConfigError({
       tenantId,
       phone,
-      phoneNumberIdFallback: effectivePhoneNumberId,
+      phoneNumberId: effectivePhoneNumberId,
     });
     return;
   }
@@ -89,7 +89,7 @@ async function handleInbound({
       to: phone,
       body:
         "⚠️ Ocorreu um erro de configuração temporário. Por favor, fale com nossa equipe.",
-      phoneNumberIdFallback: effectivePhoneNumberId,
+      phoneNumberId: effectivePhoneNumberId,
     });
 
     return;
@@ -108,7 +108,7 @@ async function handleInbound({
     await failSafeTenantConfigError({
       tenantId,
       phone,
-      phoneNumberIdFallback: effectivePhoneNumberId,
+      phoneNumberId: effectivePhoneNumberId,
     });
     return;
   }
@@ -136,7 +136,7 @@ async function handleInbound({
     await failSafeTenantConfigError({
       tenantId,
       phone,
-      phoneNumberIdFallback: effectivePhoneNumberId,
+      phoneNumberId: effectivePhoneNumberId,
     });
     return;
   }
@@ -154,7 +154,7 @@ async function handleInbound({
   await touchUser({
     tenantId,
     phone,
-    phoneNumberIdFallback: effectivePhoneNumberId,
+    phoneNumberId: effectivePhoneNumberId,
   });
 
   const state = (await getState(tenantId, phone)) || "MAIN";
@@ -173,7 +173,7 @@ async function handleInbound({
     runtimeCtx,
     traceId,
     phone,
-    phoneNumberIdFallback: effectivePhoneNumberId,
+    phoneNumberId: effectivePhoneNumberId,
     raw,
     upper,
     digits,
