@@ -19,7 +19,7 @@ function validateSections(sections) {
 export async function sendListMessage({
   tenantId,
   to,
-  phoneNumberIdFallback,
+  phoneNumberId,
   header,
   body,
   footer,
@@ -40,6 +40,6 @@ export async function sendListMessage({
     sections,
     headerText: header,
     footerText: footer,
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 }
