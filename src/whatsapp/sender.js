@@ -3,14 +3,14 @@ import { maskPhone } from "../utils/mask.js";
 import { fetchWithTimeout } from "../utils/time.js";
 import { WHATSAPP_TOKEN } from "../config/env.js";
 
-function getSendConfig({ tenantId, phoneNumberIdFallback }) {
+function getSendConfig({ tenantId, phoneNumberId }) {
   const safeTenantId = String(tenantId || "").trim();
   const token = String(WHATSAPP_TOKEN || "").trim();
-  const phoneNumberId = String(phoneNumberIdFallback || "").trim();
+  const channelId = String(phoneNumberId || "").trim();
 
   if (!safeTenantId) {
     errLog("WHATSAPP_SEND_CONFIG_MISSING_TENANT_ID", {
-      hasPhoneNumberIdFallback: !!phoneNumberIdFallback,
+      hasPhoneNumberId: !!phoneNumberId,
     });
     return null;
   }
@@ -18,22 +18,22 @@ function getSendConfig({ tenantId, phoneNumberIdFallback }) {
   if (!token) {
     errLog("WHATSAPP_SEND_CONFIG_MISSING_TOKEN", {
       tenantId: safeTenantId,
-      hasPhoneNumberIdFallback: !!phoneNumberIdFallback,
+      hasPhoneNumberId: !!phoneNumberId,
     });
     return null;
   }
 
-  if (!phoneNumberId) {
+  if (!channelId) {
     errLog("WHATSAPP_SEND_CONFIG_MISSING_PHONE_NUMBER_ID", {
       tenantId: safeTenantId,
-      hasFallback: !!phoneNumberIdFallback,
+      hasPhoneNumberId: !!phoneNumberId,
     });
     return null;
   }
 
   return {
     token,
-    url: `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+    url: `https://graph.facebook.com/v19.0/${channelId}/messages`,
   };
 }
 
@@ -47,9 +47,9 @@ async function sendText({
   tenantId,
   to,
   body,
-  phoneNumberIdFallback,
+  phoneNumberId,
 }) {
-  const config = getSendConfig({ tenantId, phoneNumberIdFallback });
+  const config = getSendConfig({ tenantId, phoneNumberId });
   if (!config) return false;
 
   const resp = await fetchWithTimeout(
@@ -90,9 +90,9 @@ async function sendButtons({
   to,
   body,
   buttons,
-  phoneNumberIdFallback,
+  phoneNumberId,
 }) {
-  const config = getSendConfig({ tenantId, phoneNumberIdFallback });
+  const config = getSendConfig({ tenantId, phoneNumberId });
   if (!config) return false;
 
   const resp = await fetchWithTimeout(
@@ -150,9 +150,9 @@ async function sendList({
   sections,
   footerText,
   headerText,
-  phoneNumberIdFallback,
+  phoneNumberId,
 }) {
-  const config = getSendConfig({ tenantId, phoneNumberIdFallback });
+  const config = getSendConfig({ tenantId, phoneNumberId });
   if (!config) return false;
 
   const safeSections = Array.isArray(sections)
