@@ -68,7 +68,7 @@ async function renderLgpdConsent(flowCtx) {
   const {
     tenantId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
   } = flowCtx;
 
   const menuLike = buildLgpdMenu(flowCtx);
@@ -76,7 +76,7 @@ async function renderLgpdConsent(flowCtx) {
   await sendListMessage({
     tenantId,
     to: phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     body: menuLike.text,
     buttonText: menuLike.buttonText || "Selecionar",
     sections: [
