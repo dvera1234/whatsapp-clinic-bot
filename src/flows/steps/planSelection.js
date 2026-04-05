@@ -60,7 +60,7 @@ export async function handlePlanSelectionStep(flowCtx) {
     tenantId,
     runtime,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     raw,
     state,
     MSG,
@@ -85,7 +85,7 @@ export async function handlePlanSelectionStep(flowCtx) {
         runtime?.content?.messages?.buttonsOnlyWarning ||
         MSG?.PICK_PLAN_BUTTONS_ONLY ||
         MSG?.BUTTONS_ONLY_WARNING,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -113,8 +113,7 @@ export async function handlePlanSelectionStep(flowCtx) {
       phone,
       body: msg || null,
       state: nextState,
-      phoneNumberIdFallback,
-      flowCtx,
+      phoneNumberId,
     });
 
     return true;
@@ -151,7 +150,7 @@ export async function handlePlanSelectionStep(flowCtx) {
         runtime?.content?.messages?.askCpfPortal ||
         MSG?.ASK_CPF_PORTAL,
       state: "WZ_CPF",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
