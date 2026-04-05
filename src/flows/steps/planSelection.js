@@ -1,5 +1,4 @@
-import { getSession, updateSession } from "../../session/redisSession.js";
-import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
+import { updateSession } from "../../session/redisSession.js";
 import { sendAndSetState } from "../helpers/flowHelpers.js";
 import { setStateAndRender } from "../helpers/stateRenderHelpers.js";
 
@@ -28,6 +27,7 @@ function resolveMessage(runtime, MSG, key) {
 function resolvePlanFlow(runtime, plan) {
   const flowKey = String(plan?.flow || "").trim();
   const flows = getFlows(runtime);
+
   const flowConfig =
     flowKey && flows?.[flowKey] && typeof flows[flowKey] === "object"
       ? flows[flowKey]
@@ -59,14 +59,11 @@ export async function handlePlanSelectionStep(flowCtx) {
   const {
     tenantId,
     runtime,
-    traceId,
     phone,
     phoneNumberIdFallback,
     raw,
     state,
     MSG,
-    practitionerId,
-    adapters,
     services,
   } = flowCtx;
 
@@ -97,8 +94,12 @@ export async function handlePlanSelectionStep(flowCtx) {
 
   await updateSession(tenantId, phone, (s) => {
     s.booking = s.booking || {};
-    s.booking.planKey = plan.key;
-    s.booking.planId = plan.id;
+    s.booking.planId = String(plan.id);
+    s.booking.planKey = String(plan.key || "");
+    s.booking.planFlow = String(plan.flow || "");
+    s.booking.planLabel = String(plan.label || "");
+    s.booking.planMessageKey = String(plan.messageKey || "");
+    s.booking.planNextState = String(plan.nextState || "");
 
     if (s.portal?.issue) delete s.portal.issue;
   });
@@ -132,36 +133,36 @@ export async function handlePlanSelectionStep(flowCtx) {
     return true;
   }
 
-  const s = await getSession(tenantId, phone);
-  const patientId = Number(s?.booking?.patientId || s?.portal?.patientId);
+  if (flow.type === "BOOKING" || flow.type === "CONTINUE") {
+    const lgpdBody =
+      runtime?.content?.messages?.lgpdConsent ||
+      MSG?.LGPD_CONSENT ||
+      "";
 
-  if (!patientId) {
-    await services.sendText({
+    if (String(lgpdBody).trim()) {
+      await sendAndSetState({
+        tenantId,
+        phone,
+        body: lgpdBody,
+        state: "LGPD_CONSENT",
+        phoneNumberIdFallback,
+      });
+      return true;
+    }
+
+    await sendAndSetState({
       tenantId,
-      to: phone,
+      phone,
       body:
-        runtime?.content?.messages?.bookingSessionInvalid ||
-        MSG?.BOOKING_SESSION_INVALID,
+        runtime?.content?.messages?.askCpfPortal ||
+        MSG?.ASK_CPF_PORTAL,
+      state: "WZ_CPF",
       phoneNumberIdFallback,
     });
-
-    await setStateAndRender(flowCtx, "MAIN");
     return true;
   }
 
-  await finishWizardAndGoToDates({
-    schedulingAdapter: adapters.schedulingAdapter,
-    tenantId,
-    runtime,
-    phone,
-    phoneNumberIdFallback,
-    patientId,
-    planKeyFromWizard: plan.key,
-    traceId,
-    practitionerId,
-    MSG,
-    services,
-  });
-
-  return true;
+  throw new Error(
+    `TENANT_CONTENT_INVALID:unsupported_plan_flow:${String(plan?.flow || "")}`
+  );
 }
