@@ -140,13 +140,7 @@ export async function handlePlanSelectionStep(flowCtx) {
       "";
 
     if (String(lgpdBody).trim()) {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: lgpdBody,
-        state: "LGPD_CONSENT",
-        phoneNumberIdFallback,
-      });
+      await setStateAndRender(flowCtx, "LGPD_CONSENT");
       return true;
     }
 
