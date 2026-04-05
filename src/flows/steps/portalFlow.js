@@ -1,17 +1,19 @@
-import { clearSession, getSession, setState } from "../../session/redisSession.js";
+import { clearSession, getSession } from "../../session/redisSession.js";
 import {
   LGPD_TEXT_VERSION,
   LGPD_TEXT_HASH,
 } from "../../config/constants.js";
 import { audit } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
-import { sendAndSetState, clearTransientPortalData } from "../helpers/flowHelpers.js";
+import {
+  sendAndSetState,
+  clearTransientPortalData,
+} from "../helpers/flowHelpers.js";
 import {
   buildSafeSupportPrefill,
   sendSupportLink,
 } from "../helpers/supportHelpers.js";
-import { tpl } from "../helpers/contentHelpers.js";
-import { formatMissing } from "../helpers/patientHelpers.js";
+import { setStateAndRender } from "../helpers/stateRenderHelpers.js";
 
 export async function handlePortalFlowStep(flowCtx) {
   const {
@@ -24,6 +26,7 @@ export async function handlePortalFlowStep(flowCtx) {
     MSG,
     supportWa,
     services,
+    runtime,
   } = flowCtx;
 
   if (state === "LGPD_CONSENT") {
@@ -41,7 +44,9 @@ export async function handlePortalFlowStep(flowCtx) {
       await sendAndSetState({
         tenantId,
         phone,
-        body: MSG.ASK_CPF_PORTAL,
+        body:
+          runtime?.content?.messages?.askCpfPortal ||
+          MSG?.ASK_CPF_PORTAL,
         state: "WZ_CPF",
         phoneNumberIdFallback,
       });
@@ -62,7 +67,9 @@ export async function handlePortalFlowStep(flowCtx) {
       await services.sendText({
         tenantId,
         to: phone,
-        body: MSG.LGPD_RECUSA,
+        body:
+          runtime?.content?.messages?.lgpdRecusa ||
+          MSG?.LGPD_RECUSA,
         phoneNumberIdFallback,
       });
 
@@ -70,7 +77,19 @@ export async function handlePortalFlowStep(flowCtx) {
       return true;
     }
 
-    return false;
+    await services.sendText({
+      tenantId,
+      to: phone,
+      body:
+        runtime?.content?.messages?.lgpdButtonsOnly ||
+        runtime?.content?.messages?.buttonsOnlyWarning ||
+        MSG?.LGPD_BUTTONS_ONLY ||
+        MSG?.BUTTONS_ONLY_WARNING,
+      phoneNumberIdFallback,
+    });
+
+    await setStateAndRender(flowCtx, "LGPD_CONSENT");
+    return true;
   }
 
   if (state === "BLOCK_EXISTING_INCOMPLETE") {
