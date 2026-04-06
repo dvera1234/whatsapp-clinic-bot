@@ -244,18 +244,23 @@ export async function actionGoState(flowCtx) {
       ? runtime.content.messages[messageKey]
       : String(menuOption?.text || "").trim();
 
-  const isRenderableMenuState =
-    targetState === "MAIN" || targetState.startsWith("MENU:");
-
-  if (isRenderableMenuState) {
-    return await sendAndSetState({
-      tenantId,
-      phone,
-      body: body || null,
+  const isRenderableState =
+    targetState === "MAIN" ||
+    targetState.startsWith("MENU:") ||
+    targetState === "LGPD_CONSENT";
+  
+  if (isRenderableState) {
+    await setState(tenantId, phone, targetState);
+  
+    await renderState({
+      ...flowCtx,
       state: targetState,
-      phoneNumberId,
-      flowCtx,
+      raw: "",
+      upper: "",
+      digits: "",
     });
+  
+    return true;
   }
 
   await sendAndSetState({
@@ -292,18 +297,23 @@ export async function actionShowMessage(flowCtx) {
     ? String(menuOption.nextState).trim()
     : null;
 
-  const isRenderableMenuState =
-    nextState === "MAIN" || String(nextState || "").startsWith("MENU:");
-
-  if (isRenderableMenuState) {
-    return await sendAndSetState({
-      tenantId,
-      phone,
-      body,
+  const isRenderableState =
+    nextState === "MAIN" ||
+    String(nextState || "").startsWith("MENU:") ||
+    nextState === "LGPD_CONSENT";
+  
+  if (isRenderableState) {
+    await setState(tenantId, phone, nextState);
+  
+    await renderState({
+      ...flowCtx,
       state: nextState,
-      phoneNumberId,
-      flowCtx,
+      raw: "",
+      upper: "",
+      digits: "",
     });
+  
+    return true;
   }
 
   await sendAndSetState({
