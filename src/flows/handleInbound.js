@@ -53,8 +53,16 @@ async function handleInbound({
   const traceId = String(context?.traceId || crypto.randomUUID());
   const tenantId = String(context?.tenantId || "").trim();
 
-  const effectivePhoneNumberId =
-    context?.phoneNumberId || phoneNumberId || null;
+ const effectivePhoneNumberId = context?.phoneNumberId;
+
+  if (!effectivePhoneNumberId) {
+    errLog("PHONE_NUMBER_ID_MISSING_IN_CONTEXT", {
+      tenantId,
+      traceId,
+      hasParamPhoneNumberId: !!phoneNumberId,
+    });
+    return;
+  }
 
   if (!tenantId) {
     audit("TENANT_CONTEXT_MISSING", {
