@@ -27,7 +27,7 @@ export async function handleSupportFlowStep(
     tenantId,
     traceId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     raw,
     upper,
     state,
@@ -45,7 +45,7 @@ export async function handleSupportFlowStep(
     await sendSupportLink({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      ,
       prefill,
       supportWa,
       nextState: "MAIN",
@@ -63,7 +63,7 @@ export async function handleSupportFlowStep(
       phone,
       body: MSG.AJUDA_PERGUNTA,
       state: "WAIT_AJUDA_MOTIVO",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -80,7 +80,7 @@ export async function handleSupportFlowStep(
     await sendSupportLink({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       prefill,
       supportWa,
       nextState: "MAIN",
@@ -99,7 +99,7 @@ export async function handleSupportFlowStep(
         phone,
         body: MSG.ATTENDANT_DESCRIBE,
         state: "ATENDENTE_DESCRICAO",
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -115,7 +115,7 @@ export async function handleSupportFlowStep(
     await sendSupportLink({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       prefill,
       supportWa,
       nextState: "MAIN",
@@ -139,7 +139,7 @@ export async function handleSupportFlowStep(
     await sendSupportLink({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       prefill,
       supportWa,
       nextState: "MAIN",
