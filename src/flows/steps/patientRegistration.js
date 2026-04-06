@@ -34,7 +34,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
     runtime,
     traceId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     raw,
     upper,
     state,
@@ -57,7 +57,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.NAME_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -73,7 +73,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_DTNASC,
       state: "WZ_DTNASC",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -85,7 +85,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.DATE_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -105,7 +105,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         { id: "SX_F", title: MSG.SEX_FEMALE },
         { id: "SX_NI", title: MSG.SEX_NO_INFO },
       ],
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     await setState(tenantId, phone, "WZ_SEXO");
     return true;
@@ -150,7 +150,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
             title: MSG.MENU_BACK_TO_MAIN || "Menu principal",
           },
         ],
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       await setState(tenantId, phone, "WZ_PLANO");
       return true;
@@ -173,7 +173,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
             title: MSG.MENU_BACK_TO_MAIN || "Menu principal",
           },
         ],
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       await setState(tenantId, phone, "WZ_PLANO");
       return true;
@@ -187,7 +187,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         { id: "PLAN_PRIVATE", title: MSG.PLAN_OPTION_PRIVATE },
         { id: "PLAN_INSURED", title: MSG.PLAN_OPTION_INSURED },
       ],
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     await setState(tenantId, phone, "WZ_PLANO");
     return true;
@@ -236,7 +236,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.PICK_PLAN_BUTTONS_ONLY,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -253,7 +253,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_EMAIL,
       state: "WZ_EMAIL",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -265,7 +265,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.EMAIL_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -281,7 +281,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_CEP,
       state: "WZ_CEP",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -293,7 +293,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.CEP_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -309,7 +309,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_ENDERECO,
       state: "WZ_ENDERECO",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -322,7 +322,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.ADDRESS_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -338,7 +338,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_NUMERO,
       state: "WZ_NUMERO",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -351,7 +351,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.ADDRESS_NUMBER_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -367,7 +367,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_COMPLEMENTO,
       state: "WZ_COMPLEMENTO",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -386,7 +386,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_BAIRRO,
       state: "WZ_BAIRRO",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -399,7 +399,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.DISTRICT_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -415,7 +415,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_CIDADE,
       state: "WZ_CIDADE",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -428,7 +428,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.CITY_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -444,7 +444,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       phone,
       body: MSG.ASK_UF,
       state: "WZ_UF",
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -457,7 +457,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.UF_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -488,7 +488,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
           tenantId,
           traceId,
           phone,
-          phoneNumberIdFallback,
+          phoneNumberId,
           capability: "access",
           err,
           MSG,
@@ -511,7 +511,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.REGISTRATION_CREATE_FAILURE,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return true;
@@ -529,7 +529,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
           tenantId,
           traceId,
           phone,
-          phoneNumberIdFallback,
+          phoneNumberId,
           capability: "identity",
           err,
           MSG,
@@ -559,7 +559,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         body: tpl(MSG.PORTAL_NEED_DATA, {
           faltas: formatMissing(validation2.missing),
         }),
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
 
       const next = nextWizardStateFromMissing(validation2.missing);
@@ -569,7 +569,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
         tenantId,
         to: phone,
         body: getPromptByWizardState(next, MSG),
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -587,7 +587,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       tenantId,
       runtime,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       patientId: registeredPatientId,
       planKeyFromWizard: finalPlanKey,
       traceId,
@@ -604,7 +604,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
     phone,
     body: MSG.ASK_CPF_PORTAL,
     state: "WZ_CPF",
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
   return true;
 }
