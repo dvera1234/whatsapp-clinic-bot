@@ -160,7 +160,7 @@ export async function showNextDates({
   schedulingAdapter,
   runtimeCtx,
   phone,
-  phoneNumberIdFallback,
+  phoneNumberId,
   practitionerId,
   patientId,
   MSG,
@@ -182,7 +182,7 @@ export async function showNextDates({
       tenantId: runtimeCtx?.tenantId,
       traceId: runtimeCtx?.traceId || null,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       capability: "booking",
       err: result.error,
       MSG,
@@ -199,7 +199,7 @@ export async function showNextDates({
       tenantId: runtimeCtx?.tenantId,
       to: phone,
       body: MSG.BOOKING_NO_DATES,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return false;
   }
@@ -235,7 +235,7 @@ export async function showNextDates({
       title: MSG.BOOKING_DATES_SECTION_TITLE || "Datas disponíveis",
       rows,
     }),
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   return !!sent;
@@ -244,7 +244,7 @@ export async function showNextDates({
 export async function showSlotsPage({
   tenantId,
   phone,
-  phoneNumberIdFallback,
+  phoneNumberId,
   slots,
   page = 0,
   MSG,
@@ -259,7 +259,7 @@ export async function showSlotsPage({
       tenantId,
       to: phone,
       body: MSG.BOOKING_NO_SLOTS,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
 
     await services.sendList({
@@ -281,7 +281,7 @@ export async function showSlotsPage({
           },
         ],
       }),
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return;
   }
@@ -321,7 +321,7 @@ export async function showSlotsPage({
       title: MSG.BOOKING_SLOTS_SECTION_TITLE || "Horários disponíveis",
       rows,
     }),
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 }
 
@@ -330,7 +330,7 @@ export async function finishWizardAndGoToDates({
   tenantId,
   runtime,
   phone,
-  phoneNumberIdFallback,
+  phoneNumberId,
   patientId,
   planKeyFromWizard,
   traceId = null,
@@ -359,7 +359,7 @@ export async function finishWizardAndGoToDates({
       tracePhone: maskPhone(phone),
     },
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     practitionerId,
     patientId,
     MSG,
