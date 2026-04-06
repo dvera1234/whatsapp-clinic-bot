@@ -11,7 +11,7 @@ export function makeWaLink(supportWa, prefillText) {
 export async function sendSupportLink({
   tenantId,
   phone,
-  phoneNumberIdFallback,
+  phoneNumberId,
   prefill,
   supportWa,
   nextState = "MAIN",
@@ -24,7 +24,7 @@ export async function sendSupportLink({
     tenantId,
     to: phone,
     body: tpl(MSG.SUPPORT_LINK_MESSAGE, { link }),
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   if (nextState) {
