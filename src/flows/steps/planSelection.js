@@ -105,19 +105,27 @@ export async function handlePlanSelectionStep(flowCtx) {
   });
 
   if (flow.type === "INFO_ONLY" || flow.type === "END") {
-    const msg = resolveMessage(runtime, MSG, plan.messageKey);
-    const nextState = String(plan?.nextState || "").trim() || null;
+  const msg = resolveMessage(runtime, MSG, plan.messageKey);
+  const nextState = String(plan?.nextState || "").trim() || null;
 
-    await sendAndSetState({
+  if (msg) {
+    const sent = await services.sendText({
       tenantId,
-      phone,
-      body: msg || null,
-      state: nextState,
+      to: phone,
+      body: msg,
       phoneNumberId,
     });
 
+    if (!sent) return true;
+  }
+
+  if (nextState) {
+    await setStateAndRender(flowCtx, nextState);
     return true;
   }
+
+  return true;
+}
 
   if (flow.type === "OPEN_SUBMENU" || flow.type === "DIRECT_BOOKING") {
     const targetState = buildMenuStateFromTarget(flow.config?.target);
