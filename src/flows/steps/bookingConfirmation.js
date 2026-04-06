@@ -21,7 +21,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
     tenantId,
     traceId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     upper,
     state,
     MSG,
@@ -51,7 +51,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
     await showSlotsPage({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       slots,
       page: 0,
       MSG,
@@ -78,7 +78,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_PATIENT_NOT_IDENTIFIED,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return true;
@@ -97,13 +97,13 @@ export async function handleBookingConfirmationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_SLOT_NOT_FOUND,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
 
       await showSlotsPage({
         tenantId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberId,
         slots,
         page: s?.booking?.slotPage || 0,
         MSG,
@@ -121,7 +121,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_ALREADY_PROCESSING,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -143,7 +143,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
           tenantId,
           to: phone,
           body: MSG.BOOKING_SLOT_TOO_SOON,
-          phoneNumberIdFallback,
+          phoneNumberId,
         });
 
         const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
@@ -154,7 +154,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
             tenantId,
             to: phone,
             body: MSG.BOOKING_SESSION_INVALID,
-            phoneNumberIdFallback,
+            phoneNumberId,
           });
           await setState(tenantId, phone, "MAIN");
           return true;
@@ -174,7 +174,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
             tenantId,
             traceId,
             phone,
-            phoneNumberIdFallback,
+            phoneNumberId,
             capability: "booking",
             err: outSlots.error,
             MSG,
@@ -195,7 +195,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
         await showSlotsPage({
           tenantId,
           phone,
-          phoneNumberIdFallback,
+          phoneNumberId,
           slots: sUpdated?.booking?.slots || [],
           page: 0,
           MSG,
@@ -221,7 +221,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
             tenantId,
             traceId,
             phone,
-            phoneNumberIdFallback,
+            phoneNumberId,
             capability: "booking",
             err,
             MSG,
@@ -290,7 +290,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
           tenantId,
           to: phone,
           body: MSG.BOOKING_CONFIRM_FAILURE,
-          phoneNumberIdFallback,
+          phoneNumberId,
         });
 
         audit(
@@ -314,7 +314,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
         await showSlotsPage({
           tenantId,
           phone,
-          phoneNumberIdFallback,
+          phoneNumberId,
           slots,
           page: s?.booking?.slotPage || 0,
           MSG,
@@ -397,7 +397,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
             msgOk,
             paymentInfo,
           }),
-          phoneNumberIdFallback,
+          phoneNumberId,
         });
 
         let sentPortalLink = false;
@@ -406,7 +406,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
             tenantId,
             to: phone,
             body: tpl(MSG.PORTAL_LINK_PREFIX, { portalUrl }),
-            phoneNumberIdFallback,
+            phoneNumberId,
           });
         }
 
@@ -450,7 +450,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
           tenantId,
           to: phone,
           body: MSG.BOOKING_SUCCESS_FALLBACK,
-          phoneNumberIdFallback,
+          phoneNumberId,
         });
       }
 
@@ -468,7 +468,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
       { id: "CONFIRMAR", title: MSG.ACTION_CONFIRM },
       { id: "ESCOLHER_OUTRO", title: MSG.ACTION_PICK_OTHER },
     ],
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   return true;
