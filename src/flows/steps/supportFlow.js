@@ -45,7 +45,7 @@ export async function handleSupportFlowStep(
     await sendSupportLink({
       tenantId,
       phone,
-      ,
+      phoneNumberId,
       prefill,
       supportWa,
       nextState: "MAIN",
