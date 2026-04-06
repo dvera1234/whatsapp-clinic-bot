@@ -29,7 +29,7 @@ export async function handleProviderTemporaryUnavailable({
   tenantId,
   traceId = null,
   phone,
-  phoneNumberIdFallback,
+  phoneNumberId,
   capability = null,
   err,
   MSG,
@@ -50,7 +50,7 @@ export async function handleProviderTemporaryUnavailable({
     tenantId,
     to: phone,
     body: MSG.PROVIDER_UNAVAILABLE,
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   if (nextState) {
