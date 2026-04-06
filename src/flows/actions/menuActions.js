@@ -74,7 +74,7 @@ export async function actionOpenSubmenu(flowCtx) {
     tenantId,
     runtime,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     menuOption,
   } = flowCtx;
 
@@ -96,7 +96,7 @@ export async function actionOpenSubmenu(flowCtx) {
   await sendListMessage({
     tenantId,
     to: phone,
-    phoneNumberId: phoneNumberIdFallback,
+    phoneNumberId: phoneNumberId,
     body,
     buttonText: String(submenu?.buttonText || "").trim() || "Selecionar",
     sections: buildSections(submenu, `submenus.${submenuKey}`),
@@ -115,7 +115,7 @@ export async function actionPlanMenu(flowCtx) {
     tenantId,
     phone,
     runtime,
-    phoneNumberIdFallback,
+    phoneNumberId,
     menuOption,
   } = flowCtx;
 
@@ -140,7 +140,7 @@ export async function actionPlanMenu(flowCtx) {
   await sendListMessage({
     tenantId,
     to: phone,
-    phoneNumberId: phoneNumberIdFallback,
+    phoneNumberId: phoneNumberId,
     body,
     buttonText:
       String(runtime?.content?.messages?.bookingOptionsButton || "").trim() ||
@@ -229,7 +229,7 @@ export async function actionGoState(flowCtx) {
     tenantId,
     runtime,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     menuOption,
   } = flowCtx;
 
@@ -253,7 +253,7 @@ export async function actionGoState(flowCtx) {
       phone,
       body: body || null,
       state: targetState,
-      phoneNumberIdFallback,
+      phoneNumberId,
       flowCtx,
     });
   }
@@ -263,7 +263,7 @@ export async function actionGoState(flowCtx) {
     phone,
     body: body || null,
     state: targetState,
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   return true;
@@ -274,7 +274,7 @@ export async function actionShowMessage(flowCtx) {
     tenantId,
     runtime,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     menuOption,
   } = flowCtx;
 
@@ -301,7 +301,7 @@ export async function actionShowMessage(flowCtx) {
       phone,
       body,
       state: nextState,
-      phoneNumberIdFallback,
+      phoneNumberId,
       flowCtx,
     });
   }
@@ -311,7 +311,7 @@ export async function actionShowMessage(flowCtx) {
     phone,
     body,
     state: nextState || null,
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   return true;
