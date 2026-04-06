@@ -30,7 +30,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
     runtime,
     traceId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     raw,
     state,
     MSG,
@@ -67,7 +67,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
       body:
         runtime?.content?.messages?.cpfInvalido ||
         MSG?.CPF_INVALIDO,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     return true;
   }
@@ -104,7 +104,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
         tenantId,
         traceId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberId,
         capability: "identity",
         err,
         MSG,
@@ -153,7 +153,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
       body:
         runtime?.content?.messages?.wizardNewPatientName ||
         MSG?.WIZARD_NEW_PATIENT_NAME,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
 
     await setState(tenantId, phone, "WZ_NOME");
@@ -183,7 +183,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
         tenantId,
         traceId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberId,
         capability: "identity",
         err,
         MSG,
@@ -202,7 +202,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
       body:
         runtime?.content?.messages?.profileLookupFailure ||
         MSG?.PROFILE_LOOKUP_FAILURE,
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
     await setState(tenantId, phone, "MAIN");
     return true;
@@ -296,7 +296,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
       tenantId,
       runtime,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       patientId,
       planKeyFromWizard: selectedPlanKey,
       traceId,
@@ -345,7 +345,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
           MSG?.BTN_FALAR_ATENDENTE,
       },
     ],
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   await setState(tenantId, phone, "BLOCK_EXISTING_INCOMPLETE");
