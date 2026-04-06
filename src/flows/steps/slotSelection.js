@@ -14,7 +14,7 @@ export async function handleSlotSelectionStep(flowCtx) {
     tenantId,
     traceId,
     phone,
-    phoneNumberIdFallback,
+    phoneNumberId,
     raw,
     state,
     MSG,
@@ -54,7 +54,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_SESSION_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return true;
@@ -69,7 +69,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tracePhone: maskPhone(phone),
       },
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       practitionerId: s?.booking?.practitionerId ?? practitionerId,
       patientId,
       MSG,
@@ -92,7 +92,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BUTTONS_ONLY_WARNING,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -105,7 +105,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_SESSION_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return true;
@@ -136,7 +136,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tracePhone: maskPhone(phone),
       },
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       practitionerId: s?.booking?.practitionerId ?? practitionerId,
       patientId,
       MSG,
@@ -169,7 +169,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BUTTONS_ONLY_WARNING,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -183,7 +183,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_SESSION_INVALID,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       await setState(tenantId, phone, "MAIN");
       return true;
@@ -218,7 +218,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         traceId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberId,
         capability: "booking",
         err: outSlots.error,
         MSG,
@@ -244,7 +244,7 @@ export async function handleSlotSelectionStep(flowCtx) {
     await showSlotsPage({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       slots: updated?.booking?.slots || [],
       page: 0,
       MSG,
@@ -262,7 +262,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BUTTONS_ONLY_WARNING,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -292,7 +292,7 @@ export async function handleSlotSelectionStep(flowCtx) {
     await showSlotsPage({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       slots,
       page,
       MSG,
@@ -320,7 +320,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_SLOT_NOT_FOUND,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
       return true;
     }
@@ -345,13 +345,13 @@ export async function handleSlotSelectionStep(flowCtx) {
         tenantId,
         to: phone,
         body: MSG.BOOKING_SLOT_NOT_FOUND,
-        phoneNumberIdFallback,
+        phoneNumberId,
       });
 
       await showSlotsPage({
         tenantId,
         phone,
-        phoneNumberIdFallback,
+        phoneNumberId,
         slots,
         page: s?.booking?.slotPage || 0,
         MSG,
@@ -396,7 +396,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         { id: "CONFIRMAR", title: MSG.ACTION_CONFIRM },
         { id: "ESCOLHER_OUTRO", title: MSG.ACTION_PICK_OTHER },
       ],
-      phoneNumberIdFallback,
+      phoneNumberId,
     });
 
     return true;
@@ -417,7 +417,7 @@ export async function handleSlotSelectionStep(flowCtx) {
     tenantId,
     to: phone,
     body: MSG.BUTTONS_ONLY_WARNING,
-    phoneNumberIdFallback,
+    phoneNumberId,
   });
 
   if (state === "ASK_DATE_PICK") {
@@ -438,7 +438,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         tracePhone: maskPhone(phone),
       },
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       practitionerId: s?.booking?.practitionerId ?? practitionerId,
       patientId,
       MSG,
@@ -459,7 +459,7 @@ export async function handleSlotSelectionStep(flowCtx) {
     await showSlotsPage({
       tenantId,
       phone,
-      phoneNumberIdFallback,
+      phoneNumberId,
       slots: s?.booking?.slots || [],
       page: s?.booking?.slotPage || 0,
       MSG,
