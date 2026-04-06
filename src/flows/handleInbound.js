@@ -46,7 +46,7 @@ registerDefaultActions();
 async function handleInbound({
   context = {},
   phone,
-  text: inboundText,
+  text,
   message,
   phoneNumberId,
 }) {
@@ -154,7 +154,7 @@ async function handleInbound({
   const listReplyId = message?.interactive?.list_reply?.id || null;
   const buttonReplyId = message?.interactive?.button_reply?.id || null;
 
-  const rawInput = listReplyId || buttonReplyId || inboundText || "";
+  const rawInput = listReplyId || buttonReplyId || text || "";
   const raw = normalizeSpaces(rawInput);
   const digits = onlyDigits(raw);
   const upper = String(raw || "").toUpperCase();
