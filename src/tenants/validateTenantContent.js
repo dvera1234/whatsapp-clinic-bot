@@ -35,6 +35,15 @@ export function validateTenantContent(content = {}) {
   // MESSAGES
   if (!content.messages) {
     errors.push("messages");
+  } else {
+    const m = content.messages;
+  
+    // LGPD obrigatório
+    if (!m.lgpdConsent) errors.push("messages.lgpdConsent");
+    if (!m.lgpdButtonText) errors.push("messages.lgpdButtonText");
+    if (!m.lgpdSectionTitle) errors.push("messages.lgpdSectionTitle");
+    if (!m.lgpdAcceptLabel) errors.push("messages.lgpdAcceptLabel");
+    if (!m.lgpdRejectLabel) errors.push("messages.lgpdRejectLabel");
   }
 
   return {
