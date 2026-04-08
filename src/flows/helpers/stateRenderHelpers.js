@@ -8,68 +8,53 @@ function normalizeState(state) {
 
 function buildLgpdMenu(flowCtx) {
   const messages = flowCtx?.runtime?.content?.messages || {};
-  const MSG = flowCtx?.MSG || {};
 
-  const text = String(
-    messages.lgpdConsent ||
-      MSG.LGPD_CONSENT ||
-      ""
-  ).trim();
-
+  const text = String(messages.lgpdConsent || "").trim();
   if (!text) {
     throw new Error("TENANT_CONTENT_INVALID:messages.lgpdConsent_missing");
   }
 
+  const buttonText = String(messages.lgpdButtonText || "").trim();
+  if (!buttonText) {
+    throw new Error("TENANT_CONTENT_INVALID:messages.lgpdButtonText_missing");
+  }
+
+  const sectionTitle = String(messages.lgpdSectionTitle || "").trim();
+  if (!sectionTitle) {
+    throw new Error("TENANT_CONTENT_INVALID:messages.lgpdSectionTitle_missing");
+  }
+
+  const acceptLabel = String(messages.lgpdAcceptLabel || "").trim();
+  if (!acceptLabel) {
+    throw new Error("TENANT_CONTENT_INVALID:messages.lgpdAcceptLabel_missing");
+  }
+
+  const rejectLabel = String(messages.lgpdRejectLabel || "").trim();
+  if (!rejectLabel) {
+    throw new Error("TENANT_CONTENT_INVALID:messages.lgpdRejectLabel_missing");
+  }
+
   return {
     text,
-    buttonText: String(
-      messages.lgpdButtonText ||
-        messages.listButtonText ||
-        MSG.LGPD_BUTTON_TEXT ||
-        "Selecionar"
-    ).trim(),
-    sectionTitle: String(
-      messages.lgpdSectionTitle ||
-        MSG.LGPD_SECTION_TITLE ||
-        "Consentimento"
-    ).trim(),
+    buttonText,
+    sectionTitle,
     options: [
       {
         id: "1",
-        label: String(
-          messages.lgpdAcceptLabel ||
-            MSG.LGPD_ACCEPT_LABEL ||
-            "Concordo e desejo continuar"
-        ).trim(),
-        description: String(
-          messages.lgpdAcceptDescription ||
-            MSG.LGPD_ACCEPT_DESCRIPTION ||
-            ""
-        ).trim(),
+        label: acceptLabel,
+        description: String(messages.lgpdAcceptDescription || "").trim(),
       },
       {
         id: "2",
-        label: String(
-          messages.lgpdRejectLabel ||
-            MSG.LGPD_REJECT_LABEL ||
-            "Não concordo"
-        ).trim(),
-        description: String(
-          messages.lgpdRejectDescription ||
-            MSG.LGPD_REJECT_DESCRIPTION ||
-            ""
-        ).trim(),
+        label: rejectLabel,
+        description: String(messages.lgpdRejectDescription || "").trim(),
       },
     ],
   };
 }
 
 async function renderLgpdConsent(flowCtx) {
-  const {
-    tenantId,
-    phone,
-    phoneNumberId,
-  } = flowCtx;
+  const { tenantId, phone, phoneNumberId } = flowCtx;
 
   const menuLike = buildLgpdMenu(flowCtx);
 
@@ -78,10 +63,10 @@ async function renderLgpdConsent(flowCtx) {
     to: phone,
     phoneNumberId,
     body: menuLike.text,
-    buttonText: menuLike.buttonText || "Selecionar",
+    buttonText: menuLike.buttonText,
     sections: [
       {
-        title: menuLike.sectionTitle || "Consentimento",
+        title: menuLike.sectionTitle,
         rows: menuLike.options.map((opt) => ({
           id: String(opt.id),
           title: String(opt.label || opt.id),
