@@ -1,7 +1,8 @@
 import express from "express";
 import crypto from "crypto";
 
-import { getState, redis } from "../session/redisSession.js";
+import { redis } from "../redis.js";
+import { getState } from "../session/redisSession.js";
 import { VERIFY_TOKEN } from "../config/env.js";
 import { LGPD_TEXT_HASH, LGPD_TEXT_VERSION } from "../config/constants.js";
 import { audit, errLog } from "../observability/audit.js";
@@ -236,7 +237,7 @@ router.post("/webhook", async (req, res) => {
     await handleInbound({
       context,
       phone: from,
-      text: text,
+      text,
       message: msg,
       phoneNumberId,
     });
