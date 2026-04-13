@@ -1,11 +1,10 @@
-import { getRedisClient } from "../redis.js";
+import { redis } from "../redis.js";
 import { DEBUG_REDIS, SESSION_TTL_SECONDS } from "../config/env.js";
 import { INACTIVITY_WARN_MS } from "../config/constants.js";
 import { audit, errLog, techLog } from "../observability/audit.js";
 import { safeConsoleWrite, safeJson } from "../observability/logger.js";
 import { maskKey, maskPhone } from "../utils/mask.js";
 
-const redis = getRedisClient();
 const inactivityTimers = new Map();
 
 let inactivityHandler = {
