@@ -1,3 +1,5 @@
+import { validateTenantContent } from "./validateTenantContent.js";
+
 function readString(value) {
   if (typeof value !== "string") return "";
   return value.trim();
@@ -30,6 +32,18 @@ function readHttpsUrl(value) {
   }
 }
 
+function readBoolean(value) {
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+
+  return false;
+}
+
 function pushMissing(list, condition, fieldName) {
   if (condition) list.push(fieldName);
 }
@@ -51,7 +65,31 @@ function isSupportedBookingProvider(value) {
 }
 
 function normalizeContent(content) {
-  return content && typeof content === "object" ? content : {};
+  return content && typeof content === "object" && !Array.isArray(content)
+    ? content
+    : {};
+}
+
+function normalizeProviderBlock(providerConfig = {}) {
+  return {
+    key: readString(providerConfig.key),
+    baseUrl: readHttpsUrl(providerConfig.baseUrl),
+    user: readString(providerConfig.user),
+    pass: readString(providerConfig.pass),
+    calendarId: readString(providerConfig.calendarId),
+  };
+}
+
+function normalizePractitioner(practitioner = {}) {
+  return {
+    practitionerId: readString(practitioner.practitionerId),
+    practitionerKey: readString(practitioner.practitionerKey),
+    label: readString(practitioner.label),
+    externalId: readNumber(practitioner.externalId),
+    specialtyId: readNumber(practitioner.specialtyId),
+    active: readBoolean(practitioner.active),
+    sortOrder: readNumber(practitioner.sortOrder),
+  };
 }
 
 export function buildTenantRuntime(config = {}) {
@@ -60,26 +98,8 @@ export function buildTenantRuntime(config = {}) {
 
   const tenantId = readString(config?.tenantId);
 
-  const clinic = {
-    providerId: readNumber(config?.clinic?.providerId),
-  };
-
-  const bookingDefaults = {
-    unitId: readNumber(config?.bookingDefaults?.unitId),
-    specialtyId: readNumber(config?.bookingDefaults?.specialtyId),
-  };
-
-  const planMappings = {
-    PRIVATE: {
-      externalId: readNumber(config?.planMappings?.PRIVATE?.externalId),
-    },
-    INSURED: {
-      externalId: readNumber(config?.planMappings?.INSURED?.externalId),
-    },
-  };
-
-  const plans = {
-    supportedKeys: ["PRIVATE", "INSURED"],
+  const channels = {
+    phoneNumberId: readString(config?.channels?.phoneNumberId),
   };
 
   const portal = {
@@ -90,42 +110,18 @@ export function buildTenantRuntime(config = {}) {
     waNumber: readDigits(config?.support?.waNumber),
   };
 
-  const identity = {
-    key: readString(config?.providers?.identity?.key),
-    baseUrl: readHttpsUrl(config?.providers?.identity?.baseUrl),
-    user: readString(config?.providers?.identity?.user),
-    pass: readString(config?.providers?.identity?.pass),
-  };
+  const identity = normalizeProviderBlock(config?.providers?.identity);
+  const access = normalizeProviderBlock(config?.providers?.access);
+  const booking = normalizeProviderBlock(config?.providers?.booking);
 
-  const access = {
-    key: readString(config?.providers?.access?.key),
-    baseUrl: readHttpsUrl(config?.providers?.access?.baseUrl),
-    user: readString(config?.providers?.access?.user),
-    pass: readString(config?.providers?.access?.pass),
-  };
+  const practitioners = Array.isArray(config?.practitioners)
+    ? config.practitioners.map(normalizePractitioner)
+    : [];
 
-  const booking = {
-    key: readString(config?.providers?.booking?.key),
-    baseUrl: readHttpsUrl(config?.providers?.booking?.baseUrl),
-    user: readString(config?.providers?.booking?.user),
-    pass: readString(config?.providers?.booking?.pass),
-    calendarId: readString(config?.providers?.booking?.calendarId),
-  };
+  const content = normalizeContent(config?.content);
 
   pushMissing(missing, !tenantId, "tenantId");
-
-  pushMissing(missing, clinic.providerId === null, "clinic.providerId");
-
-  pushMissing(
-    missing,
-    planMappings.PRIVATE.externalId === null,
-    "planMappings.PRIVATE.externalId"
-  );
-  pushMissing(
-    missing,
-    planMappings.INSURED.externalId === null,
-    "planMappings.INSURED.externalId"
-  );
+  pushMissing(missing, !channels.phoneNumberId, "channels.phoneNumberId");
 
   pushMissing(missing, !config?.portal?.url, "portal.url");
   pushInvalid(invalid, !!config?.portal?.url && !portal.url, "portal.url");
@@ -199,21 +195,67 @@ export function buildTenantRuntime(config = {}) {
       !!config?.providers?.booking?.baseUrl && !booking.baseUrl,
       "providers.booking.baseUrl"
     );
-
-    pushMissing(
-      missing,
-      bookingDefaults.unitId === null,
-      "bookingDefaults.unitId"
-    );
-    pushMissing(
-      missing,
-      bookingDefaults.specialtyId === null,
-      "bookingDefaults.specialtyId"
-    );
   }
 
   if (booking.key === "google_calendar") {
     pushMissing(missing, !booking.calendarId, "providers.booking.calendarId");
+  }
+
+  pushMissing(
+    missing,
+    !Array.isArray(config?.practitioners),
+    "practitioners"
+  );
+
+  if (Array.isArray(config?.practitioners)) {
+    const practitionerIds = new Set();
+    const practitionerKeys = new Set();
+
+    practitioners.forEach((practitioner, index) => {
+      const basePath = `practitioners[${index}]`;
+
+      pushMissing(
+        missing,
+        !practitioner.practitionerId,
+        `${basePath}.practitionerId`
+      );
+      pushMissing(
+        missing,
+        !practitioner.practitionerKey,
+        `${basePath}.practitionerKey`
+      );
+      pushMissing(missing, !practitioner.label, `${basePath}.label`);
+      pushMissing(
+        missing,
+        practitioner.externalId === null,
+        `${basePath}.externalId`
+      );
+
+      pushInvalid(
+        invalid,
+        practitionerIds.has(practitioner.practitionerId),
+        `${basePath}.practitionerId_duplicate`
+      );
+      pushInvalid(
+        invalid,
+        practitionerKeys.has(practitioner.practitionerKey),
+        `${basePath}.practitionerKey_duplicate`
+      );
+
+      if (practitioner.practitionerId) {
+        practitionerIds.add(practitioner.practitionerId);
+      }
+
+      if (practitioner.practitionerKey) {
+        practitionerKeys.add(practitioner.practitionerKey);
+      }
+    });
+  }
+
+  const contentValidation = validateTenantContent(content, { practitioners });
+
+  if (!contentValidation.ok) {
+    invalid.push(...contentValidation.errors.map((field) => `content.${field}`));
   }
 
   if (missing.length || invalid.length) {
@@ -229,17 +271,13 @@ export function buildTenantRuntime(config = {}) {
     value: {
       tenantId,
 
-      clinic,
-
-      bookingDefaults,
-
-      plans,
-
-      planMappings,
+      channels,
 
       portal,
 
       support,
+
+      practitioners,
 
       providers: {
         identity: identity.key,
@@ -248,19 +286,29 @@ export function buildTenantRuntime(config = {}) {
       },
 
       integrations: {
-        identity: {
-          key: identity.key,
-          baseUrl: identity.baseUrl,
-          user: identity.user,
-          pass: identity.pass,
-        },
+        identity:
+          identity.key === "versatilis"
+            ? {
+                key: identity.key,
+                baseUrl: identity.baseUrl,
+                user: identity.user,
+                pass: identity.pass,
+              }
+            : {
+                key: identity.key,
+              },
 
-        access: {
-          key: access.key,
-          baseUrl: access.baseUrl,
-          user: access.user,
-          pass: access.pass,
-        },
+        access:
+          access.key === "versatilis"
+            ? {
+                key: access.key,
+                baseUrl: access.baseUrl,
+                user: access.user,
+                pass: access.pass,
+              }
+            : {
+                key: access.key,
+              },
 
         booking:
           booking.key === "google_calendar"
@@ -273,16 +321,10 @@ export function buildTenantRuntime(config = {}) {
                 baseUrl: booking.baseUrl,
                 user: booking.user,
                 pass: booking.pass,
-                defaults: {
-                  providerId: clinic.providerId,
-                  unitId: bookingDefaults.unitId,
-                  specialtyId: bookingDefaults.specialtyId,
-                },
-                planMappings,
               },
       },
 
-      content: normalizeContent(config?.content),
+      content,
     },
   };
 }
