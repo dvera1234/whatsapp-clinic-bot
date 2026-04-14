@@ -2,8 +2,7 @@ import { loadTenantConfigByPhoneNumberId } from "../db/loadTenantConfigByPhoneNu
 import { buildTenantRuntime } from "./buildTenantRuntime.js";
 
 function readString(value) {
-  const v = String(value ?? "").trim();
-  return v || "";
+  return String(value ?? "").trim();
 }
 
 export async function resolveTenant(channelId) {
@@ -17,6 +16,7 @@ export async function resolveTenant(channelId) {
       runtime: null,
       channelId: "",
       missing: [],
+      invalid: [],
     };
   }
 
@@ -30,6 +30,7 @@ export async function resolveTenant(channelId) {
       runtime: null,
       channelId: safeChannelId,
       missing: [],
+      invalid: [],
     };
   }
 
@@ -43,6 +44,7 @@ export async function resolveTenant(channelId) {
       runtime: null,
       channelId: safeChannelId,
       missing: Array.isArray(built?.missing) ? built.missing : [],
+      invalid: Array.isArray(built?.invalid) ? built.invalid : [],
     };
   }
 
@@ -53,5 +55,6 @@ export async function resolveTenant(channelId) {
     runtime: built.value,
     channelId: safeChannelId,
     missing: [],
+    invalid: [],
   };
 }
