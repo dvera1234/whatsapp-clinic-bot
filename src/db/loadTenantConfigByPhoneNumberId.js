@@ -5,6 +5,29 @@ function readString(value) {
   return value.trim();
 }
 
+function readNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  return null;
+}
+
+function readBoolean(value) {
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+
+  return false;
+}
+
 function parseJsonObject(value) {
   if (!value) return {};
 
@@ -29,7 +52,34 @@ function parseJsonObject(value) {
   return {};
 }
 
+function normalizeProviderConfig(row) {
+  const extraConfig = parseJsonObject(row.extra_config_json);
+
+  return {
+    key: readString(row.provider_key),
+    baseUrl: readString(row.base_url),
+    user: readString(row.username),
+    pass: readString(row.password_encrypted),
+    ...extraConfig,
+  };
+}
+
+function normalizePractitionerRow(row) {
+  return {
+    practitionerId: readString(row.practitioner_id),
+    practitionerKey: readString(row.practitioner_key),
+    label: readString(row.practitioner_label),
+    externalId: readNumber(row.practitioner_external_id),
+    specialtyId: readNumber(row.practitioner_specialty_id),
+    active: readBoolean(row.practitioner_active),
+    sortOrder: readNumber(row.practitioner_sort_order),
+  };
+}
+
 export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
+  const safePhoneNumberId = String(phoneNumberId ?? "").trim();
+  if (!safePhoneNumberId) return null;
+
   const sql = `
     SELECT
       t.tenant_id,
@@ -38,14 +88,8 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
 
       tc.phone_number_id,
 
-      cs.default_unit_id,
-      cs.default_specialty_id,
-      cs.primary_practitioner_id,
       cs.support_wa_number,
       cs.portal_url,
-
-      ps.private_plan_id,
-      ps.insured_plan_id,
 
       p.capability,
       p.provider_key,
@@ -53,6 +97,14 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       p.username,
       p.password_encrypted,
       p.extra_config_json,
+
+      tp.practitioner_id,
+      tp.practitioner_key,
+      tp.label AS practitioner_label,
+      tp.external_id AS practitioner_external_id,
+      tp.active AS practitioner_active,
+      tp.sort_order AS practitioner_sort_order,
+      tp.specialty_id AS practitioner_specialty_id,
 
       c.assistant_name,
       c.doctor_name,
@@ -65,16 +117,21 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       c.messages_json
 
     FROM tenants t
-    JOIN tenant_channels tc ON tc.tenant_id = t.tenant_id
-    JOIN tenant_clinic_settings cs ON cs.tenant_id = t.tenant_id
-    JOIN tenant_plan_settings ps ON ps.tenant_id = t.tenant_id
-    JOIN tenant_provider_settings p ON p.tenant_id = t.tenant_id
-    JOIN tenant_content c ON c.tenant_id = t.tenant_id
+    JOIN tenant_channels tc
+      ON tc.tenant_id = t.tenant_id
+    JOIN tenant_clinic_settings cs
+      ON cs.tenant_id = t.tenant_id
+    JOIN tenant_provider_settings p
+      ON p.tenant_id = t.tenant_id
+    JOIN tenant_content c
+      ON c.tenant_id = t.tenant_id
+    LEFT JOIN tenant_practitioners tp
+      ON tp.tenant_id = t.tenant_id
     WHERE tc.phone_number_id = $1
       AND t.status = 'active'
   `;
 
-  const { rows } = await db.query(sql, [String(phoneNumberId)]);
+  const { rows } = await db.query(sql, [safePhoneNumberId]);
   if (!rows.length) return null;
 
   const first = rows[0];
@@ -85,42 +142,29 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     booking: null,
   };
 
+  const practitionersMap = new Map();
+
   for (const row of rows) {
     const capability = readString(row.capability);
-    if (!capability) continue;
+    if (["identity", "access", "booking"].includes(capability)) {
+      providers[capability] = normalizeProviderConfig(row);
+    }
 
-    const extraConfig = parseJsonObject(row.extra_config_json);
-
-    providers[capability] = {
-      key: readString(row.provider_key),
-      baseUrl: readString(row.base_url),
-      user: readString(row.username),
-      pass: readString(row.password_encrypted),
-      ...extraConfig,
-    };
+    const practitionerId = readString(row.practitioner_id);
+    if (practitionerId) {
+      practitionersMap.set(practitionerId, normalizePractitionerRow(row));
+    }
   }
 
-  const parsedMessages = parseJsonObject(first.messages_json);
+  const parsedContent = parseJsonObject(first.messages_json);
 
   return {
-    tenantId: first.tenant_id,
+    tenantId: readString(first.tenant_id),
+    name: readString(first.name),
+    status: readString(first.status),
 
-    clinic: {
-      providerId: first.primary_practitioner_id,
-    },
-
-    bookingDefaults: {
-      unitId: first.default_unit_id,
-      specialtyId: first.default_specialty_id,
-    },
-
-    planMappings: {
-      PRIVATE: {
-        externalId: first.private_plan_id,
-      },
-      INSURED: {
-        externalId: first.insured_plan_id,
-      },
+    channels: {
+      phoneNumberId: readString(first.phone_number_id),
     },
 
     portal: {
@@ -132,29 +176,20 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     },
 
     providers: {
-      identity: {
-        key: providers.identity?.key || "",
-        baseUrl: providers.identity?.baseUrl || "",
-        user: providers.identity?.user || "",
-        pass: providers.identity?.pass || "",
-      },
-      access: {
-        key: providers.access?.key || "",
-        baseUrl: providers.access?.baseUrl || "",
-        user: providers.access?.user || "",
-        pass: providers.access?.pass || "",
-      },
-      booking: {
-        key: providers.booking?.key || "",
-        baseUrl: providers.booking?.baseUrl || "",
-        user: providers.booking?.user || "",
-        pass: providers.booking?.pass || "",
-        calendarId: providers.booking?.calendarId || "",
-      },
+      identity: providers.identity || {},
+      access: providers.access || {},
+      booking: providers.booking || {},
     },
 
+    practitioners: Array.from(practitionersMap.values())
+      .sort((a, b) => {
+        const aOrder = Number.isFinite(a.sortOrder) ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+        const bOrder = Number.isFinite(b.sortOrder) ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+        return aOrder - bOrder;
+      }),
+
     content: {
-      ...parsedMessages,
+      ...parsedContent,
 
       branding: {
         assistantName: readString(first.assistant_name),
