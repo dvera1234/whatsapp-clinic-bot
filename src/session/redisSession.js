@@ -115,7 +115,10 @@ function sanitizeBooking(booking) {
     planMessageKey: readNullableString(booking.planMessageKey),
     planNextState: readNullableString(booking.planNextState),
 
+    practitionerMode: readNullableString(booking.practitionerMode),
+    practitionerIds: readStringArray(booking.practitionerIds),
     practitionerId: readNullableString(booking.practitionerId),
+
     patientId: readNumber(booking.patientId),
     appointmentDate: readNullableString(booking.appointmentDate),
     selectedDate: readNullableString(booking.selectedDate),
@@ -315,6 +318,20 @@ async function setBookingPlan(tenantId, phone, planInput) {
 
       if ("planNextState" in planInput) {
         sessionObj.booking.planNextState = planInput.planNextState;
+      }
+
+      if ("practitionerMode" in planInput) {
+        sessionObj.booking.practitionerMode = planInput.practitionerMode;
+      }
+
+      if ("practitionerIds" in planInput) {
+        sessionObj.booking.practitionerIds = Array.isArray(planInput.practitionerIds)
+          ? planInput.practitionerIds
+          : [];
+      }
+
+      if ("practitionerId" in planInput) {
+        sessionObj.booking.practitionerId = planInput.practitionerId;
       }
     }
   });
