@@ -2,10 +2,12 @@ import { updateSession } from "../../session/redisSession.js";
 import { sendAndSetState } from "../helpers/flowHelpers.js";
 import { setStateAndRender } from "../helpers/stateRenderHelpers.js";
 
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function getPlans(runtime) {
-  return Array.isArray(runtime?.content?.plans)
-    ? runtime.content.plans
-    : [];
+  return Array.isArray(runtime?.content?.plans) ? runtime.content.plans : [];
 }
 
 function getFlows(runtime) {
@@ -15,17 +17,19 @@ function getFlows(runtime) {
 }
 
 function findPlanByInput(runtime, raw) {
-  const plans = getPlans(runtime);
-  return plans.find((p) => String(p.id) === String(raw)) || null;
+  const selectedId = String(raw ?? "");
+  return getPlans(runtime).find((plan) => String(plan.id) === selectedId) || null;
 }
 
-function resolveMessage(runtime, MSG, key) {
+function resolveMessage(runtime, MSG, messageKey) {
+  const key = readString(messageKey);
   if (!key) return "";
+
   return runtime?.content?.messages?.[key] || MSG?.[key] || "";
 }
 
 function resolvePlanFlow(runtime, plan) {
-  const flowKey = String(plan?.flow || "").trim();
+  const flowKey = readString(plan?.flow);
   const flows = getFlows(runtime);
 
   const flowConfig =
@@ -33,9 +37,7 @@ function resolvePlanFlow(runtime, plan) {
       ? flows[flowKey]
       : null;
 
-  const flowType = String(flowConfig?.type || flowKey || "CONTINUE")
-    .trim()
-    .toUpperCase();
+  const flowType = readString(flowConfig?.type || flowKey || "CONTINUE").toUpperCase();
 
   return {
     key: flowKey,
@@ -44,8 +46,63 @@ function resolvePlanFlow(runtime, plan) {
   };
 }
 
+function normalizePractitionerIds(value) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => readString(item))
+    .filter(Boolean);
+}
+
+function resolvePractitionerBooking(plan) {
+  const practitionerMode = readString(plan?.booking?.practitionerMode).toUpperCase();
+  const practitionerIds = normalizePractitionerIds(plan?.booking?.practitionerIds);
+
+  if (!practitionerMode) {
+    return {
+      practitionerMode: null,
+      practitionerIds: [],
+      practitionerId: null,
+    };
+  }
+
+  if (!["FIXED", "USER_SELECT", "AUTO"].includes(practitionerMode)) {
+    throw new Error(
+      `TENANT_CONTENT_INVALID:unsupported_practitioner_mode:${practitionerMode}`
+    );
+  }
+
+  if (!practitionerIds.length) {
+    throw new Error(
+      `TENANT_CONTENT_INVALID:plan_booking_practitioners_missing:${readString(plan?.id)}`
+    );
+  }
+
+  if (practitionerMode === "FIXED") {
+    if (practitionerIds.length !== 1) {
+      throw new Error(
+        `TENANT_CONTENT_INVALID:fixed_practitioner_mode_requires_exactly_one_practitioner:${readString(
+          plan?.id
+        )}`
+      );
+    }
+
+    return {
+      practitionerMode,
+      practitionerIds,
+      practitionerId: practitionerIds[0],
+    };
+  }
+
+  return {
+    practitionerMode,
+    practitionerIds,
+    practitionerId: null,
+  };
+}
+
 function buildMenuStateFromTarget(target) {
-  const normalized = String(target || "").trim();
+  const normalized = readString(target);
   if (!normalized) return null;
 
   if (normalized === "MAIN" || normalized.startsWith("MENU:")) {
@@ -55,17 +112,26 @@ function buildMenuStateFromTarget(target) {
   return `MENU:${normalized}`;
 }
 
+function resolveNextStateForBooking(runtime, MSG) {
+  const lgpdBody =
+    runtime?.content?.messages?.lgpdConsent || MSG?.LGPD_CONSENT || "";
+
+  if (readString(lgpdBody)) {
+    return {
+      type: "STATE",
+      value: "LGPD_CONSENT",
+    };
+  }
+
+  return {
+    type: "CPF",
+    value: runtime?.content?.messages?.askCpfPortal || MSG?.ASK_CPF_PORTAL,
+  };
+}
+
 export async function handlePlanSelectionStep(flowCtx) {
-  const {
-    tenantId,
-    runtime,
-    phone,
-    phoneNumberId,
-    raw,
-    state,
-    MSG,
-    services,
-  } = flowCtx;
+  const { tenantId, runtime, phone, phoneNumberId, raw, state, MSG, services } =
+    flowCtx;
 
   if (state !== "PLAN_PICK") return false;
 
@@ -91,48 +157,67 @@ export async function handlePlanSelectionStep(flowCtx) {
   }
 
   const flow = resolvePlanFlow(runtime, plan);
+  const practitionerBooking = resolvePractitionerBooking(plan);
 
-  await updateSession(tenantId, phone, (s) => {
-    s.booking = s.booking || {};
-    s.booking.planId = String(plan.id);
-    s.booking.planKey = String(plan.key || "");
-    s.booking.planFlow = String(plan.flow || "");
-    s.booking.planLabel = String(plan.label || "");
-    s.booking.planMessageKey = String(plan.messageKey || "");
-    s.booking.planNextState = String(plan.nextState || "");
+  await updateSession(tenantId, phone, (sessionObj) => {
+    sessionObj.booking = sessionObj.booking || {};
 
-    if (s.portal?.issue) delete s.portal.issue;
+    sessionObj.booking.planId = readString(plan.id);
+    sessionObj.booking.planKey = readString(plan.key);
+    sessionObj.booking.planFlow = readString(plan.flow);
+    sessionObj.booking.planLabel = readString(plan.label);
+    sessionObj.booking.planMessageKey = readString(plan.messageKey);
+    sessionObj.booking.planNextState = readString(plan.nextState);
+
+    sessionObj.booking.practitionerMode = practitionerBooking.practitionerMode;
+    sessionObj.booking.practitionerIds = practitionerBooking.practitionerIds;
+    sessionObj.booking.practitionerId = practitionerBooking.practitionerId;
+
+    sessionObj.booking.patientId = null;
+    sessionObj.booking.appointmentDate = null;
+    sessionObj.booking.selectedDate = null;
+    sessionObj.booking.datePage = 0;
+    sessionObj.booking.slotPage = 0;
+    sessionObj.booking.slots = [];
+    sessionObj.booking.selectedSlotId = null;
+    sessionObj.booking.isReturn = false;
+
+    sessionObj.pending = null;
+
+    if (sessionObj.portal?.issue) {
+      delete sessionObj.portal.issue;
+    }
   });
 
   if (flow.type === "INFO_ONLY" || flow.type === "END") {
-  const msg = resolveMessage(runtime, MSG, plan.messageKey);
-  const nextState = String(plan?.nextState || "").trim() || null;
+    const message = resolveMessage(runtime, MSG, plan.messageKey);
+    const nextState = readString(plan?.nextState) || null;
 
-  if (msg) {
-    const sent = await services.sendText({
-      tenantId,
-      to: phone,
-      body: msg,
-      phoneNumberId,
-    });
+    if (message) {
+      const sent = await services.sendText({
+        tenantId,
+        to: phone,
+        body: message,
+        phoneNumberId,
+      });
 
-    if (!sent) return true;
-  }
+      if (!sent) return true;
+    }
 
-  if (nextState) {
-    await setStateAndRender(flowCtx, nextState);
+    if (nextState) {
+      await setStateAndRender(flowCtx, nextState);
+      return true;
+    }
+
     return true;
   }
-
-  return true;
-}
 
   if (flow.type === "OPEN_SUBMENU" || flow.type === "DIRECT_BOOKING") {
     const targetState = buildMenuStateFromTarget(flow.config?.target);
 
     if (!targetState) {
       throw new Error(
-        `TENANT_CONTENT_INVALID:flow_target_missing:${String(plan?.flow || "")}`
+        `TENANT_CONTENT_INVALID:flow_target_missing:${readString(plan?.flow)}`
       );
     }
 
@@ -141,22 +226,17 @@ export async function handlePlanSelectionStep(flowCtx) {
   }
 
   if (flow.type === "BOOKING" || flow.type === "CONTINUE") {
-    const lgpdBody =
-      runtime?.content?.messages?.lgpdConsent ||
-      MSG?.LGPD_CONSENT ||
-      "";
+    const nextStep = resolveNextStateForBooking(runtime, MSG);
 
-    if (String(lgpdBody).trim()) {
-      await setStateAndRender(flowCtx, "LGPD_CONSENT");
+    if (nextStep.type === "STATE") {
+      await setStateAndRender(flowCtx, nextStep.value);
       return true;
     }
 
     await sendAndSetState({
       tenantId,
       phone,
-      body:
-        runtime?.content?.messages?.askCpfPortal ||
-        MSG?.ASK_CPF_PORTAL,
+      body: nextStep.value,
       state: "WZ_CPF",
       phoneNumberId,
     });
@@ -164,6 +244,6 @@ export async function handlePlanSelectionStep(flowCtx) {
   }
 
   throw new Error(
-    `TENANT_CONTENT_INVALID:unsupported_plan_flow:${String(plan?.flow || "")}`
+    `TENANT_CONTENT_INVALID:unsupported_plan_flow:${readString(plan?.flow)}`
   );
 }
