@@ -43,6 +43,20 @@ import { registerDefaultActions } from "./actions/registerActions.js";
 
 registerDefaultActions();
 
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function resolveEffectivePhoneNumberId(context = {}, phoneNumberId) {
+  const fromContext = readString(context?.phoneNumberId);
+  if (fromContext) return fromContext;
+
+  const fromParam = readString(phoneNumberId);
+  if (fromParam) return fromParam;
+
+  return "";
+}
+
 async function handleInbound({
   context = {},
   phone,
@@ -50,24 +64,27 @@ async function handleInbound({
   message,
   phoneNumberId,
 }) {
-  const traceId = String(context?.traceId || crypto.randomUUID());
-  const tenantId = String(context?.tenantId || "").trim();
-
- const effectivePhoneNumberId = context?.phoneNumberId;
-
-  if (!effectivePhoneNumberId) {
-    errLog("PHONE_NUMBER_ID_MISSING_IN_CONTEXT", {
-      tenantId,
-      traceId,
-      hasParamPhoneNumberId: !!phoneNumberId,
-    });
-    return;
-  }
+  const traceId = readString(context?.traceId) || crypto.randomUUID();
+  const tenantId = readString(context?.tenantId);
+  const effectivePhoneNumberId = resolveEffectivePhoneNumberId(
+    context,
+    phoneNumberId
+  );
 
   if (!tenantId) {
     audit("TENANT_CONTEXT_MISSING", {
       traceId,
       tracePhone: maskPhone(phone),
+    });
+    return;
+  }
+
+  if (!effectivePhoneNumberId) {
+    errLog("PHONE_NUMBER_ID_MISSING", {
+      tenantId,
+      traceId,
+      hasContextPhoneNumberId: !!readString(context?.phoneNumberId),
+      hasParamPhoneNumberId: !!readString(phoneNumberId),
     });
     return;
   }
@@ -83,7 +100,9 @@ async function handleInbound({
     return;
   }
 
-  const validation = validateTenantContent(runtime.content);
+  const validation = validateTenantContent(runtime.content, {
+    practitioners: runtime.practitioners,
+  });
 
   if (!validation.ok) {
     audit("TENANT_CONTENT_INVALID", {
@@ -106,11 +125,11 @@ async function handleInbound({
   let MSG;
   try {
     MSG = getFlowText(runtime);
-  } catch (err) {
+  } catch (error) {
     errLog("FLOW_TEXT_BUILD_FAILED", {
       tenantId,
       traceId,
-      error: String(err?.message || err),
+      error: String(error?.message || error),
     });
 
     await failSafeTenantConfigError({
@@ -123,7 +142,9 @@ async function handleInbound({
 
   configureInactivityHandler({
     sendText,
-    getMessage: () => runtime.content.messages.inactivityClosedMessage,
+    getMessage: () =>
+      runtime?.content?.messages?.inactivityClosedMessage ||
+      "Sessão encerrada por inatividade.",
   });
 
   let patientAdapter;
@@ -134,11 +155,11 @@ async function handleInbound({
     patientAdapter = createPatientAdapter({ tenantId, runtime });
     portalAdapter = createPortalAdapter({ tenantId, runtime });
     schedulingAdapter = createSchedulingAdapter({ tenantId, runtime });
-  } catch (err) {
+  } catch (error) {
     errLog("FLOW_ADAPTER_INIT_FAILED", {
       tenantId,
       traceId,
-      error: String(err?.message || err),
+      error: String(error?.message || error),
     });
 
     await failSafeTenantConfigError({
@@ -148,8 +169,6 @@ async function handleInbound({
     });
     return;
   }
-
-  const practitionerId = runtime?.clinic?.providerId ?? null;
 
   const listReplyId = message?.interactive?.list_reply?.id || null;
   const buttonReplyId = message?.interactive?.button_reply?.id || null;
@@ -174,6 +193,18 @@ async function handleInbound({
     tracePhone: maskPhone(phone),
   };
 
+  const adapters = {
+    patientAdapter,
+    portalAdapter,
+    schedulingAdapter,
+  };
+
+  const services = {
+    sendText,
+    sendButtons,
+    sendList,
+  };
+
   const flowCtx = {
     context,
     tenantId,
@@ -187,23 +218,17 @@ async function handleInbound({
     digits,
     state,
     MSG,
-    practitionerId,
-    adapters: {
-      patientAdapter,
-      portalAdapter,
-      schedulingAdapter,
-    },
-    services: {
-      sendText,
-      sendButtons,
-      sendList,
-    },
+    practitioners: Array.isArray(runtime?.practitioners)
+      ? runtime.practitioners
+      : [],
+    adapters,
+    services,
   };
 
   {
-    const code = String(FLOW_RESET_CODE || "").trim();
+    const resetCode = readString(FLOW_RESET_CODE);
 
-    if (code && upper === code.toUpperCase()) {
+    if (resetCode && upper === resetCode.toUpperCase()) {
       await clearSession(tenantId, phone);
       await setState(tenantId, phone, "MAIN");
 
