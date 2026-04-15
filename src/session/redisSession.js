@@ -34,6 +34,37 @@ function normalizePhone(phone) {
   return String(phone || "").replace(/\D+/g, "");
 }
 
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readNullableString(value) {
+  const v = readString(value);
+  return v || null;
+}
+
+function readNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  return null;
+}
+
+function readBoolean(value) {
+  return value === true;
+}
+
+function readStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => readString(item))
+    .filter(Boolean);
+}
+
 function inactivityTimerKey(tenantId, phone) {
   return `${normalizeTenantId(tenantId)}:${normalizePhone(phone)}`;
 }
@@ -42,7 +73,7 @@ function sessionKey(tenantId, phone) {
   return `sess:${normalizeTenantId(tenantId)}:${normalizePhone(phone)}`;
 }
 
-function detectUnexpectedSessionKeys(s) {
+function detectUnexpectedSessionKeys(sessionObj) {
   const allowed = new Set([
     "state",
     "lastUserTs",
@@ -52,51 +83,104 @@ function detectUnexpectedSessionKeys(s) {
     "pending",
   ]);
 
-  return Object.keys(s || {}).filter((k) => !allowed.has(k));
+  return Object.keys(sessionObj || {}).filter((key) => !allowed.has(key));
 }
 
-function sanitizeSessionForSave(s) {
+function sanitizeSlot(slot) {
+  if (!slot || typeof slot !== "object") return null;
+
+  const slotId = readNumber(slot.slotId);
+  const time = readNullableString(slot.time);
+
+  if (slotId === null || !time) return null;
+
   return {
-    state: s?.state ?? null,
-    lastUserTs: Number(s?.lastUserTs || 0),
-    lastPhoneNumberId: String(s?.lastPhoneNumberId || ""),
-    booking: s?.booking
-      ? {
-          planKey:
-            s.booking?.planKey === "PRIVATE" ||
-            s.booking?.planKey === "INSURED"
-              ? s.booking.planKey
-              : null,
-          practitionerId: Number(s.booking?.practitionerId || 0) || null,
-          patientId: Number(s.booking?.patientId || 0) || null,
-          appointmentDate: s.booking?.appointmentDate ?? null,
-          pageIndex: Number(s.booking?.pageIndex || 0) || 0,
-          slots: Array.isArray(s.booking?.slots)
-            ? s.booking.slots
-                .map((x) => ({
-                  slotId: Number(x?.slotId || 0) || null,
-                  time: x?.time ?? null,
-                }))
-                .filter((x) => x.slotId && x.time)
-            : [],
-          isReturn: !!s.booking?.isReturn,
-        }
-      : null,
-    portal: s?.portal
-      ? {
-          step: s.portal?.step ?? null,
-          patientId: Number(s.portal?.patientId || 0) || null,
-          exists: !!s.portal?.exists,
-          form: s.portal?.form ?? {},
-          missing: Array.isArray(s.portal?.missing) ? s.portal.missing : [],
-          issue: s.portal?.issue ?? null,
-        }
-      : null,
-    pending: s?.pending
-      ? {
-          slotId: Number(s.pending?.slotId || 0) || null,
-        }
-      : null,
+    slotId,
+    time,
+  };
+}
+
+function sanitizeBooking(booking) {
+  if (!booking || typeof booking !== "object") return null;
+
+  const slots = Array.isArray(booking.slots)
+    ? booking.slots.map(sanitizeSlot).filter(Boolean)
+    : [];
+
+  return {
+    planId: readNullableString(booking.planId),
+    planKey: readNullableString(booking.planKey),
+    planFlow: readNullableString(booking.planFlow),
+    planLabel: readNullableString(booking.planLabel),
+    planMessageKey: readNullableString(booking.planMessageKey),
+    planNextState: readNullableString(booking.planNextState),
+
+    practitionerId: readNullableString(booking.practitionerId),
+    patientId: readNumber(booking.patientId),
+    appointmentDate: readNullableString(booking.appointmentDate),
+    selectedDate: readNullableString(booking.selectedDate),
+
+    datePage: readNumber(booking.datePage) ?? 0,
+    slotPage: readNumber(booking.slotPage) ?? 0,
+
+    slots,
+    selectedSlotId: readNumber(booking.selectedSlotId),
+    isReturn: readBoolean(booking.isReturn),
+  };
+}
+
+function sanitizePortalForm(form) {
+  if (!form || typeof form !== "object") return {};
+
+  return {
+    document: readNullableString(form.document),
+    fullName: readNullableString(form.fullName),
+    birthDateISO: readNullableString(form.birthDateISO),
+    gender: readNullableString(form.gender),
+    email: readNullableString(form.email),
+    mobilePhone: readNullableString(form.mobilePhone),
+    phone: readNullableString(form.phone),
+    postalCode: readNullableString(form.postalCode),
+    streetAddress: readNullableString(form.streetAddress),
+    addressNumber: readNullableString(form.addressNumber),
+    addressComplement: readNullableString(form.addressComplement),
+    district: readNullableString(form.district),
+    city: readNullableString(form.city),
+    stateCode: readNullableString(form.stateCode),
+    planId: readNullableString(form.planId),
+    planKey: readNullableString(form.planKey),
+  };
+}
+
+function sanitizePortal(portal) {
+  if (!portal || typeof portal !== "object") return null;
+
+  return {
+    state: readNullableString(portal.state),
+    patientId: readNumber(portal.patientId),
+    exists: readBoolean(portal.exists),
+    form: sanitizePortalForm(portal.form),
+    missing: readStringArray(portal.missing),
+    issue: readNullableString(portal.issue),
+  };
+}
+
+function sanitizePending(pending) {
+  if (!pending || typeof pending !== "object") return null;
+
+  return {
+    slotId: readNumber(pending.slotId),
+  };
+}
+
+function sanitizeSessionForSave(sessionObj) {
+  return {
+    state: readNullableString(sessionObj?.state),
+    lastUserTs: readNumber(sessionObj?.lastUserTs) ?? 0,
+    lastPhoneNumberId: readString(sessionObj?.lastPhoneNumberId),
+    booking: sanitizeBooking(sessionObj?.booking),
+    portal: sanitizePortal(sessionObj?.portal),
+    pending: sanitizePending(sessionObj?.pending),
   };
 }
 
@@ -117,13 +201,14 @@ async function loadSession(tenantId, phone) {
   if (typeof raw === "string") {
     try {
       return JSON.parse(raw);
-    } catch (e) {
+    } catch (error) {
       errLog("REDIS_SESSION_CORRUPTED", {
         tenantId,
         phoneMasked: maskPhone(phone),
         keyMasked: maskKey(key),
-        error: String(e?.message || e),
+        error: String(error?.message || error),
       });
+
       await redis.del(key);
       return null;
     }
@@ -145,16 +230,16 @@ async function saveSession(tenantId, phone, sessionObj) {
   }
 
   const safeSession = sanitizeSessionForSave(sessionObj);
-  const val = JSON.stringify(safeSession);
+  const value = JSON.stringify(safeSession);
 
   logRedis("REDIS_SET", {
     tenantId,
     phone: maskPhone(phone),
     key: maskKey(key),
-    len: val.length,
+    len: value.length,
   });
 
-  await redis.set(key, val, { ex: SESSION_TTL_SECONDS });
+  await redis.set(key, value, { ex: SESSION_TTL_SECONDS });
   return true;
 }
 
@@ -177,31 +262,61 @@ async function ensureSession(tenantId, phone) {
 }
 
 async function updateSession(tenantId, phone, updater) {
-  const s = await ensureSession(tenantId, phone);
-  await updater(s);
-  await saveSession(tenantId, phone, s);
-  return s;
+  const sessionObj = await ensureSession(tenantId, phone);
+  await updater(sessionObj);
+  await saveSession(tenantId, phone, sessionObj);
+  return sessionObj;
 }
 
 async function setState(tenantId, phone, state) {
-  return updateSession(tenantId, phone, (s) => {
-    s.state = state;
+  return updateSession(tenantId, phone, (sessionObj) => {
+    sessionObj.state = state;
   });
 }
 
 async function getState(tenantId, phone) {
-  const s = await loadSession(tenantId, phone);
-  return s?.state || null;
+  const sessionObj = await loadSession(tenantId, phone);
+  return sessionObj?.state || null;
 }
 
 async function getSession(tenantId, phone) {
   return ensureSession(tenantId, phone);
 }
 
-async function setBookingPlan(tenantId, phone, planKey) {
-  return updateSession(tenantId, phone, (s) => {
-    s.booking = s.booking || {};
-    s.booking.planKey = planKey;
+async function setBookingPlan(tenantId, phone, planInput) {
+  return updateSession(tenantId, phone, (sessionObj) => {
+    sessionObj.booking = sessionObj.booking || {};
+
+    if (typeof planInput === "string") {
+      sessionObj.booking.planKey = planInput;
+      return;
+    }
+
+    if (planInput && typeof planInput === "object") {
+      if ("planId" in planInput) {
+        sessionObj.booking.planId = planInput.planId;
+      }
+
+      if ("planKey" in planInput) {
+        sessionObj.booking.planKey = planInput.planKey;
+      }
+
+      if ("planFlow" in planInput) {
+        sessionObj.booking.planFlow = planInput.planFlow;
+      }
+
+      if ("planLabel" in planInput) {
+        sessionObj.booking.planLabel = planInput.planLabel;
+      }
+
+      if ("planMessageKey" in planInput) {
+        sessionObj.booking.planMessageKey = planInput.planMessageKey;
+      }
+
+      if ("planNextState" in planInput) {
+        sessionObj.booking.planNextState = planInput.planNextState;
+      }
+    }
   });
 }
 
@@ -233,27 +348,27 @@ function scheduleInactivityWarning({ tenantId, phone }) {
 
   const timer = setTimeout(async () => {
     try {
-      const s = await loadSession(normalizedTenantId, normalizedPhone);
+      const sessionObj = await loadSession(normalizedTenantId, normalizedPhone);
 
-      if (!s) {
+      if (!sessionObj) {
         inactivityTimers.delete(key);
         return;
       }
 
-      const idleMs = Date.now() - Number(s.lastUserTs || 0);
+      const idleMs = Date.now() - Number(sessionObj.lastUserTs || 0);
 
       if (idleMs < INACTIVITY_WARN_MS - 2000) {
         inactivityTimers.delete(key);
         return;
       }
 
-      const msg = inactivityHandler.getMessage();
+      const message = inactivityHandler.getMessage();
 
       await inactivityHandler.sendText({
         tenantId: normalizedTenantId,
         to: normalizedPhone,
-        body: msg,
-        phoneNumberId: s.lastPhoneNumberId || "",
+        body: message,
+        phoneNumberId: sessionObj.lastPhoneNumberId || "",
       });
 
       await clearSession(normalizedTenantId, normalizedPhone);
@@ -269,13 +384,13 @@ function scheduleInactivityWarning({ tenantId, phone }) {
         patientFacingMessage: "INACTIVITY_CLOSURE_MESSAGE_SENT",
         escalationRequired: false,
       });
-    } catch (e) {
+    } catch (error) {
       inactivityTimers.delete(key);
 
       errLog("FLOW_INACTIVITY_TIMEOUT_ERROR", {
         tenantId: normalizedTenantId,
         tracePhone: maskPhone(normalizedPhone),
-        error: String(e?.message || e),
+        error: String(error?.message || error),
       });
     }
   }, INACTIVITY_WARN_MS);
@@ -297,16 +412,17 @@ async function touchUser(arg1, arg2) {
     phone = arg2;
   }
 
-  const s = await updateSession(tenantId, phone, (sess) => {
-    sess.lastUserTs = Date.now();
+  const sessionObj = await updateSession(tenantId, phone, (currentSession) => {
+    currentSession.lastUserTs = Date.now();
+
     if (phoneNumberId) {
-      sess.lastPhoneNumberId = String(phoneNumberId);
+      currentSession.lastPhoneNumberId = String(phoneNumberId);
     }
   });
 
   scheduleInactivityWarning({ tenantId, phone });
 
-  return s;
+  return sessionObj;
 }
 
 export {
