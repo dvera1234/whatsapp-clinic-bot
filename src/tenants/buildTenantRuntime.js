@@ -9,8 +9,8 @@ function readNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
 
   if (typeof value === "string" && value.trim() !== "") {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   return null;
@@ -53,192 +53,223 @@ function pushInvalid(list, condition, fieldName) {
 }
 
 function isSupportedIdentityProvider(value) {
-  return ["versatilis"].includes(value);
+  return value === "versatilis";
 }
 
 function isSupportedAccessProvider(value) {
-  return ["versatilis"].includes(value);
+  return value === "versatilis";
 }
 
 function isSupportedBookingProvider(value) {
-  return ["versatilis", "google_calendar"].includes(value);
+  return value === "versatilis" || value === "google_calendar";
+}
+
+function normalizeObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 function normalizeContent(content) {
-  return content && typeof content === "object" && !Array.isArray(content)
-    ? content
-    : {};
+  return normalizeObject(content);
 }
 
 function normalizeProviderBlock(providerConfig = {}) {
+  const source = normalizeObject(providerConfig);
+
   return {
-    key: readString(providerConfig.key),
-    baseUrl: readHttpsUrl(providerConfig.baseUrl),
-    user: readString(providerConfig.user),
-    pass: readString(providerConfig.pass),
-    calendarId: readString(providerConfig.calendarId),
+    key: readString(source.key),
+    baseUrl: readHttpsUrl(source.baseUrl),
+    user: readString(source.user),
+    pass: readString(source.pass),
+    calendarId: readString(source.calendarId),
   };
 }
 
 function normalizePractitioner(practitioner = {}) {
+  const source = normalizeObject(practitioner);
+
   return {
-    practitionerId: readString(practitioner.practitionerId),
-    practitionerKey: readString(practitioner.practitionerKey),
-    label: readString(practitioner.label),
-    externalId: readNumber(practitioner.externalId),
-    specialtyId: readNumber(practitioner.specialtyId),
-    active: readBoolean(practitioner.active),
-    sortOrder: readNumber(practitioner.sortOrder),
+    practitionerId: readString(source.practitionerId),
+    practitionerKey: readString(source.practitionerKey),
+    label: readString(source.label),
+    externalId: readNumber(source.externalId),
+    specialtyId: readNumber(source.specialtyId),
+    active: readBoolean(source.active),
+    sortOrder: readNumber(source.sortOrder),
   };
+}
+
+function buildIdentityIntegration(provider) {
+  if (provider.key === "versatilis") {
+    return {
+      baseUrl: provider.baseUrl,
+      user: provider.user,
+      pass: provider.pass,
+    };
+  }
+
+  return {};
+}
+
+function buildAccessIntegration(provider) {
+  if (provider.key === "versatilis") {
+    return {
+      baseUrl: provider.baseUrl,
+      user: provider.user,
+      pass: provider.pass,
+    };
+  }
+
+  return {};
+}
+
+function buildBookingIntegration(provider) {
+  if (provider.key === "google_calendar") {
+    return {
+      calendarId: provider.calendarId,
+    };
+  }
+
+  if (provider.key === "versatilis") {
+    return {
+      baseUrl: provider.baseUrl,
+      user: provider.user,
+      pass: provider.pass,
+    };
+  }
+
+  return {};
 }
 
 export function buildTenantRuntime(config = {}) {
   const missing = [];
   const invalid = [];
 
-  const tenantId = readString(config?.tenantId);
+  const source = normalizeObject(config);
+
+  const tenantId = readString(source.tenantId);
 
   const channels = {
-    phoneNumberId: readString(config?.channels?.phoneNumberId),
+    phoneNumberId: readString(source?.channels?.phoneNumberId),
   };
 
   const portal = {
-    url: readHttpsUrl(config?.portal?.url),
+    url: readHttpsUrl(source?.portal?.url),
   };
 
   const support = {
-    waNumber: readDigits(config?.support?.waNumber),
+    waNumber: readDigits(source?.support?.waNumber),
   };
 
-  const identity = normalizeProviderBlock(config?.providers?.identity);
-  const access = normalizeProviderBlock(config?.providers?.access);
-  const booking = normalizeProviderBlock(config?.providers?.booking);
+  const identityProvider = normalizeProviderBlock(source?.providers?.identity);
+  const accessProvider = normalizeProviderBlock(source?.providers?.access);
+  const bookingProvider = normalizeProviderBlock(source?.providers?.booking);
 
-  const practitioners = Array.isArray(config?.practitioners)
-    ? config.practitioners.map(normalizePractitioner)
+  const practitioners = Array.isArray(source.practitioners)
+    ? source.practitioners.map(normalizePractitioner)
     : [];
 
-  const content = normalizeContent(config?.content);
+  const content = normalizeContent(source.content);
 
   pushMissing(missing, !tenantId, "tenantId");
   pushMissing(missing, !channels.phoneNumberId, "channels.phoneNumberId");
 
-  pushMissing(missing, !config?.portal?.url, "portal.url");
-  pushInvalid(invalid, !!config?.portal?.url && !portal.url, "portal.url");
+  if (source?.portal?.url) {
+    pushInvalid(invalid, !portal.url, "portal.url");
+  }
 
-  pushMissing(missing, !support.waNumber, "support.waNumber");
+  if (source?.support?.waNumber) {
+    pushInvalid(invalid, !support.waNumber, "support.waNumber");
+  }
 
-  pushMissing(missing, !identity.key, "providers.identity.key");
-  pushInvalid(
-    invalid,
-    !!identity.key && !isSupportedIdentityProvider(identity.key),
-    "providers.identity.key"
-  );
-
-  if (identity.key === "versatilis") {
-    pushMissing(
-      missing,
-      !config?.providers?.identity?.baseUrl,
-      "providers.identity.baseUrl"
-    );
-    pushMissing(missing, !identity.user, "providers.identity.user");
-    pushMissing(missing, !identity.pass, "providers.identity.pass");
-
+  if (identityProvider.key) {
     pushInvalid(
       invalid,
-      !!config?.providers?.identity?.baseUrl && !identity.baseUrl,
-      "providers.identity.baseUrl"
+      !isSupportedIdentityProvider(identityProvider.key),
+      "providers.identity.key"
     );
+
+    if (identityProvider.key === "versatilis") {
+      pushMissing(missing, !source?.providers?.identity?.baseUrl, "providers.identity.baseUrl");
+      pushMissing(missing, !identityProvider.user, "providers.identity.user");
+      pushMissing(missing, !identityProvider.pass, "providers.identity.pass");
+
+      pushInvalid(
+        invalid,
+        !!source?.providers?.identity?.baseUrl && !identityProvider.baseUrl,
+        "providers.identity.baseUrl"
+      );
+    }
   }
 
-  pushMissing(missing, !access.key, "providers.access.key");
-  pushInvalid(
-    invalid,
-    !!access.key && !isSupportedAccessProvider(access.key),
-    "providers.access.key"
-  );
-
-  if (access.key === "versatilis") {
-    pushMissing(
-      missing,
-      !config?.providers?.access?.baseUrl,
-      "providers.access.baseUrl"
-    );
-    pushMissing(missing, !access.user, "providers.access.user");
-    pushMissing(missing, !access.pass, "providers.access.pass");
-
+  if (accessProvider.key) {
     pushInvalid(
       invalid,
-      !!config?.providers?.access?.baseUrl && !access.baseUrl,
-      "providers.access.baseUrl"
+      !isSupportedAccessProvider(accessProvider.key),
+      "providers.access.key"
     );
+
+    if (accessProvider.key === "versatilis") {
+      pushMissing(missing, !source?.providers?.access?.baseUrl, "providers.access.baseUrl");
+      pushMissing(missing, !accessProvider.user, "providers.access.user");
+      pushMissing(missing, !accessProvider.pass, "providers.access.pass");
+
+      pushInvalid(
+        invalid,
+        !!source?.providers?.access?.baseUrl && !accessProvider.baseUrl,
+        "providers.access.baseUrl"
+      );
+    }
   }
 
-  pushMissing(missing, !booking.key, "providers.booking.key");
-  pushInvalid(
-    invalid,
-    !!booking.key && !isSupportedBookingProvider(booking.key),
-    "providers.booking.key"
-  );
+  pushMissing(missing, !bookingProvider.key, "providers.booking.key");
 
-  if (booking.key === "versatilis") {
-    pushMissing(
-      missing,
-      !config?.providers?.booking?.baseUrl,
-      "providers.booking.baseUrl"
-    );
-    pushMissing(missing, !booking.user, "providers.booking.user");
-    pushMissing(missing, !booking.pass, "providers.booking.pass");
-
+  if (bookingProvider.key) {
     pushInvalid(
       invalid,
-      !!config?.providers?.booking?.baseUrl && !booking.baseUrl,
-      "providers.booking.baseUrl"
+      !isSupportedBookingProvider(bookingProvider.key),
+      "providers.booking.key"
     );
+
+    if (bookingProvider.key === "versatilis") {
+      pushMissing(missing, !source?.providers?.booking?.baseUrl, "providers.booking.baseUrl");
+      pushMissing(missing, !bookingProvider.user, "providers.booking.user");
+      pushMissing(missing, !bookingProvider.pass, "providers.booking.pass");
+
+      pushInvalid(
+        invalid,
+        !!source?.providers?.booking?.baseUrl && !bookingProvider.baseUrl,
+        "providers.booking.baseUrl"
+      );
+    }
+
+    if (bookingProvider.key === "google_calendar") {
+      pushMissing(missing, !bookingProvider.calendarId, "providers.booking.calendarId");
+    }
   }
 
-  if (booking.key === "google_calendar") {
-    pushMissing(missing, !booking.calendarId, "providers.booking.calendarId");
-  }
+  pushMissing(missing, !Array.isArray(source.practitioners), "practitioners");
 
-  pushMissing(
-    missing,
-    !Array.isArray(config?.practitioners),
-    "practitioners"
-  );
-
-  if (Array.isArray(config?.practitioners)) {
+  if (Array.isArray(source.practitioners)) {
     const practitionerIds = new Set();
     const practitionerKeys = new Set();
 
     practitioners.forEach((practitioner, index) => {
       const basePath = `practitioners[${index}]`;
 
-      pushMissing(
-        missing,
-        !practitioner.practitionerId,
-        `${basePath}.practitionerId`
-      );
-      pushMissing(
-        missing,
-        !practitioner.practitionerKey,
-        `${basePath}.practitionerKey`
-      );
+      pushMissing(missing, !practitioner.practitionerId, `${basePath}.practitionerId`);
+      pushMissing(missing, !practitioner.practitionerKey, `${basePath}.practitionerKey`);
       pushMissing(missing, !practitioner.label, `${basePath}.label`);
-      pushMissing(
-        missing,
-        practitioner.externalId === null,
-        `${basePath}.externalId`
+      pushMissing(missing, practitioner.externalId === null, `${basePath}.externalId`);
+
+      pushInvalid(
+        invalid,
+        !!practitioner.practitionerId && practitionerIds.has(practitioner.practitionerId),
+        `${basePath}.practitionerId_duplicate`
       );
 
       pushInvalid(
         invalid,
-        practitionerIds.has(practitioner.practitionerId),
-        `${basePath}.practitionerId_duplicate`
-      );
-      pushInvalid(
-        invalid,
-        practitionerKeys.has(practitioner.practitionerKey),
+        !!practitioner.practitionerKey && practitionerKeys.has(practitioner.practitionerKey),
         `${basePath}.practitionerKey_duplicate`
       );
 
@@ -280,48 +311,15 @@ export function buildTenantRuntime(config = {}) {
       practitioners,
 
       providers: {
-        identity: identity.key,
-        access: access.key,
-        booking: booking.key,
+        identity: identityProvider.key || null,
+        access: accessProvider.key || null,
+        booking: bookingProvider.key,
       },
 
       integrations: {
-        identity:
-          identity.key === "versatilis"
-            ? {
-                key: identity.key,
-                baseUrl: identity.baseUrl,
-                user: identity.user,
-                pass: identity.pass,
-              }
-            : {
-                key: identity.key,
-              },
-
-        access:
-          access.key === "versatilis"
-            ? {
-                key: access.key,
-                baseUrl: access.baseUrl,
-                user: access.user,
-                pass: access.pass,
-              }
-            : {
-                key: access.key,
-              },
-
-        booking:
-          booking.key === "google_calendar"
-            ? {
-                key: booking.key,
-                calendarId: booking.calendarId,
-              }
-            : {
-                key: booking.key,
-                baseUrl: booking.baseUrl,
-                user: booking.user,
-                pass: booking.pass,
-              },
+        identity: buildIdentityIntegration(identityProvider),
+        access: buildAccessIntegration(accessProvider),
+        booking: buildBookingIntegration(bookingProvider),
       },
 
       content,
