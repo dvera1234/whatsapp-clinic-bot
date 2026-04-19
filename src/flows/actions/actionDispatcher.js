@@ -1,4 +1,6 @@
-const ACTIONS = {};
+import { audit } from "../../observability/audit.js";
+
+const ACTIONS = Object.create(null);
 
 export function registerAction(action, handler) {
   const actionName = String(action || "").trim();
@@ -19,6 +21,11 @@ export async function dispatchAction(action, flowCtx) {
   const handler = ACTIONS[actionName];
 
   if (!handler) {
+    audit("ACTION_NOT_FOUND", {
+      tenantId: flowCtx?.tenantId,
+      action: actionName,
+      state: flowCtx?.state || null,
+    });
     return false;
   }
 
