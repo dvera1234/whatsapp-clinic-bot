@@ -23,7 +23,105 @@ function buildPractitionerIdSet(practitioners = []) {
   return set;
 }
 
-function validateMenuLike(menuLike, basePath, errors) {
+function buildMessageKeySet(messages = {}) {
+  const keys = new Set();
+
+  if (!isObject(messages)) return keys;
+
+  for (const key of Object.keys(messages)) {
+    if (isNonEmptyString(key)) keys.add(key.trim());
+  }
+
+  return keys;
+}
+
+function buildPlanIdSet(plans = []) {
+  const set = new Set();
+
+  if (!Array.isArray(plans)) return set;
+
+  for (const plan of plans) {
+    const planId = String(plan?.id || "").trim();
+    if (planId) set.add(planId);
+  }
+
+  return set;
+}
+
+function validateMenuOption(option, optionPath, errors, context) {
+  pushError(errors, !isObject(option), optionPath);
+  if (!isObject(option)) return;
+
+  pushError(errors, !isNonEmptyString(option.id), `${optionPath}.id`);
+  pushError(errors, !isNonEmptyString(option.label), `${optionPath}.label`);
+  pushError(errors, !isNonEmptyString(option.action), `${optionPath}.action`);
+
+  const action = String(option.action || "").trim();
+  const allowedActions = new Set([
+    "OPEN_SUBMENU",
+    "SHOW_MESSAGE",
+    "SELECT_PLAN",
+    "GO_STATE",
+    "BACK_TO_MENU",
+    "RESET_FLOW",
+    "HANDOFF_HUMAN",
+  ]);
+
+  pushError(
+    errors,
+    !!action && !allowedActions.has(action),
+    `${optionPath}.action_invalid`
+  );
+
+  if (action === "OPEN_SUBMENU") {
+    const target = String(option.target || "").trim();
+
+    pushError(errors, !target, `${optionPath}.target`);
+    if (target) {
+      pushError(
+        errors,
+        !context.submenuKeys.has(target),
+        `${optionPath}.target_missing`
+      );
+    }
+  }
+
+  if (action === "SHOW_MESSAGE") {
+    const messageKey = String(option.messageKey || "").trim();
+
+    pushError(errors, !messageKey, `${optionPath}.messageKey`);
+    if (messageKey) {
+      pushError(
+        errors,
+        !context.messageKeys.has(messageKey),
+        `${optionPath}.messageKey_missing`
+      );
+    }
+  }
+
+  if (action === "SELECT_PLAN") {
+    const planId = String(option.planId || "").trim();
+
+    pushError(errors, !planId, `${optionPath}.planId`);
+    if (planId) {
+      pushError(
+        errors,
+        !context.planIdSet.has(planId),
+        `${optionPath}.planId_missing`
+      );
+    }
+  }
+
+  if (action === "GO_STATE") {
+    pushError(
+      errors,
+      !isNonEmptyString(option.targetState),
+      `${optionPath}.targetState`
+    );
+  }
+}
+
+function validateMenuLike(menuLike, basePath, errors, context) {
   pushError(errors, !isObject(menuLike), basePath);
   if (!isObject(menuLike)) return;
 
@@ -36,41 +134,8 @@ function validateMenuLike(menuLike, basePath, errors) {
 
   if (!Array.isArray(menuLike.options)) return;
 
-  menuLike.options.forEach((opt, i) => {
-    const optionPath = `${basePath}.options[${i}]`;
-
-    pushError(errors, !isObject(opt), optionPath);
-    if (!isObject(opt)) return;
-
-    pushError(errors, !isNonEmptyString(opt.id), `${optionPath}.id`);
-    pushError(errors, !isNonEmptyString(opt.label), `${optionPath}.label`);
-    pushError(errors, !isNonEmptyString(opt.action), `${optionPath}.action`);
-
-    const action = String(opt.action || "").trim();
-
-    if (action === "OPEN_SUBMENU") {
-      pushError(errors, !isNonEmptyString(opt.target), `${optionPath}.target`);
-    }
-
-    if (action === "SHOW_MESSAGE") {
-      pushError(
-        errors,
-        !isNonEmptyString(opt.messageKey),
-        `${optionPath}.messageKey`
-      );
-    }
-
-    if (action === "SELECT_PLAN") {
-      pushError(errors, !isNonEmptyString(opt.planId), `${optionPath}.planId`);
-    }
-
-    if (action === "GO_STATE") {
-      pushError(
-        errors,
-        !isNonEmptyString(opt.targetState),
-        `${optionPath}.targetState`
-      );
-    }
+  menuLike.options.forEach((option, index) => {
+    validateMenuOption(option, `${basePath}.options[${index}]`, errors, context);
   });
 }
 
@@ -81,11 +146,7 @@ function validatePlanRules(plan, basePath, errors) {
   if (!isObject(plan.rules)) return;
 
   if ("return" in plan.rules) {
-    pushError(
-      errors,
-      !isObject(plan.rules.return),
-      `${basePath}.rules.return`
-    );
+    pushError(errors, !isObject(plan.rules.return), `${basePath}.rules.return`);
 
     if (isObject(plan.rules.return)) {
       if ("checkEligibility" in plan.rules.return) {
@@ -108,11 +169,7 @@ function validatePlanRules(plan, basePath, errors) {
   }
 
   if ("billing" in plan.rules) {
-    pushError(
-      errors,
-      !isObject(plan.rules.billing),
-      `${basePath}.rules.billing`
-    );
+    pushError(errors, !isObject(plan.rules.billing), `${basePath}.rules.billing`);
 
     if (isObject(plan.rules.billing)) {
       if ("enabled" in plan.rules.billing) {
@@ -149,27 +206,47 @@ function validatePlanBooking(plan, basePath, errors, practitionerIdSet) {
     );
 
     if (Array.isArray(plan.booking.practitionerIds)) {
+      const localSet = new Set();
+
       plan.booking.practitionerIds.forEach((practitionerId, index) => {
         const entryPath = `${basePath}.booking.practitionerIds[${index}]`;
+        const safePractitionerId = String(practitionerId || "").trim();
 
-        pushError(errors, !isNonEmptyString(practitionerId), entryPath);
+        pushError(errors, !safePractitionerId, entryPath);
 
-        if (isNonEmptyString(practitionerId)) {
+        if (safePractitionerId) {
           pushError(
             errors,
-            !practitionerIdSet.has(String(practitionerId).trim()),
+            localSet.has(safePractitionerId),
+            `${entryPath}_duplicate`
+          );
+
+          pushError(
+            errors,
+            !practitionerIdSet.has(safePractitionerId),
             `${entryPath}_not_found`
           );
+
+          localSet.add(safePractitionerId);
         }
       });
     }
   }
 
   if ("practitionerMode" in plan.booking) {
+    const practitionerMode = String(plan.booking.practitionerMode || "").trim();
+    const allowedModes = new Set(["FIXED", "USER_SELECT", "AUTO"]);
+
     pushError(
       errors,
-      !isNonEmptyString(plan.booking.practitionerMode),
+      !practitionerMode,
       `${basePath}.booking.practitionerMode`
+    );
+
+    pushError(
+      errors,
+      !!practitionerMode && !allowedModes.has(practitionerMode),
+      `${basePath}.booking.practitionerMode_invalid`
     );
   }
 }
@@ -181,20 +258,77 @@ function validatePlanMappings(plan, basePath, errors) {
   if (!isObject(plan.mappings)) return;
 
   if ("externalId" in plan.mappings) {
-    const ext = plan.mappings.externalId;
+    const externalId = plan.mappings.externalId;
 
     pushError(
       errors,
       !(
-        (typeof ext === "number" && Number.isFinite(ext)) ||
-        (typeof ext === "string" && ext.trim() !== "")
+        (typeof externalId === "number" && Number.isFinite(externalId)) ||
+        (typeof externalId === "string" && externalId.trim() !== "")
       ),
       `${basePath}.mappings.externalId`
     );
   }
 }
 
-function validatePlan(plan, index, flowMap, errors, seenPlanIds, seenPlanKeys, practitionerIdSet) {
+function validateFlow(flowPath, flowValue, errors, context) {
+  pushError(errors, !isObject(flowValue), flowPath);
+  if (!isObject(flowValue)) return;
+
+  pushError(errors, !isNonEmptyString(flowValue.type), `${flowPath}.type`);
+
+  const normalizedType = String(flowValue.type || "").trim().toUpperCase();
+  const allowedFlowTypes = new Set([
+    "CONTINUE",
+    "END",
+    "INFO_ONLY",
+    "BOOKING",
+    "OPEN_SUBMENU",
+    "DIRECT_BOOKING",
+  ]);
+
+  pushError(
+    errors,
+    !!normalizedType && !allowedFlowTypes.has(normalizedType),
+    `${flowPath}.type_invalid`
+  );
+
+  if ("messageKey" in flowValue) {
+    const messageKey = String(flowValue.messageKey || "").trim();
+
+    pushError(errors, !messageKey, `${flowPath}.messageKey`);
+    if (messageKey) {
+      pushError(
+        errors,
+        !context.messageKeys.has(messageKey),
+        `${flowPath}.messageKey_missing`
+      );
+    }
+  }
+
+  if (normalizedType === "OPEN_SUBMENU") {
+    const target = String(flowValue.target || "").trim();
+
+    pushError(errors, !target, `${flowPath}.target`);
+    if (target) {
+      pushError(
+        errors,
+        !context.submenuKeys.has(target),
+        `${flowPath}.target_missing`
+      );
+    }
+  }
+
+  if ("nextState" in flowValue) {
+    pushError(
+      errors,
+      !isNonEmptyString(flowValue.nextState),
+      `${flowPath}.nextState`
+    );
+  }
+}
+
+function validatePlan(plan, index, flowMap, errors, context) {
   const basePath = `plans[${index}]`;
 
   pushError(errors, !isObject(plan), basePath);
@@ -210,13 +344,13 @@ function validatePlan(plan, index, flowMap, errors, seenPlanIds, seenPlanKeys, p
   pushError(errors, !isNonEmptyString(plan.label), `${basePath}.label`);
 
   if (planId) {
-    pushError(errors, seenPlanIds.has(planId), `${basePath}.id_duplicate`);
-    seenPlanIds.add(planId);
+    pushError(errors, context.planIds.has(planId), `${basePath}.id_duplicate`);
+    context.planIds.add(planId);
   }
 
   if (planKey) {
-    pushError(errors, seenPlanKeys.has(planKey), `${basePath}.key_duplicate`);
-    seenPlanKeys.add(planKey);
+    pushError(errors, context.planKeys.has(planKey), `${basePath}.key_duplicate`);
+    context.planKeys.add(planKey);
   }
 
   if (planFlow) {
@@ -232,15 +366,20 @@ function validatePlan(plan, index, flowMap, errors, seenPlanIds, seenPlanKeys, p
   }
 
   if ("messageKey" in plan) {
-    pushError(
-      errors,
-      !isNonEmptyString(plan.messageKey),
-      `${basePath}.messageKey`
-    );
+    const messageKey = String(plan.messageKey || "").trim();
+
+    pushError(errors, !messageKey, `${basePath}.messageKey`);
+    if (messageKey) {
+      pushError(
+        errors,
+        !context.messageKeys.has(messageKey),
+        `${basePath}.messageKey_missing`
+      );
+    }
   }
 
   validatePlanRules(plan, basePath, errors);
-  validatePlanBooking(plan, basePath, errors, practitionerIdSet);
+  validatePlanBooking(plan, basePath, errors, context.practitionerIdSet);
   validatePlanMappings(plan, basePath, errors);
 }
 
@@ -255,97 +394,86 @@ export function validateTenantContent(content = {}, context = {}) {
   }
 
   const practitionerIdSet = buildPractitionerIdSet(context?.practitioners);
+  const messageKeys = buildMessageKeySet(content.messages);
+  const submenuKeys = new Set(
+    isObject(content.submenus) ? Object.keys(content.submenus) : []
+  );
+  const planIdSet = buildPlanIdSet(content.plans);
 
-  validateMenuLike(content.menu, "menu", errors);
+  const validationContext = {
+    practitionerIdSet,
+    messageKeys,
+    submenuKeys,
+    planIdSet,
+    planIds: new Set(),
+    planKeys: new Set(),
+  };
+
+  pushError(errors, !Array.isArray(content.plans) || content.plans.length === 0, "plans");
+
+  pushError(errors, !isObject(content.flows), "flows");
+  const flowMap = isObject(content.flows) ? content.flows : {};
+
+  if (isObject(content.flows)) {
+    for (const [flowKey, flowValue] of Object.entries(flowMap)) {
+      validateFlow(`flows.${flowKey}`, flowValue, errors, validationContext);
+    }
+  }
+
+  pushError(errors, !isObject(content.messages), "messages");
+
+  if (isObject(content.messages)) {
+    const messages = content.messages;
+
+    pushError(errors, !isNonEmptyString(messages.lgpdConsent), "messages.lgpdConsent");
+    pushError(
+      errors,
+      !isNonEmptyString(messages.lgpdButtonText),
+      "messages.lgpdButtonText"
+    );
+    pushError(
+      errors,
+      !isNonEmptyString(messages.lgpdSectionTitle),
+      "messages.lgpdSectionTitle"
+    );
+    pushError(
+      errors,
+      !isNonEmptyString(messages.lgpdAcceptLabel),
+      "messages.lgpdAcceptLabel"
+    );
+    pushError(
+      errors,
+      !isNonEmptyString(messages.lgpdRejectLabel),
+      "messages.lgpdRejectLabel"
+    );
+    pushError(
+      errors,
+      !isNonEmptyString(messages.askCpfPortal),
+      "messages.askCpfPortal"
+    );
+  }
+
+  validateMenuLike(content.menu, "menu", errors, validationContext);
 
   if ("submenus" in content) {
     pushError(errors, !isObject(content.submenus), "submenus");
 
     if (isObject(content.submenus)) {
       for (const [submenuKey, submenuValue] of Object.entries(content.submenus)) {
-        validateMenuLike(submenuValue, `submenus.${submenuKey}`, errors);
+        validateMenuLike(
+          submenuValue,
+          `submenus.${submenuKey}`,
+          errors,
+          validationContext
+        );
       }
     }
   }
 
-  pushError(errors, !isObject(content.flows), "flows");
-
-  const flowMap = isObject(content.flows) ? content.flows : {};
-  const allowedFlowTypes = new Set([
-    "CONTINUE",
-    "END",
-    "INFO_ONLY",
-    "BOOKING",
-    "OPEN_SUBMENU",
-    "DIRECT_BOOKING",
-  ]);
-
-  for (const [flowKey, flowValue] of Object.entries(flowMap)) {
-    const flowPath = `flows.${flowKey}`;
-
-    pushError(errors, !isObject(flowValue), flowPath);
-    if (!isObject(flowValue)) continue;
-
-    pushError(errors, !isNonEmptyString(flowValue.type), `${flowPath}.type`);
-
-    const normalizedType = String(flowValue.type || "").trim().toUpperCase();
-    pushError(
-      errors,
-      !!normalizedType && !allowedFlowTypes.has(normalizedType),
-      `${flowPath}.type_invalid`
-    );
-  }
-
-  pushError(errors, !Array.isArray(content.plans), "plans");
-
-  const seenPlanIds = new Set();
-  const seenPlanKeys = new Set();
-
   if (Array.isArray(content.plans)) {
     content.plans.forEach((plan, index) => {
-      validatePlan(
-        plan,
-        index,
-        flowMap,
-        errors,
-        seenPlanIds,
-        seenPlanKeys,
-        practitionerIdSet
-      );
+      validatePlan(plan, index, flowMap, errors, validationContext);
     });
-  }
-
-  pushError(errors, !isObject(content.messages), "messages");
-
-  if (isObject(content.messages)) {
-    const m = content.messages;
-
-    pushError(errors, !isNonEmptyString(m.lgpdConsent), "messages.lgpdConsent");
-    pushError(
-      errors,
-      !isNonEmptyString(m.lgpdButtonText),
-      "messages.lgpdButtonText"
-    );
-    pushError(
-      errors,
-      !isNonEmptyString(m.lgpdSectionTitle),
-      "messages.lgpdSectionTitle"
-    );
-    pushError(
-      errors,
-      !isNonEmptyString(m.lgpdAcceptLabel),
-      "messages.lgpdAcceptLabel"
-    );
-    pushError(
-      errors,
-      !isNonEmptyString(m.lgpdRejectLabel),
-      "messages.lgpdRejectLabel"
-    );
-    pushError(
-      errors,
-      !isNonEmptyString(m.askCpfPortal),
-      "messages.askCpfPortal"
-    );
   }
 
   return {
