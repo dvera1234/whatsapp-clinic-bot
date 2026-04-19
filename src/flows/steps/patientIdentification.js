@@ -24,6 +24,48 @@ import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
 import { tpl } from "../helpers/contentHelpers.js";
 import { formatMissing } from "../helpers/patientHelpers.js";
 
+function getPlanByKey(runtime, planKey) {
+  const normalizedPlanKey = String(planKey || "").trim();
+  if (!normalizedPlanKey) return null;
+
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  return (
+    plans.find(
+      (plan) => String(plan?.key || "").trim() === normalizedPlanKey
+    ) || null
+  );
+}
+
+function getSelectedPlanKeyFromSession(session) {
+  const bookingPlanKey = String(session?.booking?.planKey || "").trim();
+  if (bookingPlanKey) return bookingPlanKey;
+
+  const portalPlanKey = String(session?.portal?.form?.planKey || "").trim();
+  if (portalPlanKey) return portalPlanKey;
+
+  return null;
+}
+
+function getFixedPractitionerIdFromPlan(plan) {
+  const practitionerMode = String(
+    plan?.booking?.practitionerMode || ""
+  ).trim().toUpperCase();
+
+  const practitionerIds = Array.isArray(plan?.booking?.practitionerIds)
+    ? plan.booking.practitionerIds
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    : [];
+
+  if (practitionerMode !== "FIXED") return null;
+  if (practitionerIds.length !== 1) return null;
+
+  return practitionerIds[0];
+}
+
 export async function handlePatientIdentificationStep(flowCtx) {
   const {
     tenantId,
@@ -34,7 +76,6 @@ export async function handlePatientIdentificationStep(flowCtx) {
     raw,
     state,
     MSG,
-    practitionerId,
     runtimeCtx,
     adapters,
     services,
@@ -288,8 +329,9 @@ export async function handlePatientIdentificationStep(flowCtx) {
 
   if (validation.ok) {
     const sCurrent = await getSession(tenantId, phone);
-    const selectedPlanKey =
-      String(sCurrent?.booking?.planKey || "").trim() || null;
+    const selectedPlanKey = getSelectedPlanKeyFromSession(sCurrent);
+    const selectedPlan = getPlanByKey(runtime, selectedPlanKey);
+    const practitionerId = getFixedPractitionerIdFromPlan(selectedPlan);
 
     await finishWizardAndGoToDates({
       schedulingAdapter: adapters.schedulingAdapter,
