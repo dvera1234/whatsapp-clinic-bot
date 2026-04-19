@@ -10,19 +10,11 @@ import {
   sendSupportLink,
 } from "../helpers/supportHelpers.js";
 
-function resolveSupportWa(flowCtx) {
-  return (
-    flowCtx?.supportWa ||
-    flowCtx?.runtime?.support?.waNumber ||
-    flowCtx?.runtime?.content?.support?.waNumber ||
-    ""
-  );
+function resolveSupportWa(runtime) {
+  return runtime?.support?.waNumber || "";
 }
 
-export async function handleSupportFlowStep(
-  flowCtx,
-  { allowFreeTextAttendant = false } = {}
-) {
+export async function handleSupportFlowStep(flowCtx) {
   const {
     tenantId,
     traceId,
@@ -36,11 +28,17 @@ export async function handleSupportFlowStep(
     runtime,
   } = flowCtx;
 
-  const supportWa = resolveSupportWa(flowCtx);
+  const supportWa = resolveSupportWa(runtime);
 
   if (upper === "FALAR_ATENDENTE") {
     const s = await getSession(tenantId, phone);
-    const prefill = buildSupportPrefillFromSession(phone, s, traceId, tenantId);
+
+    const prefill = buildSupportPrefillFromSession(
+      phone,
+      s,
+      traceId,
+      tenantId
+    );
 
     await sendSupportLink({
       tenantId,
@@ -73,66 +71,7 @@ export async function handleSupportFlowStep(
       tenantId,
       traceId,
       phone,
-      reason: "Paciente relatou dificuldade no agendamento.",
-      details: raw,
-    });
-
-    await sendSupportLink({
-      tenantId,
-      phone,
-      phoneNumberId,
-      prefill,
-      supportWa,
-      nextState: "MAIN",
-      MSG,
-      services,
-    });
-
-    await clearTransientPortalData(tenantId, phone);
-    return true;
-  }
-
-  if (state === "ATENDENTE_DESCRICAO") {
-    if (!raw) {
-      await sendAndSetState({
-        tenantId,
-        phone,
-        body: MSG.ATTENDANT_DESCRIBE,
-        state: "ATENDENTE_DESCRICAO",
-        phoneNumberId,
-      });
-      return true;
-    }
-
-    const prefill = buildSafeSupportPrefill({
-      tenantId,
-      traceId,
-      phone,
-      reason: "Paciente solicitou atendimento humano.",
-      details: raw,
-    });
-
-    await sendSupportLink({
-      tenantId,
-      phone,
-      phoneNumberId,
-      prefill,
-      supportWa,
-      nextState: "MAIN",
-      MSG,
-      services,
-    });
-
-    await clearTransientPortalData(tenantId, phone);
-    return true;
-  }
-
-  if (allowFreeTextAttendant && state === "ATENDENTE" && raw) {
-    const prefill = buildSafeSupportPrefill({
-      tenantId,
-      traceId,
-      phone,
-      reason: "Paciente solicitou atendimento humano.",
+      reason: "Dificuldade no agendamento",
       details: raw,
     });
 
