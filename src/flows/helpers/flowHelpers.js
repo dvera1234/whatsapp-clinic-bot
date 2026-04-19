@@ -3,19 +3,21 @@ import {
   updateSession,
   clearSession,
 } from "../../session/redisSession.js";
-
 import { sendText } from "../../whatsapp/sender.js";
 import { setStateAndRender } from "./stateRenderHelpers.js";
 
+// =========================
+// RUNTIME
+// =========================
+
 export function resolveRuntimeFromContext(context = {}) {
   const runtime = context?.runtime;
-
-  if (!runtime || typeof runtime !== "object") {
-    return null;
-  }
-
-  return runtime;
+  return runtime && typeof runtime === "object" ? runtime : null;
 }
+
+// =========================
+// FAIL SAFE
+// =========================
 
 export async function failSafeTenantConfigError({
   tenantId,
@@ -33,6 +35,10 @@ export async function failSafeTenantConfigError({
   } catch {}
 }
 
+// =========================
+// SESSION CLEAN
+// =========================
+
 export async function clearTransientPortalData(tenantId, phone) {
   await updateSession(tenantId, phone, (s) => {
     if (!s) return;
@@ -43,11 +49,13 @@ export async function clearTransientPortalData(tenantId, phone) {
       delete s.portal.issue;
     }
 
-    if (s.pending) {
-      delete s.pending;
-    }
+    delete s.pending;
   });
 }
+
+// =========================
+// RESET FLOW
+// =========================
 
 export async function resetToMain(flowCtx) {
   const { tenantId, phone } = flowCtx;
@@ -57,6 +65,10 @@ export async function resetToMain(flowCtx) {
   return await setStateAndRender(flowCtx, "MAIN");
 }
 
+// =========================
+// SEND + STATE
+// =========================
+
 export async function sendAndSetState({
   tenantId,
   phone,
@@ -64,23 +76,24 @@ export async function sendAndSetState({
   state,
   phoneNumberId,
 }) {
-  const normalizedBody = String(body || "").trim();
+  const text = String(body || "").trim();
 
-  if (normalizedBody) {
+  if (text) {
     const sent = await sendText({
       tenantId,
       to: phone,
-      body: normalizedBody,
+      body: text,
       phoneNumberId,
     });
 
-    if (!sent) return false;
+    if (!sent) {
+      throw new Error("WHATSAPP_SEND_FAILED");
+    }
   }
 
-  const normalizedState = String(state || "").trim();
+  const nextState = String(state || "").trim();
+  if (!nextState) return true;
 
-  if (!normalizedState) return true;
-
-  await setState(tenantId, phone, normalizedState);
+  await setState(tenantId, phone, nextState);
   return true;
 }
