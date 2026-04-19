@@ -24,13 +24,11 @@ function resolveSupportWa(flowCtx) {
   );
 }
 
-function normalizeLgpdChoice({ raw, upper, digits }) {
+function normalizeLgpdChoice({ raw, upper }) {
   const rawValue = String(raw || "").trim().toUpperCase();
   const upperValue = String(upper || "").trim().toUpperCase();
-  const digitsValue = String(digits || "").trim();
 
   if (
-    digitsValue === "1" ||
     rawValue === "LGPD_ACCEPT" ||
     rawValue === "LGPD_ACCEPTED" ||
     rawValue === "LGPD_CONCORDO" ||
@@ -42,7 +40,6 @@ function normalizeLgpdChoice({ raw, upper, digits }) {
   }
 
   if (
-    digitsValue === "2" ||
     rawValue === "LGPD_REJECT" ||
     rawValue === "LGPD_REJECTED" ||
     rawValue === "LGPD_NAO_CONCORDO" ||
@@ -66,7 +63,6 @@ export async function handlePortalFlowStep(flowCtx) {
     phoneNumberId,
     raw,
     upper,
-    digits,
     state,
     MSG,
     services,
@@ -74,7 +70,7 @@ export async function handlePortalFlowStep(flowCtx) {
   } = flowCtx;
 
   if (state === "LGPD_CONSENT") {
-    const lgpdChoice = normalizeLgpdChoice({ raw, upper, digits });
+    const lgpdChoice = normalizeLgpdChoice({ raw, upper });
 
     if (lgpdChoice === "ACCEPT") {
       audit("LGPD_CONSENT_ACCEPTED", {
