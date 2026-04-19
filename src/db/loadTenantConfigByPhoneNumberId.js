@@ -9,8 +9,8 @@ function readNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
 
   if (typeof value === "string" && value.trim() !== "") {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   return null;
@@ -53,26 +53,26 @@ function parseJsonObject(value) {
 }
 
 function normalizeProviderConfig(row) {
-  const extraConfig = parseJsonObject(row.extra_config_json);
+  const extraConfig = parseJsonObject(row?.extra_config_json);
 
   return {
-    key: readString(row.provider_key),
-    baseUrl: readString(row.base_url),
-    user: readString(row.username),
-    pass: readString(row.password_encrypted),
+    key: readString(row?.provider_key),
+    baseUrl: readString(row?.base_url),
+    user: readString(row?.username),
+    pass: readString(row?.password_encrypted),
     ...extraConfig,
   };
 }
 
 function normalizePractitionerRow(row) {
   return {
-    practitionerId: readString(row.practitioner_id),
-    practitionerKey: readString(row.practitioner_key),
-    label: readString(row.practitioner_label),
-    externalId: readNumber(row.practitioner_external_id),
-    specialtyId: readNumber(row.practitioner_specialty_id),
-    active: readBoolean(row.practitioner_active),
-    sortOrder: readNumber(row.practitioner_sort_order),
+    practitionerId: readString(row?.practitioner_id),
+    practitionerKey: readString(row?.practitioner_key),
+    label: readString(row?.practitioner_label),
+    externalId: readNumber(row?.practitioner_external_id),
+    specialtyId: readNumber(row?.practitioner_specialty_id),
+    active: readBoolean(row?.practitioner_active),
+    sortOrder: readNumber(row?.practitioner_sort_order),
   };
 }
 
@@ -121,7 +121,7 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       ON tc.tenant_id = t.tenant_id
     JOIN tenant_clinic_settings cs
       ON cs.tenant_id = t.tenant_id
-    JOIN tenant_provider_settings p
+    LEFT JOIN tenant_provider_settings p
       ON p.tenant_id = t.tenant_id
     JOIN tenant_content c
       ON c.tenant_id = t.tenant_id
@@ -145,34 +145,35 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
   const practitionersMap = new Map();
 
   for (const row of rows) {
-    const capability = readString(row.capability);
-    if (["identity", "access", "booking"].includes(capability)) {
+    const capability = readString(row?.capability);
+
+    if (capability === "identity" || capability === "access" || capability === "booking") {
       providers[capability] = normalizeProviderConfig(row);
     }
 
-    const practitionerId = readString(row.practitioner_id);
+    const practitionerId = readString(row?.practitioner_id);
     if (practitionerId) {
       practitionersMap.set(practitionerId, normalizePractitionerRow(row));
     }
   }
 
-  const parsedContent = parseJsonObject(first.messages_json);
+  const parsedContent = parseJsonObject(first?.messages_json);
 
   return {
-    tenantId: readString(first.tenant_id),
-    name: readString(first.name),
-    status: readString(first.status),
+    tenantId: readString(first?.tenant_id),
+    name: readString(first?.name),
+    status: readString(first?.status),
 
     channels: {
-      phoneNumberId: readString(first.phone_number_id),
+      phoneNumberId: readString(first?.phone_number_id),
     },
 
     portal: {
-      url: readString(first.portal_url),
+      url: readString(first?.portal_url),
     },
 
     support: {
-      waNumber: readString(first.support_wa_number),
+      waNumber: readString(first?.support_wa_number),
     },
 
     providers: {
@@ -181,31 +182,30 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       booking: providers.booking || {},
     },
 
-    practitioners: Array.from(practitionersMap.values())
-      .sort((a, b) => {
-        const aOrder = Number.isFinite(a.sortOrder) ? a.sortOrder : Number.MAX_SAFE_INTEGER;
-        const bOrder = Number.isFinite(b.sortOrder) ? b.sortOrder : Number.MAX_SAFE_INTEGER;
-        return aOrder - bOrder;
-      }),
+    practitioners: Array.from(practitionersMap.values()).sort((a, b) => {
+      const aOrder = Number.isFinite(a?.sortOrder) ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+      const bOrder = Number.isFinite(b?.sortOrder) ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+      return aOrder - bOrder;
+    }),
 
     content: {
       ...parsedContent,
 
       branding: {
-        assistantName: readString(first.assistant_name),
-        doctorName: readString(first.doctor_name),
-        instagramUrl: readString(first.instagram_url),
+        assistantName: readString(first?.assistant_name),
+        doctorName: readString(first?.doctor_name),
+        instagramUrl: readString(first?.instagram_url),
       },
 
       clinic: {
-        name: readString(first.clinic_name),
-        addressLine1: readString(first.clinic_address_line1),
-        addressLine2: readString(first.clinic_address_line2),
-        cityStateZip: readString(first.clinic_city_state_zip),
+        name: readString(first?.clinic_name),
+        addressLine1: readString(first?.clinic_address_line1),
+        addressLine2: readString(first?.clinic_address_line2),
+        cityStateZip: readString(first?.clinic_city_state_zip),
       },
 
       postOp: {
-        recentWaNumber: readString(first.post_op_recent_wa_number),
+        recentWaNumber: readString(first?.post_op_recent_wa_number),
       },
     },
   };
