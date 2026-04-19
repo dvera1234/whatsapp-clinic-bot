@@ -1,19 +1,11 @@
 import { getSession, setState, updateSession, redis } from "../../session/redisSession.js";
-import { PLAN_KEYS } from "../../config/constants.js";
 import { audit } from "../../observability/audit.js";
 import { sanitizeForLog } from "../../utils/logSanitizer.js";
 import { maskPhone } from "../../utils/mask.js";
 import {
   bookingConfirmKey,
   buildBookingSuccessMessage,
-  findSlotsByDate,
-  isSlotAllowed,
-  showSlotsPage,
 } from "../helpers/bookingHelpers.js";
-import {
-  handleProviderTemporaryUnavailable,
-  isProviderTemporaryUnavailableError,
-} from "../helpers/auditHelpers.js";
 import { tpl } from "../helpers/contentHelpers.js";
 
 export async function handleBookingConfirmationStep(flowCtx) {
@@ -25,98 +17,45 @@ export async function handleBookingConfirmationStep(flowCtx) {
     upper,
     state,
     MSG,
-    practitionerId,
-    portalUrl,
     adapters,
+    runtime,
     runtimeCtx,
     services,
   } = flowCtx;
 
-  if (state !== "WAIT_CONFIRM") {
-    return false;
+  if (state !== "WAIT_CONFIRM") return false;
+
+  const s = await getSession(tenantId, phone);
+  const slotId = s?.pending?.slotId;
+  const patientId = s?.booking?.patientId;
+  const practitionerId = s?.booking?.practitionerId;
+  const planKey = s?.booking?.planKey;
+
+  if (!slotId || !patientId || !practitionerId || !planKey) {
+    await services.sendText({
+      tenantId,
+      to: phone,
+      body: MSG.BOOKING_SESSION_INVALID,
+      phoneNumberId,
+    });
+    await setState(tenantId, phone, "MAIN");
+    return true;
   }
 
   if (upper === "ESCOLHER_OUTRO") {
-    const s = await getSession(tenantId, phone);
-    const slots = s?.booking?.slots || [];
-
     await updateSession(tenantId, phone, (sess) => {
-      sess.booking = sess.booking || {};
-      sess.booking.slotPage = 0;
       delete sess.pending;
     });
 
     await setState(tenantId, phone, "SLOTS");
-
-    await showSlotsPage({
-      tenantId,
-      phone,
-      phoneNumberId,
-      slots,
-      page: 0,
-      MSG,
-      services,
-    });
-
     return true;
   }
 
   if (upper === "CONFIRMAR") {
-    const s = await getSession(tenantId, phone);
-    const slotId = Number(s?.pending?.slotId);
-
-    const bookingRequest = {
-      slotId,
-      patientId: s?.booking?.patientId,
-      providerId: s?.booking?.practitionerId ?? practitionerId,
-      planKey: s?.booking?.planKey || PLAN_KEYS.PRIVATE,
-      isTelemedicine: false,
-    };
-
-    if (!bookingRequest.patientId) {
-      await services.sendText({
-        tenantId,
-        to: phone,
-        body: MSG.BOOKING_PATIENT_NOT_IDENTIFIED,
-        phoneNumberId,
-      });
-      await setState(tenantId, phone, "MAIN");
-      return true;
-    }
-
-    if (!slotId || Number.isNaN(slotId)) {
-      const slots = s?.booking?.slots || [];
-
-      await updateSession(tenantId, phone, (sess) => {
-        delete sess.pending;
-      });
-
-      await setState(tenantId, phone, "SLOTS");
-
-      await services.sendText({
-        tenantId,
-        to: phone,
-        body: MSG.BOOKING_SLOT_NOT_FOUND,
-        phoneNumberId,
-      });
-
-      await showSlotsPage({
-        tenantId,
-        phone,
-        phoneNumberId,
-        slots,
-        page: s?.booking?.slotPage || 0,
-        MSG,
-        services,
-      });
-
-      return true;
-    }
-
     const lockKey = bookingConfirmKey(tenantId, phone, slotId);
-    const lockOk = await redis.set(lockKey, "1", { ex: 60, nx: true });
+    const lock = await redis.set(lockKey, "1", { ex: 60, nx: true });
 
-    if (!lockOk) {
+    if (!lock) {
       await services.sendText({
         tenantId,
         to: phone,
@@ -127,332 +66,50 @@ export async function handleBookingConfirmationStep(flowCtx) {
     }
 
     try {
-      const appointmentDate = s?.booking?.appointmentDate;
-      const chosen = (s?.booking?.slots || []).find(
-        (x) => Number(x.slotId) === slotId
-      );
+      const bookingRequest = {
+        slotId,
+        patientId,
+        practitionerId,
+        planKey,
+      };
 
-      if (!appointmentDate || !chosen?.time || !isSlotAllowed(appointmentDate, chosen.time)) {
-        await updateSession(tenantId, phone, (sess) => {
-          delete sess.pending;
-        });
-
-        await setState(tenantId, phone, "SLOTS");
-
-        await services.sendText({
-          tenantId,
-          to: phone,
-          body: MSG.BOOKING_SLOT_TOO_SOON,
-          phoneNumberId,
-        });
-
-        const selectedPractitionerId = s?.booking?.practitionerId ?? practitionerId;
-        const patientId = s?.booking?.patientId;
-
-        if (!patientId) {
-          await services.sendText({
-            tenantId,
-            to: phone,
-            body: MSG.BOOKING_SESSION_INVALID,
-            phoneNumberId,
-          });
-          await setState(tenantId, phone, "MAIN");
-          return true;
-        }
-
-        const outSlots = await findSlotsByDate({
-          schedulingAdapter: adapters.schedulingAdapter,
-          runtimeCtx,
-          practitionerId: selectedPractitionerId,
-          patientId,
-          appointmentDate,
-          phone,
-        });
-
-        if (outSlots.providerUnavailable) {
-          await handleProviderTemporaryUnavailable({
-            tenantId,
-            traceId,
-            phone,
-            phoneNumberId,
-            capability: "booking",
-            err: outSlots.error,
-            MSG,
-            nextState: "MAIN",
-            services,
-          });
-          return true;
-        }
-
-        await updateSession(tenantId, phone, (sess) => {
-          sess.booking = sess.booking || {};
-          sess.booking.slotPage = 0;
-          sess.booking.slots = outSlots.ok ? outSlots.slots : [];
-        });
-
-        const sUpdated = await getSession(tenantId, phone);
-
-        await showSlotsPage({
-          tenantId,
-          phone,
-          phoneNumberId,
-          slots: sUpdated?.booking?.slots || [],
-          page: 0,
-          MSG,
-          services,
-        });
-
-        return true;
-      }
-
-      let out;
-      try {
-        out = await adapters.schedulingAdapter.confirmBooking({
-          bookingRequest,
-          runtimeCtx,
-        });
-      } catch (err) {
-        if (isProviderTemporaryUnavailableError(err)) {
-          await updateSession(tenantId, phone, (sess) => {
-            delete sess.pending;
-          });
-
-          await handleProviderTemporaryUnavailable({
-            tenantId,
-            traceId,
-            phone,
-            phoneNumberId,
-            capability: "booking",
-            err,
-            MSG,
-            nextState: "MAIN",
-            services,
-          });
-          return true;
-        }
-        throw err;
-      }
-
-      audit(
-        "BOOKING_CONFIRM_FLOW",
-        sanitizeForLog({
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          patientId: bookingRequest.patientId || null,
-          slotId: bookingRequest.slotId || null,
-          planKey: bookingRequest.planKey || null,
-          providerId: bookingRequest.providerId || null,
-          appointmentDate: s?.booking?.appointmentDate || null,
-          appointmentTime: chosen?.time || null,
-          rid: out?.rid || null,
-          httpStatus: out?.status || null,
-          technicalAccepted: !!out?.ok,
-          functionalResult: !!out?.ok
-            ? "BOOKING_PRESUMED_CREATED"
-            : "BOOKING_NOT_CONFIRMED",
-          patientFacingMessage: !!out?.ok
-            ? "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE"
-            : "BOOKING_FAILURE_RETRY_OR_SUPPORT",
-          escalationRequired: !out?.ok,
-        })
-      );
-
-      audit(
-        "BOOKING_CONFIRMED",
-        sanitizeForLog({
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          patientId: bookingRequest.patientId || null,
-          slotId: bookingRequest.slotId || null,
-          planKey: bookingRequest.planKey || null,
-          providerId: bookingRequest.providerId || null,
-          appointmentDate: s?.booking?.appointmentDate || null,
-          appointmentTime: chosen?.time || null,
-          rid: out?.rid || null,
-          httpStatus: out?.status || null,
-          technicalAccepted: !!out?.ok,
-          functionalResult: !!out?.ok
-            ? "BOOKING_PRESUMED_CREATED"
-            : "BOOKING_NOT_CONFIRMED",
-        })
-      );
+      const out = await adapters.schedulingAdapter.confirmBooking({
+        bookingRequest,
+        runtimeCtx,
+      });
 
       if (!out.ok) {
-        await updateSession(tenantId, phone, (sess) => {
-          delete sess.pending;
-        });
-
-        await setState(tenantId, phone, "SLOTS");
-
         await services.sendText({
           tenantId,
           to: phone,
           body: MSG.BOOKING_CONFIRM_FAILURE,
           phoneNumberId,
         });
-
-        audit(
-          "BOOKING_CONFIRM_PATIENT_RESPONSE",
-          sanitizeForLog({
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            rid: out?.rid || null,
-            httpStatus: out?.status || null,
-            technicalAccepted: false,
-            functionalResult: "BOOKING_NOT_CONFIRMED",
-            patientFacingMessage: "BOOKING_FAILURE_RETRY_OR_SUPPORT",
-            patientMessageSent: true,
-            escalationRequired: true,
-          })
-        );
-
-        const slots = s?.booking?.slots || [];
-
-        await showSlotsPage({
-          tenantId,
-          phone,
-          phoneNumberId,
-          slots,
-          page: s?.booking?.slotPage || 0,
-          MSG,
-          services,
-        });
-
         return true;
       }
 
-      const msgOk =
-        out?.data?.providerResult?.Message ||
-        out?.data?.providerResult?.message ||
-        out?.data?.Message ||
-        out?.data?.message ||
-        "Agendamento confirmado com sucesso!";
-
-      const sAfter = await getSession(tenantId, phone);
-
-      const isPrivateBooking =
-        (sAfter?.booking?.planKey || PLAN_KEYS.PRIVATE) === PLAN_KEYS.PRIVATE;
-
-      let isReturnBooking = null;
-
-      if (typeof sAfter?.booking?.isReturn === "boolean") {
-        isReturnBooking = sAfter.booking.isReturn;
-      }
-
-      if (isReturnBooking === null) {
-        audit(
-          "BOOKING_RETURN_FLAG_MISSING",
-          sanitizeForLog({
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            planKey: sAfter?.booking?.planKey || null,
-            warning: "isReturn not defined at confirmation step",
-          })
-        );
-      }
-
-      const showPaymentInfo = isPrivateBooking && isReturnBooking === false;
-
-      if (isReturnBooking === null) {
-        audit(
-          "BOOKING_PAYMENT_BLOCKED_UNKNOWN_RETURN",
-          sanitizeForLog({
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            reason: "return_status_unknown",
-          })
-        );
-      }
-
-      const paymentInfo = showPaymentInfo
-        ? MSG.PAYMENT_INFO_PRIVATE_FIRST_VISIT
-        : "";
-
-      audit(
-        "BOOKING_PAYMENT_DECISION",
-        sanitizeForLog({
-          tenantId,
-          traceId,
-          tracePhone: maskPhone(phone),
-          planKey: sAfter?.booking?.planKey || null,
-          isPrivateBooking,
-          isReturnBooking,
-          showPaymentInfo,
-        })
+      const plan = runtime.content.plans.find(
+        (p) => String(p.key) === String(planKey)
       );
 
-      try {
-        await setState(tenantId, phone, "MAIN");
+      const billingEnabled = !!plan?.rules?.billing?.enabled;
+      const checkReturn = !!plan?.rules?.return?.checkEligibility;
+      const isReturn = s?.booking?.isReturn === true;
 
-        const sentMainSuccess = await services.sendText({
-          tenantId,
-          to: phone,
-          body: buildBookingSuccessMessage({
-            MSG,
-            msgOk,
-            paymentInfo,
-          }),
-          phoneNumberId,
-        });
+      const showPayment =
+        billingEnabled && (!checkReturn || isReturn === false);
 
-        let sentPortalLink = false;
-        if (portalUrl) {
-          sentPortalLink = await services.sendText({
-            tenantId,
-            to: phone,
-            body: tpl(MSG.PORTAL_LINK_PREFIX, { portalUrl }),
-            phoneNumberId,
-          });
-        }
+      await setState(tenantId, phone, "MAIN");
 
-        audit(
-          "BOOKING_CONFIRM_PATIENT_RESPONSE",
-          sanitizeForLog({
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            rid: out?.rid || null,
-            httpStatus: out?.status || null,
-            technicalAccepted: true,
-            functionalResult: "BOOKING_PRESUMED_CREATED",
-            patientFacingMessage: "BOOKING_SUCCESS_WITH_PORTAL_GUIDANCE",
-            patientMessageMainSent: !!sentMainSuccess,
-            patientMessagePortalLinkSent: !!sentPortalLink,
-            escalationRequired: false,
-            planKey: sAfter?.booking?.planKey || null,
-            isReturnBooking,
-            showPaymentInfo,
-          })
-        );
-      } catch {
-        audit(
-          "BOOKING_POST_CONFIRM_COMMUNICATION_FAILURE",
-          sanitizeForLog({
-            tenantId,
-            traceId,
-            tracePhone: maskPhone(phone),
-            rid: out?.rid || null,
-            httpStatus: out?.status || null,
-            technicalAccepted: true,
-            functionalResult:
-              "BOOKING_CREATED_BUT_COMMUNICATION_PARTIAL_FAILURE",
-            patientFacingMessage: "BOOKING_SUCCESS_FALLBACK_MESSAGE",
-            escalationRequired: false,
-          })
-        );
-
-        await services.sendText({
-          tenantId,
-          to: phone,
-          body: MSG.BOOKING_SUCCESS_FALLBACK,
-          phoneNumberId,
-        });
-      }
+      await services.sendText({
+        tenantId,
+        to: phone,
+        body: buildBookingSuccessMessage({
+          MSG,
+          paymentInfo: showPayment ? MSG.PAYMENT_INFO : "",
+        }),
+        phoneNumberId,
+      });
 
       return true;
     } finally {
@@ -460,16 +117,5 @@ export async function handleBookingConfirmationStep(flowCtx) {
     }
   }
 
-  await services.sendButtons({
-    tenantId,
-    to: phone,
-    body: MSG.BUTTONS_ONLY_WARNING,
-    buttons: [
-      { id: "CONFIRMAR", title: MSG.ACTION_CONFIRM },
-      { id: "ESCOLHER_OUTRO", title: MSG.ACTION_PICK_OTHER },
-    ],
-    phoneNumberId,
-  });
-
-  return true;
+  return false;
 }
