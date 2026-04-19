@@ -39,16 +39,16 @@ function readString(value) {
 }
 
 function readNullableString(value) {
-  const v = readString(value);
-  return v || null;
+  const safeValue = readString(value);
+  return safeValue || null;
 }
 
 function readNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
 
   if (typeof value === "string" && value.trim() !== "") {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   return null;
@@ -60,6 +60,7 @@ function readBoolean(value) {
 
 function readStringArray(value) {
   if (!Array.isArray(value)) return [];
+
   return value
     .map((item) => readString(item))
     .filter(Boolean);
@@ -74,7 +75,7 @@ function sessionKey(tenantId, phone) {
 }
 
 function detectUnexpectedSessionKeys(sessionObj) {
-  const allowed = new Set([
+  const allowedKeys = new Set([
     "state",
     "lastUserTs",
     "lastPhoneNumberId",
@@ -83,7 +84,7 @@ function detectUnexpectedSessionKeys(sessionObj) {
     "pending",
   ]);
 
-  return Object.keys(sessionObj || {}).filter((key) => !allowed.has(key));
+  return Object.keys(sessionObj || {}).filter((key) => !allowedKeys.has(key));
 }
 
 function sanitizeSlot(slot) {
@@ -199,11 +200,14 @@ async function loadSession(tenantId, phone) {
   const raw = await redis.get(key);
 
   if (raw == null) return null;
-  if (typeof raw === "object") return raw;
+
+  if (typeof raw === "object") {
+    return sanitizeSessionForSave(raw);
+  }
 
   if (typeof raw === "string") {
     try {
-      return JSON.parse(raw);
+      return sanitizeSessionForSave(JSON.parse(raw));
     } catch (error) {
       errLog("REDIS_SESSION_CORRUPTED", {
         tenantId,
@@ -295,44 +299,46 @@ async function setBookingPlan(tenantId, phone, planInput) {
       return;
     }
 
-    if (planInput && typeof planInput === "object") {
-      if ("planId" in planInput) {
-        sessionObj.booking.planId = planInput.planId;
-      }
+    if (!planInput || typeof planInput !== "object") {
+      return;
+    }
 
-      if ("planKey" in planInput) {
-        sessionObj.booking.planKey = planInput.planKey;
-      }
+    if ("planId" in planInput) {
+      sessionObj.booking.planId = planInput.planId;
+    }
 
-      if ("planFlow" in planInput) {
-        sessionObj.booking.planFlow = planInput.planFlow;
-      }
+    if ("planKey" in planInput) {
+      sessionObj.booking.planKey = planInput.planKey;
+    }
 
-      if ("planLabel" in planInput) {
-        sessionObj.booking.planLabel = planInput.planLabel;
-      }
+    if ("planFlow" in planInput) {
+      sessionObj.booking.planFlow = planInput.planFlow;
+    }
 
-      if ("planMessageKey" in planInput) {
-        sessionObj.booking.planMessageKey = planInput.planMessageKey;
-      }
+    if ("planLabel" in planInput) {
+      sessionObj.booking.planLabel = planInput.planLabel;
+    }
 
-      if ("planNextState" in planInput) {
-        sessionObj.booking.planNextState = planInput.planNextState;
-      }
+    if ("planMessageKey" in planInput) {
+      sessionObj.booking.planMessageKey = planInput.planMessageKey;
+    }
 
-      if ("practitionerMode" in planInput) {
-        sessionObj.booking.practitionerMode = planInput.practitionerMode;
-      }
+    if ("planNextState" in planInput) {
+      sessionObj.booking.planNextState = planInput.planNextState;
+    }
 
-      if ("practitionerIds" in planInput) {
-        sessionObj.booking.practitionerIds = Array.isArray(planInput.practitionerIds)
-          ? planInput.practitionerIds
-          : [];
-      }
+    if ("practitionerMode" in planInput) {
+      sessionObj.booking.practitionerMode = planInput.practitionerMode;
+    }
 
-      if ("practitionerId" in planInput) {
-        sessionObj.booking.practitionerId = planInput.practitionerId;
-      }
+    if ("practitionerIds" in planInput) {
+      sessionObj.booking.practitionerIds = Array.isArray(planInput.practitionerIds)
+        ? planInput.practitionerIds
+        : [];
+    }
+
+    if ("practitionerId" in planInput) {
+      sessionObj.booking.practitionerId = planInput.practitionerId;
     }
   });
 }
@@ -433,7 +439,7 @@ async function touchUser(arg1, arg2) {
     currentSession.lastUserTs = Date.now();
 
     if (phoneNumberId) {
-      currentSession.lastPhoneNumberId = String(phoneNumberId);
+      currentSession.lastPhoneNumberId = String(phoneNumberId).trim();
     }
   });
 
