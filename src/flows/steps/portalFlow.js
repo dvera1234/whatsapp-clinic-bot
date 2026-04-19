@@ -15,22 +15,68 @@ import {
 } from "../helpers/supportHelpers.js";
 import { setStateAndRender } from "../helpers/stateRenderHelpers.js";
 
+function resolveSupportWa(flowCtx) {
+  return (
+    flowCtx?.supportWa ||
+    flowCtx?.runtime?.support?.waNumber ||
+    flowCtx?.runtime?.content?.support?.waNumber ||
+    ""
+  );
+}
+
+function normalizeLgpdChoice({ raw, upper, digits }) {
+  const rawValue = String(raw || "").trim().toUpperCase();
+  const upperValue = String(upper || "").trim().toUpperCase();
+  const digitsValue = String(digits || "").trim();
+
+  if (
+    digitsValue === "1" ||
+    rawValue === "LGPD_ACCEPT" ||
+    rawValue === "LGPD_ACCEPTED" ||
+    rawValue === "LGPD_CONCORDO" ||
+    upperValue === "LGPD_ACCEPT" ||
+    upperValue === "LGPD_ACCEPTED" ||
+    upperValue === "LGPD_CONCORDO"
+  ) {
+    return "ACCEPT";
+  }
+
+  if (
+    digitsValue === "2" ||
+    rawValue === "LGPD_REJECT" ||
+    rawValue === "LGPD_REJECTED" ||
+    rawValue === "LGPD_NAO_CONCORDO" ||
+    rawValue === "LGPD_NÃO_CONCORDO" ||
+    upperValue === "LGPD_REJECT" ||
+    upperValue === "LGPD_REJECTED" ||
+    upperValue === "LGPD_NAO_CONCORDO" ||
+    upperValue === "LGPD_NÃO_CONCORDO"
+  ) {
+    return "REJECT";
+  }
+
+  return null;
+}
+
 export async function handlePortalFlowStep(flowCtx) {
   const {
     tenantId,
     traceId,
     phone,
     phoneNumberId,
+    raw,
+    upper,
     digits,
     state,
     MSG,
-    supportWa,
     services,
     runtime,
   } = flowCtx;
 
   if (state === "LGPD_CONSENT") {
-    if (digits === "1") {
+    const lgpdChoice = normalizeLgpdChoice({ raw, upper, digits });
+
+    if (lgpdChoice === "ACCEPT") {
       audit("LGPD_CONSENT_ACCEPTED", {
         tenantId,
         traceId,
@@ -53,7 +99,7 @@ export async function handlePortalFlowStep(flowCtx) {
       return true;
     }
 
-    if (digits === "2") {
+    if (lgpdChoice === "REJECT") {
       audit("LGPD_CONSENT_REFUSED", {
         tenantId,
         traceId,
@@ -95,6 +141,7 @@ export async function handlePortalFlowStep(flowCtx) {
   if (state === "BLOCK_EXISTING_INCOMPLETE") {
     const s = await getSession(tenantId, phone);
     const missing = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
+    const supportWa = resolveSupportWa(flowCtx);
 
     const prefill = buildSafeSupportPrefill({
       tenantId,
