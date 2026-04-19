@@ -52,7 +52,7 @@ app.disable("x-powered-by");
 app.use(
   express.json({
     limit: "128kb",
-    verify: (req, res, buf) => {
+    verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   })
@@ -65,7 +65,7 @@ app.set("trust proxy", 1);
 app.use(healthRouter);
 app.use(webhookRouter);
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   errLog("UNHANDLED_SERVER_ERROR", {
     route: req.originalUrl || req.url || null,
     method: req.method || null,
@@ -77,8 +77,8 @@ app.use((err, req, res, next) => {
   return res.sendStatus(500);
 });
 
-app.use((req, res) => {
-  res.sendStatus(404);
+app.use((_req, res) => {
+  return res.sendStatus(404);
 });
 
 export { debugLimiter };
