@@ -16,7 +16,10 @@ import {
   isProviderTemporaryUnavailableError,
 } from "../helpers/auditHelpers.js";
 import { finishWizardAndGoToDates } from "../helpers/bookingHelpers.js";
-import { clearTransientPortalData, sendAndSetState } from "../helpers/flowHelpers.js";
+import {
+  clearTransientPortalData,
+  sendAndSetState,
+} from "../helpers/flowHelpers.js";
 import { renderState } from "../helpers/stateRenderHelpers.js";
 import { tpl } from "../helpers/contentHelpers.js";
 import {
@@ -24,9 +27,212 @@ import {
   isValidName,
   isValidSimpleAddressField,
   nextWizardStateFromMissing,
+  formatMissing,
 } from "../helpers/patientHelpers.js";
 import { getPromptByWizardState } from "../helpers/portalHelpers.js";
-import { formatMissing } from "../helpers/patientHelpers.js";
+import { sendListMessage } from "../../whatsapp/sendListMessage.js";
+
+function getWizardSelectablePlans(runtime) {
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  const flowMap =
+    runtime?.content?.flows && typeof runtime.content.flows === "object"
+      ? runtime.content.flows
+      : {};
+
+  return plans.filter((plan) => {
+    const flowKey = String(plan?.flow || "").trim();
+    const flowType = String(flowMap?.[flowKey]?.type || "")
+      .trim()
+      .toUpperCase();
+
+    return flowType === "BOOKING" || flowType === "CONTINUE";
+  });
+}
+
+function getPlanById(runtime, planId) {
+  const normalizedPlanId = String(planId || "").trim();
+  if (!normalizedPlanId) return null;
+
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  return (
+    plans.find(
+      (plan) => String(plan?.id || "").trim() === normalizedPlanId
+    ) || null
+  );
+}
+
+function getLockedPlan(runtime, session) {
+  const bookingPlanId = String(session?.booking?.planId || "").trim();
+  if (bookingPlanId) {
+    const byBookingPlanId = getPlanById(runtime, bookingPlanId);
+    if (byBookingPlanId) return byBookingPlanId;
+  }
+
+  const portalPlanId = String(session?.portal?.form?.planId || "").trim();
+  if (portalPlanId) {
+    const byPortalPlanId = getPlanById(runtime, portalPlanId);
+    if (byPortalPlanId) return byPortalPlanId;
+  }
+
+  return null;
+}
+
+function getPractitionerConfig(plan) {
+  const practitionerMode = String(
+    plan?.booking?.practitionerMode || ""
+  ).trim().toUpperCase();
+
+  const practitionerIds = Array.isArray(plan?.booking?.practitionerIds)
+    ? plan.booking.practitionerIds
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    : [];
+
+  return {
+    practitionerMode,
+    practitionerIds,
+  };
+}
+
+function getFixedPractitionerId(plan) {
+  const { practitionerMode, practitionerIds } = getPractitionerConfig(plan);
+
+  if (practitionerMode !== "FIXED") return null;
+  if (practitionerIds.length !== 1) return null;
+
+  return practitionerIds[0];
+}
+
+function applySelectedPlanToSession(sess, plan) {
+  const { practitionerMode, practitionerIds } = getPractitionerConfig(plan);
+  const fixedPractitionerId = getFixedPractitionerId(plan);
+
+  sess.portal = sess.portal || {};
+  sess.portal.form = sess.portal.form || {};
+  sess.portal.form.planId = String(plan?.id || "").trim();
+  sess.portal.form.planKey = String(plan?.key || "").trim();
+
+  sess.booking = sess.booking || {};
+  sess.booking.planId = String(plan?.id || "").trim();
+  sess.booking.planKey = String(plan?.key || "").trim();
+  sess.booking.planFlow = String(plan?.flow || "").trim() || null;
+  sess.booking.planLabel = String(plan?.label || "").trim() || null;
+  sess.booking.planMessageKey =
+    String(plan?.messageKey || "").trim() || null;
+  sess.booking.planNextState =
+    String(plan?.nextState || "").trim() || null;
+
+  sess.booking.practitionerMode = practitionerMode || null;
+  sess.booking.practitionerIds = practitionerIds;
+
+  if (fixedPractitionerId) {
+    sess.booking.practitionerId = fixedPractitionerId;
+  } else {
+    delete sess.booking.practitionerId;
+  }
+}
+
+function buildPlanListSections(plans) {
+  const rows = plans.map((plan) => ({
+    id: `WZ_PLAN:${String(plan?.id || "").trim()}`,
+    title: String(plan?.label || "").trim() || String(plan?.key || "").trim(),
+    description: "",
+  }));
+
+  rows.push({
+    id: "WZ_PLAN:MENU_PRINCIPAL",
+    title: "Menu principal",
+    description: "",
+  });
+
+  const sections = [];
+  for (let i = 0; i < rows.length; i += 10) {
+    sections.push({
+      title: i === 0 ? "Planos" : `Planos ${Math.floor(i / 10) + 1}`,
+      rows: rows.slice(i, i + 10),
+    });
+  }
+
+  return sections;
+}
+
+async function renderWizardPlanSelection({
+  tenantId,
+  phone,
+  phoneNumberId,
+  runtime,
+  services,
+  MSG,
+  selectablePlans,
+}) {
+  if (selectablePlans.length <= 3) {
+    await services.sendButtons({
+      tenantId,
+      to: phone,
+      body:
+        runtime?.content?.messages?.planSelectionPrompt ||
+        MSG?.PLAN_SELECTION_PROMPT ||
+        "Selecione o plano para continuar:",
+      buttons: selectablePlans.map((plan) => ({
+        id: `WZ_PLAN:${String(plan?.id || "").trim()}`,
+        title:
+          String(plan?.label || "").trim() ||
+          String(plan?.key || "").trim(),
+      })),
+      phoneNumberId,
+    });
+    return;
+  }
+
+  await sendListMessage({
+    tenantId,
+    to: phone,
+    phoneNumberId,
+    body:
+      runtime?.content?.messages?.planSelectionPrompt ||
+      MSG?.PLAN_SELECTION_PROMPT ||
+      "Selecione o plano para continuar:",
+    buttonText:
+      runtime?.content?.messages?.bookingOptionsButton ||
+      runtime?.content?.messages?.lgpdButtonText ||
+      "Selecionar",
+    sections: buildPlanListSections(selectablePlans),
+  });
+}
+
+function resolveSelectedWizardPlan(runtime, raw, upper) {
+  const rawValue = String(raw || "").trim();
+  const upperValue = String(upper || "").trim();
+
+  const rawMatch = /^WZ_PLAN:(.+)$/.exec(rawValue);
+  if (rawMatch?.[1]) {
+    return getPlanById(runtime, rawMatch[1]);
+  }
+
+  const upperMatch = /^WZ_PLAN:(.+)$/.exec(upperValue);
+  if (upperMatch?.[1]) {
+    return getPlanById(runtime, upperMatch[1]);
+  }
+
+  return null;
+}
+
+function isWizardBackToMain(raw, upper) {
+  const rawValue = String(raw || "").trim();
+  const upperValue = String(upper || "").trim();
+
+  return (
+    rawValue === "WZ_PLAN:MENU_PRINCIPAL" ||
+    upperValue === "WZ_PLAN:MENU_PRINCIPAL" ||
+    upperValue === "MENU_PRINCIPAL"
+  );
+}
 
 export async function handlePatientRegistrationStep(flowCtx) {
   const {
@@ -39,7 +245,6 @@ export async function handlePatientRegistrationStep(flowCtx) {
     upper,
     state,
     MSG,
-    practitionerId,
     runtimeCtx,
     adapters,
     services,
@@ -80,6 +285,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
 
   if (state === "WZ_DTNASC") {
     const birthDateISO = parseBRDateToISO(raw);
+
     if (!birthDateISO) {
       await services.sendText({
         tenantId,
@@ -107,16 +313,26 @@ export async function handlePatientRegistrationStep(flowCtx) {
       ],
       phoneNumberId,
     });
+
     await setState(tenantId, phone, "WZ_SEXO");
     return true;
   }
 
   if (state === "WZ_SEXO") {
+    if (!["SX_M", "SX_F", "SX_NI"].includes(String(upper || "").trim())) {
+      await services.sendText({
+        tenantId,
+        to: phone,
+        body:
+          runtime?.content?.messages?.buttonsOnlyWarning ||
+          MSG?.BUTTONS_ONLY_WARNING,
+        phoneNumberId,
+      });
+      return true;
+    }
+
     const sCurrent = await getSession(tenantId, phone);
-    const lockedPlanKey =
-      sCurrent?.booking?.planKey ||
-      sCurrent?.portal?.form?.planKey ||
-      null;
+    const lockedPlan = getLockedPlan(runtime, sCurrent);
 
     await updateSession(tenantId, phone, (sess) => {
       sess.portal = sess.portal || {};
@@ -128,73 +344,59 @@ export async function handlePatientRegistrationStep(flowCtx) {
 
       sess.portal.form.mobilePhone = formatPhoneFromWA(phone);
 
-      if (lockedPlanKey === "PRIVATE" || lockedPlanKey === "INSURED") {
-        sess.portal.form.planKey = lockedPlanKey;
+      if (lockedPlan) {
+        applySelectedPlanToSession(sess, lockedPlan);
       }
     });
 
-    if (lockedPlanKey === "PRIVATE") {
-      await services.sendButtons({
+    if (lockedPlan) {
+      await sendAndSetState({
         tenantId,
-        to: phone,
-        body:
-          MSG.PLAN_SELECTION_PROMPT_PRIVATE ||
-          "Confirme como deseja seguir:",
-        buttons: [
-          {
-            id: "PLAN_PRIVATE_CONFIRMED",
-            title: MSG.PLAN_OPTION_PRIVATE || "Particular",
-          },
-          {
-            id: "MENU_PRINCIPAL",
-            title: MSG.MENU_BACK_TO_MAIN || "Menu principal",
-          },
-        ],
+        phone,
+        body: MSG.ASK_EMAIL,
+        state: "WZ_EMAIL",
         phoneNumberId,
       });
-      await setState(tenantId, phone, "WZ_PLANO");
       return true;
     }
 
-    if (lockedPlanKey === "INSURED") {
-      await services.sendButtons({
+    const selectablePlans = getWizardSelectablePlans(runtime);
+
+    if (!selectablePlans.length) {
+      throw new Error("TENANT_CONTENT_INVALID:wizard_plans_empty");
+    }
+
+    if (selectablePlans.length === 1) {
+      await updateSession(tenantId, phone, (sess) => {
+        applySelectedPlanToSession(sess, selectablePlans[0]);
+      });
+
+      await sendAndSetState({
         tenantId,
-        to: phone,
-        body:
-          MSG.PLAN_SELECTION_PROMPT_INSURED ||
-          "Selecione o convênio desejado:",
-        buttons: [
-          {
-            id: "PLAN_INSURED_ACCEPTED",
-            title: MSG.PLAN_OPTION_INSURED || "Convênio",
-          },
-          {
-            id: "MENU_PRINCIPAL",
-            title: MSG.MENU_BACK_TO_MAIN || "Menu principal",
-          },
-        ],
+        phone,
+        body: MSG.ASK_EMAIL,
+        state: "WZ_EMAIL",
         phoneNumberId,
       });
-      await setState(tenantId, phone, "WZ_PLANO");
       return true;
     }
 
-    await services.sendButtons({
+    await renderWizardPlanSelection({
       tenantId,
-      to: phone,
-      body: MSG.PLAN_SELECTION_PROMPT,
-      buttons: [
-        { id: "PLAN_PRIVATE", title: MSG.PLAN_OPTION_PRIVATE },
-        { id: "PLAN_INSURED", title: MSG.PLAN_OPTION_INSURED },
-      ],
+      phone,
       phoneNumberId,
+      runtime,
+      services,
+      MSG,
+      selectablePlans,
     });
+
     await setState(tenantId, phone, "WZ_PLANO");
     return true;
   }
 
   if (state === "WZ_PLANO") {
-    if (upper === "MENU_PRINCIPAL") {
+    if (isWizardBackToMain(raw, upper)) {
       await clearTransientPortalData(tenantId, phone);
       await setState(tenantId, phone, "MAIN");
       await renderState({
@@ -207,44 +409,24 @@ export async function handlePatientRegistrationStep(flowCtx) {
       return true;
     }
 
-    const sCurrent = await getSession(tenantId, phone);
-    const lockedPlanKey =
-      sCurrent?.booking?.planKey ||
-      sCurrent?.portal?.form?.planKey ||
-      null;
+    const selectedPlan = resolveSelectedWizardPlan(runtime, raw, upper);
 
-    let resolvedPlanKey = null;
-
-    if (
-      upper === "PLAN_PRIVATE" ||
-      upper === "PLAN_PRIVATE_CONFIRMED"
-    ) {
-      resolvedPlanKey = "PRIVATE";
-    } else if (
-      upper === "PLAN_INSURED" ||
-      upper === "PLAN_INSURED_ACCEPTED"
-    ) {
-      resolvedPlanKey = "INSURED";
-    }
-
-    if (!resolvedPlanKey && lockedPlanKey === "INSURED") {
-      resolvedPlanKey = "INSURED";
-    }
-
-    if (!resolvedPlanKey) {
+    if (!selectedPlan) {
       await services.sendText({
         tenantId,
         to: phone,
-        body: MSG.PICK_PLAN_BUTTONS_ONLY,
+        body:
+          runtime?.content?.messages?.pickPlanButtonsOnly ||
+          MSG?.PICK_PLAN_BUTTONS_ONLY,
         phoneNumberId,
       });
       return true;
     }
 
     await updateSession(tenantId, phone, (sess) => {
+      applySelectedPlanToSession(sess, selectedPlan);
       sess.portal = sess.portal || {};
       sess.portal.form = sess.portal.form || {};
-      sess.portal.form.planKey = resolvedPlanKey;
       sess.portal.form.mobilePhone = formatPhoneFromWA(phone);
     });
 
@@ -260,6 +442,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
 
   if (state === "WZ_EMAIL") {
     const email = cleanStr(raw);
+
     if (!isValidEmail(email)) {
       await services.sendText({
         tenantId,
@@ -288,6 +471,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
 
   if (state === "WZ_CEP") {
     const postalCode = normalizeCEP(raw);
+
     if (postalCode.length !== 8) {
       await services.sendText({
         tenantId,
@@ -576,9 +760,23 @@ export async function handlePatientRegistrationStep(flowCtx) {
 
     const sFinal = await getSession(tenantId, phone);
     const finalPlanKey =
-      sFinal?.portal?.form?.planKey ||
-      sFinal?.booking?.planKey ||
+      String(sFinal?.portal?.form?.planKey || "").trim() ||
+      String(sFinal?.booking?.planKey || "").trim() ||
       null;
+
+    const finalPlanId =
+      String(sFinal?.portal?.form?.planId || "").trim() ||
+      String(sFinal?.booking?.planId || "").trim() ||
+      null;
+
+    const finalPlan =
+      getPlanById(runtime, finalPlanId) ||
+      getWizardSelectablePlans(runtime).find(
+        (plan) => String(plan?.key || "").trim() === finalPlanKey
+      ) ||
+      null;
+
+    const finalPractitionerId = getFixedPractitionerId(finalPlan);
 
     await clearTransientPortalData(tenantId, phone);
 
@@ -591,7 +789,7 @@ export async function handlePatientRegistrationStep(flowCtx) {
       patientId: registeredPatientId,
       planKeyFromWizard: finalPlanKey,
       traceId,
-      practitionerId,
+      practitionerId: finalPractitionerId,
       MSG,
       services,
     });
