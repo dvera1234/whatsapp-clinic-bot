@@ -35,6 +35,9 @@ const debugLimiter = rateLimit({
 
 const app = express();
 
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
 configureInactivityHandler({ sendText });
 
 app.use(globalLimiter);
@@ -47,8 +50,6 @@ app.use(
   })
 );
 
-app.disable("x-powered-by");
-
 app.use(
   express.json({
     limit: "128kb",
@@ -58,9 +59,12 @@ app.use(
   })
 );
 
-app.use(express.urlencoded({ extended: false, limit: "64kb" }));
-
-app.set("trust proxy", 1);
+app.use(
+  express.urlencoded({
+    extended: false,
+    limit: "64kb",
+  })
+);
 
 app.use(healthRouter);
 app.use(webhookRouter);
