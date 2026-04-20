@@ -215,6 +215,21 @@ function validatePlanBooking(plan, basePath, errors, practitionerIdSet) {
   pushError(errors, !isObject(plan.booking), `${basePath}.booking`);
   if (!isObject(plan.booking)) return;
 
+  const practitionerMode = normalizeString(plan.booking.practitionerMode);
+  const allowedModes = new Set(["FIXED", "USER_SELECT", "AUTO"]);
+
+  pushError(
+    errors,
+    !practitionerMode,
+    `${basePath}.booking.practitionerMode`
+  );
+
+  pushError(
+    errors,
+    !!practitionerMode && !allowedModes.has(practitionerMode),
+    `${basePath}.booking.practitionerMode_invalid`
+  );
+
   if ("practitionerIds" in plan.booking) {
     pushError(
       errors,
@@ -251,20 +266,21 @@ function validatePlanBooking(plan, basePath, errors, practitionerIdSet) {
     }
   }
 
-  if ("practitionerMode" in plan.booking) {
-    const practitionerMode = normalizeString(plan.booking.practitionerMode);
-    const allowedModes = new Set(["FIXED", "USER_SELECT", "AUTO"]);
-
+  if (practitionerMode === "FIXED") {
     pushError(
       errors,
-      !practitionerMode,
-      `${basePath}.booking.practitionerMode`
+      !Array.isArray(plan.booking.practitionerIds) ||
+        plan.booking.practitionerIds.length !== 1,
+      `${basePath}.booking.practitionerIds_fixed_invalid`
     );
+  }
 
+  if (practitionerMode === "USER_SELECT") {
     pushError(
       errors,
-      !!practitionerMode && !allowedModes.has(practitionerMode),
-      `${basePath}.booking.practitionerMode_invalid`
+      !Array.isArray(plan.booking.practitionerIds) ||
+        plan.booking.practitionerIds.length === 0,
+      `${basePath}.booking.practitionerIds_user_select_required`
     );
   }
 }
