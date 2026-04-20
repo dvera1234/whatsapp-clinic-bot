@@ -1,38 +1,56 @@
 import { normalizeHumanText } from "../../utils/validators.js";
+import { getWizardFieldMap } from "./contentHelpers.js";
+
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
 
 export function formatMissing(list) {
-  return list.map((x) => `• ${x}`).join("\n");
+  return (Array.isArray(list) ? list : [])
+    .map((item) => `• ${String(item ?? "").trim()}`)
+    .filter((item) => item !== "•")
+    .join("\n");
 }
 
 export function formatPhoneFromWA(phone) {
   return String(phone || "").replace(/\D+/g, "");
 }
 
-export function isValidName(s) {
-  const v = normalizeHumanText(s, 120);
+export function isValidName(value) {
+  const normalized = normalizeHumanText(value, 120);
+
   return (
-    v.length >= 5 &&
-    /^[A-Za-zÀ-ÿ'´`.-]+(?:\s+[A-Za-zÀ-ÿ'´`.-]+)+$/.test(v)
+    normalized.length >= 5 &&
+    /^[A-Za-zÀ-ÿ'´`.-]+(?:\s+[A-Za-zÀ-ÿ'´`.-]+)+$/.test(normalized)
   );
 }
 
-export function isValidSimpleAddressField(s, min = 2, max = 120) {
-  const v = normalizeHumanText(s, max);
-  return v.length >= min;
+export function isValidSimpleAddressField(value, min = 2, max = 120) {
+  const normalized = normalizeHumanText(value, max);
+  return normalized.length >= min;
 }
 
-export function nextWizardStateFromMissing(missingList) {
-  const m = new Set((missingList || []).map((x) => String(x).toLowerCase()));
+export function nextWizardStateFromMissing(runtime, missingList) {
+  const fieldStateMap = getWizardFieldMap(runtime);
 
-  if (m.has("nome completo")) return "WZ_NOME";
-  if (m.has("data de nascimento")) return "WZ_DTNASC";
-  if (m.has("e-mail")) return "WZ_EMAIL";
-  if (m.has("cep")) return "WZ_CEP";
-  if (m.has("endereço")) return "WZ_ENDERECO";
-  if (m.has("número")) return "WZ_NUMERO";
-  if (m.has("bairro")) return "WZ_BAIRRO";
-  if (m.has("cidade")) return "WZ_CIDADE";
-  if (m.has("estado (UF)")) return "WZ_UF";
+  for (const rawKey of Array.isArray(missingList) ? missingList : []) {
+    const missingKey = readString(rawKey);
+    if (!missingKey) continue;
 
-  return "WZ_NOME";
+    const targetState = readString(fieldStateMap[missingKey]);
+    if (targetState) {
+      return targetState;
+    }
+  }
+
+  const fallbackState =
+    readString(fieldStateMap.nomeCompleto) ||
+    readString(fieldStateMap.nome) ||
+    readString(fieldStateMap.defaultState);
+
+  if (!fallbackState) {
+    throw new Error("TENANT_CONTENT_MISSING:wizard.fieldStateMap.defaultState");
+  }
+
+  return fallbackState;
 }
