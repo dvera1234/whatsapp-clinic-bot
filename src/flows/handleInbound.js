@@ -42,7 +42,7 @@ import { registerDefaultActions } from "./actions/registerActions.js";
 
 registerDefaultActions();
 
-const STEP_REGISTRY = {
+const STEP_REGISTRY = Object.freeze({
   mainMenu: {
     handler: handleMainMenuStep,
     capability: null,
@@ -75,7 +75,7 @@ const STEP_REGISTRY = {
     handler: handleSupportFlowStep,
     capability: null,
   },
-};
+});
 
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -108,7 +108,7 @@ function normalizePractitioners(runtime) {
   if (!Array.isArray(runtime?.practitioners)) return [];
 
   return runtime.practitioners
-    .filter((item) => isObject(item))
+    .filter((item) => isObject(item) && item.active === true)
     .map((item) => ({
       practitionerId: readString(item.practitionerId),
       practitionerKey: readString(item.practitionerKey),
@@ -158,6 +158,8 @@ function resolvePlanMeta(plan) {
       planLabel: null,
       planMessageKey: null,
       planNextState: null,
+      practitionerMode: null,
+      practitionerIds: [],
     };
   }
 
@@ -171,16 +173,15 @@ function resolvePlanMeta(plan) {
     planLabel: readString(plan.label) || null,
     planMessageKey: readString(plan.messageKey) || null,
     planNextState: readString(plan.nextState) || null,
+    practitionerMode: readString(plan?.booking?.practitionerMode) || null,
+    practitionerIds: readStringArray(plan?.booking?.practitionerIds),
   };
 }
 
-function resolveAllowedPractitioners({ runtime, plan }) {
-  const practitioners = normalizePractitioners(runtime);
-  if (!practitioners.length) return [];
+function resolveAllowedPractitioners({ practitioners, practitionerIds }) {
+  if (!Array.isArray(practitioners) || !practitioners.length) return [];
 
-  const practitionerIds = readStringArray(plan?.booking?.practitionerIds);
-
-  if (!practitionerIds.length) {
+  if (!Array.isArray(practitionerIds) || !practitionerIds.length) {
     return practitioners;
   }
 
@@ -190,7 +191,7 @@ function resolveAllowedPractitioners({ runtime, plan }) {
 
 function resolveSelectedPractitioner({
   session,
-  plan,
+  practitionerMode,
   allowedPractitioners,
 }) {
   const booking = isObject(session?.booking) ? session.booking : {};
@@ -203,18 +204,16 @@ function resolveSelectedPractitioner({
     if (bySession) return bySession;
   }
 
-  const practitionerMode = readString(plan?.booking?.practitionerMode);
+  if (practitionerMode === "FIXED" && allowedPractitioners.length === 1) {
+    return allowedPractitioners[0];
+  }
 
   if (practitionerMode === "USER_SELECT") {
     return null;
   }
 
-  if (practitionerMode === "FIXED" && allowedPractitioners.length === 1) {
-    return allowedPractitioners[0];
-  }
-
-  if (practitionerMode === "AUTO" && allowedPractitioners.length === 1) {
-    return allowedPractitioners[0];
+  if (practitionerMode === "AUTO") {
+    return null;
   }
 
   return null;
@@ -482,12 +481,13 @@ async function handleInbound({
 
   const practitioners = normalizePractitioners(runtime);
   const allowedPractitioners = resolveAllowedPractitioners({
-    runtime,
-    plan,
+    practitioners,
+    practitionerIds: planMeta.practitionerIds,
   });
+
   const selectedPractitioner = resolveSelectedPractitioner({
     session,
-    plan,
+    practitionerMode: planMeta.practitionerMode,
     allowedPractitioners,
   });
 
@@ -540,6 +540,7 @@ async function handleInbound({
     planMessageKey: planMeta.planMessageKey,
     planNextState: planMeta.planNextState,
 
+    practitionerMode: planMeta.practitionerMode,
     flowType,
 
     practitioners,
@@ -576,6 +577,7 @@ async function handleInbound({
       planLabel: null,
       planMessageKey: null,
       planNextState: null,
+      practitionerMode: null,
       flowType: "",
       allowedPractitioners: practitioners,
       selectedPractitioner: null,
