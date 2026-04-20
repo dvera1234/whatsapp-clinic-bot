@@ -2,39 +2,85 @@ import { assertSchedulingAdapter } from "../contracts/schedulingAdapter.contract
 import { createVersatilisSchedulingAdapter } from "../providers/versatilis/scheduling/versatilisSchedulingAdapter.js";
 import { wrapAdapterWithResilience } from "../../resilience/wrapAdapterWithResilience.js";
 
+const CAPABILITY = "booking";
+
+const SCHEDULING_ADAPTER_BUILDERS = Object.freeze({
+  versatilis: createVersatilisSchedulingAdapter,
+});
+
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function ensureTenantId(tenantId) {
+  const normalizedTenantId = readString(tenantId);
+
+  if (!normalizedTenantId) {
+    throw new Error(`FACTORY_MISSING_TENANT_ID:${CAPABILITY}`);
+  }
+
+  return normalizedTenantId;
+}
+
+function ensureRuntime(runtime) {
+  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) {
+    throw new Error(`FACTORY_INVALID_RUNTIME:${CAPABILITY}`);
+  }
+
+  return runtime;
+}
+
+function ensureProvider(runtime) {
+  const provider = readString(runtime?.providers?.[CAPABILITY]);
+
+  if (!provider) {
+    throw new Error(`FACTORY_MISSING_PROVIDER:${CAPABILITY}`);
+  }
+
+  return provider;
+}
+
+function ensureIntegration(runtime) {
+  const integration = runtime?.integrations?.[CAPABILITY];
+
+  if (!integration || typeof integration !== "object" || Array.isArray(integration)) {
+    throw new Error(`FACTORY_MISSING_INTEGRATION:${CAPABILITY}`);
+  }
+
+  return integration;
+}
+
+function resolveBuilder(provider) {
+  const builder = SCHEDULING_ADAPTER_BUILDERS[provider];
+
+  if (typeof builder !== "function") {
+    throw new Error(`FACTORY_UNSUPPORTED_PROVIDER:${CAPABILITY}:${provider}`);
+  }
+
+  return builder;
+}
+
 function createSchedulingAdapter({ tenantId, runtime } = {}) {
-  if (!tenantId) {
-    throw new Error("Missing tenantId for scheduling adapter");
-  }
+  const safeTenantId = ensureTenantId(tenantId);
+  const safeRuntime = ensureRuntime(runtime);
+  const provider = ensureProvider(safeRuntime);
 
-  if (!runtime || typeof runtime !== "object") {
-    throw new Error("Missing runtime for scheduling adapter");
-  }
+  ensureIntegration(safeRuntime);
 
-  const providerKey = String(runtime?.providers?.booking || "").trim();
+  const builder = resolveBuilder(provider);
 
-  if (!providerKey) {
-    throw new Error("Missing provider: providers.booking");
-  }
+  const adapter = builder({
+    tenantId: safeTenantId,
+    runtime: safeRuntime,
+  });
 
-  let adapter;
-
-  switch (providerKey) {
-    case "versatilis":
-      adapter = createVersatilisSchedulingAdapter({ tenantId, runtime });
-      break;
-
-    default:
-      throw new Error(`Unsupported booking provider: ${providerKey}`);
-  }
-
-  assertSchedulingAdapter(adapter);
+  const validatedAdapter = assertSchedulingAdapter(adapter);
 
   return wrapAdapterWithResilience({
-    adapter,
-    tenantId,
-    runtime,
-    capability: "booking",
+    adapter: validatedAdapter,
+    tenantId: safeTenantId,
+    runtime: safeRuntime,
+    capability: CAPABILITY,
   });
 }
 
