@@ -5,30 +5,30 @@ function readString(value) {
   return String(value ?? "").trim();
 }
 
-export async function resolveTenant(channelId) {
-  const safeChannelId = readString(channelId);
+export async function resolveTenant(phoneNumberId) {
+  const safePhoneNumberId = readString(phoneNumberId);
 
-  if (!safeChannelId) {
+  if (!safePhoneNumberId) {
     return {
       ok: false,
-      reason: "CHANNEL_ID_MISSING",
+      reason: "PHONE_NUMBER_ID_MISSING",
       tenantId: null,
       runtime: null,
-      channelId: "",
+      phoneNumberId: "",
       missing: [],
       invalid: [],
     };
   }
 
-  const tenantConfig = await loadTenantConfigByPhoneNumberId(safeChannelId);
+  const tenantConfig = await loadTenantConfigByPhoneNumberId(safePhoneNumberId);
 
   if (!tenantConfig) {
     return {
       ok: false,
-      reason: "TENANT_NOT_FOUND_FOR_CHANNEL_ID",
+      reason: "TENANT_NOT_FOUND_FOR_PHONE_NUMBER_ID",
       tenantId: null,
       runtime: null,
-      channelId: safeChannelId,
+      phoneNumberId: safePhoneNumberId,
       missing: [],
       invalid: [],
     };
@@ -42,7 +42,7 @@ export async function resolveTenant(channelId) {
       reason: "TENANT_RUNTIME_INVALID",
       tenantId: tenantConfig?.tenantId || null,
       runtime: null,
-      channelId: safeChannelId,
+      phoneNumberId: safePhoneNumberId,
       missing: Array.isArray(built?.missing) ? built.missing : [],
       invalid: Array.isArray(built?.invalid) ? built.invalid : [],
     };
@@ -53,7 +53,7 @@ export async function resolveTenant(channelId) {
     reason: null,
     tenantId: built.value.tenantId,
     runtime: built.value,
-    channelId: safeChannelId,
+    phoneNumberId: safePhoneNumberId,
     missing: [],
     invalid: [],
   };
