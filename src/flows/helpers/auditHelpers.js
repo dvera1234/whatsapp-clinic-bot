@@ -2,27 +2,66 @@ import { setState } from "../../session/redisSession.js";
 import { audit } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
 
+const TEMPORARY_PROVIDER_ERROR_CODES = new Set([
+  "PROVIDER_CIRCUIT_OPEN",
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+const TEMPORARY_PROVIDER_HTTP_STATUSES = new Set([429, 502, 503, 504]);
+
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readErrorCode(err) {
+  return readString(err?.code).toUpperCase();
+}
+
+function readHttpStatus(err) {
+  const candidates = [
+    err?.status,
+    err?.statusCode,
+    err?.httpStatus,
+    err?.response?.status,
+  ];
+
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+
+  return null;
+}
+
+function readErrorMessage(err) {
+  return readString(err?.message || err || "unknown_error");
+}
+
 export function isProviderTemporaryUnavailableError(err) {
-  if (!err) return false;
+  if (!err) {
+    return false;
+  }
 
-  if (err?.code === "PROVIDER_CIRCUIT_OPEN") return true;
+  const errorCode = readErrorCode(err);
+  if (errorCode && TEMPORARY_PROVIDER_ERROR_CODES.has(errorCode)) {
+    return true;
+  }
 
-  const msg = String(err?.message || err).toLowerCase();
+  const httpStatus = readHttpStatus(err);
+  if (httpStatus != null && TEMPORARY_PROVIDER_HTTP_STATUSES.has(httpStatus)) {
+    return true;
+  }
 
-  return (
-    msg.includes("provider temporarily unavailable") ||
-    msg.includes("timeout") ||
-    msg.includes("timed out") ||
-    msg.includes("econnreset") ||
-    msg.includes("econnrefused") ||
-    msg.includes("enotfound") ||
-    msg.includes("socket hang up") ||
-    msg.includes("network") ||
-    msg.includes("fetch failed") ||
-    msg.includes("503") ||
-    msg.includes("502") ||
-    msg.includes("504")
-  );
+  return false;
 }
 
 export async function handleProviderTemporaryUnavailable({
@@ -36,24 +75,37 @@ export async function handleProviderTemporaryUnavailable({
   nextState = "MAIN",
   services,
 }) {
+  const patientMessage = readString(MSG?.providerUnavailable);
+
+  if (!patientMessage) {
+    throw new Error("TENANT_CONTENT_MISSING:messages.providerUnavailable");
+  }
+
   audit("PROVIDER_TEMPORARILY_UNAVAILABLE", {
     tenantId,
     traceId,
     tracePhone: maskPhone(phone),
-    capability,
-    errorCode: err?.code || null,
-    error: String(err?.message || err || "unknown_error"),
+    capability: readString(capability) || null,
+    errorCode: readErrorCode(err) || null,
+    httpStatus: readHttpStatus(err),
+    error: readErrorMessage(err),
     patientMessageSent: true,
+    nextState: readString(nextState) || null,
   });
 
-  await services.sendText({
+  const sent = await services.sendText({
     tenantId,
     to: phone,
-    body: MSG.PROVIDER_UNAVAILABLE,
+    body: patientMessage,
     phoneNumberId,
   });
 
-  if (nextState) {
-    await setState(tenantId, phone, nextState);
+  if (!sent) {
+    throw new Error("WHATSAPP_SEND_FAILED");
+  }
+
+  const normalizedNextState = readString(nextState);
+  if (normalizedNextState) {
+    await setState(tenantId, phone, normalizedNextState);
   }
 }
