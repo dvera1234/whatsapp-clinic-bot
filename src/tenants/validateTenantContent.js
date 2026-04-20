@@ -6,6 +6,10 @@ function isNonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "";
 }
 
+function normalizeString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function pushError(errors, condition, fieldName) {
   if (condition) errors.push(fieldName);
 }
@@ -16,7 +20,7 @@ function buildPractitionerIdSet(practitioners = []) {
   if (!Array.isArray(practitioners)) return set;
 
   for (const practitioner of practitioners) {
-    const practitionerId = String(practitioner?.practitionerId || "").trim();
+    const practitionerId = normalizeString(practitioner?.practitionerId);
     if (practitionerId) set.add(practitionerId);
   }
 
@@ -29,7 +33,8 @@ function buildMessageKeySet(messages = {}) {
   if (!isObject(messages)) return keys;
 
   for (const key of Object.keys(messages)) {
-    if (isNonEmptyString(key)) keys.add(key.trim());
+    const normalizedKey = normalizeString(key);
+    if (normalizedKey) keys.add(normalizedKey);
   }
 
   return keys;
@@ -41,8 +46,21 @@ function buildPlanIdSet(plans = []) {
   if (!Array.isArray(plans)) return set;
 
   for (const plan of plans) {
-    const planId = String(plan?.id || "").trim();
+    const planId = normalizeString(plan?.id);
     if (planId) set.add(planId);
+  }
+
+  return set;
+}
+
+function buildFlowKeySet(flows = {}) {
+  const set = new Set();
+
+  if (!isObject(flows)) return set;
+
+  for (const key of Object.keys(flows)) {
+    const normalizedKey = normalizeString(key);
+    if (normalizedKey) set.add(normalizedKey);
   }
 
   return set;
@@ -56,7 +74,7 @@ function validateMenuOption(option, optionPath, errors, context) {
   pushError(errors, !isNonEmptyString(option.label), `${optionPath}.label`);
   pushError(errors, !isNonEmptyString(option.action), `${optionPath}.action`);
 
-  const action = String(option.action || "").trim();
+  const action = normalizeString(option.action);
   const allowedActions = new Set([
     "OPEN_SUBMENU",
     "SHOW_MESSAGE",
@@ -74,7 +92,7 @@ function validateMenuOption(option, optionPath, errors, context) {
   );
 
   if (action === "OPEN_SUBMENU") {
-    const target = String(option.target || "").trim();
+    const target = normalizeString(option.target);
 
     pushError(errors, !target, `${optionPath}.target`);
     if (target) {
@@ -87,7 +105,7 @@ function validateMenuOption(option, optionPath, errors, context) {
   }
 
   if (action === "SHOW_MESSAGE") {
-    const messageKey = String(option.messageKey || "").trim();
+    const messageKey = normalizeString(option.messageKey);
 
     pushError(errors, !messageKey, `${optionPath}.messageKey`);
     if (messageKey) {
@@ -100,7 +118,7 @@ function validateMenuOption(option, optionPath, errors, context) {
   }
 
   if (action === "SELECT_PLAN") {
-    const planId = String(option.planId || "").trim();
+    const planId = normalizeString(option.planId);
 
     pushError(errors, !planId, `${optionPath}.planId`);
     if (planId) {
@@ -210,7 +228,7 @@ function validatePlanBooking(plan, basePath, errors, practitionerIdSet) {
 
       plan.booking.practitionerIds.forEach((practitionerId, index) => {
         const entryPath = `${basePath}.booking.practitionerIds[${index}]`;
-        const safePractitionerId = String(practitionerId || "").trim();
+        const safePractitionerId = normalizeString(practitionerId);
 
         pushError(errors, !safePractitionerId, entryPath);
 
@@ -234,7 +252,7 @@ function validatePlanBooking(plan, basePath, errors, practitionerIdSet) {
   }
 
   if ("practitionerMode" in plan.booking) {
-    const practitionerMode = String(plan.booking.practitionerMode || "").trim();
+    const practitionerMode = normalizeString(plan.booking.practitionerMode);
     const allowedModes = new Set(["FIXED", "USER_SELECT", "AUTO"]);
 
     pushError(
@@ -264,7 +282,7 @@ function validatePlanMappings(plan, basePath, errors) {
       errors,
       !(
         (typeof externalId === "number" && Number.isFinite(externalId)) ||
-        (typeof externalId === "string" && externalId.trim() !== "")
+        (typeof externalId === "string" && normalizeString(externalId) !== "")
       ),
       `${basePath}.mappings.externalId`
     );
@@ -277,7 +295,7 @@ function validateFlow(flowPath, flowValue, errors, context) {
 
   pushError(errors, !isNonEmptyString(flowValue.type), `${flowPath}.type`);
 
-  const normalizedType = String(flowValue.type || "").trim().toUpperCase();
+  const normalizedType = normalizeString(flowValue.type).toUpperCase();
   const allowedFlowTypes = new Set([
     "CONTINUE",
     "END",
@@ -293,8 +311,21 @@ function validateFlow(flowPath, flowValue, errors, context) {
     `${flowPath}.type_invalid`
   );
 
+  if ("handler" in flowValue) {
+    const handler = normalizeString(flowValue.handler);
+
+    pushError(errors, !handler, `${flowPath}.handler`);
+    if (handler) {
+      pushError(
+        errors,
+        !context.allowedHandlerNames.has(handler),
+        `${flowPath}.handler_invalid`
+      );
+    }
+  }
+
   if ("messageKey" in flowValue) {
-    const messageKey = String(flowValue.messageKey || "").trim();
+    const messageKey = normalizeString(flowValue.messageKey);
 
     pushError(errors, !messageKey, `${flowPath}.messageKey`);
     if (messageKey) {
@@ -307,7 +338,7 @@ function validateFlow(flowPath, flowValue, errors, context) {
   }
 
   if (normalizedType === "OPEN_SUBMENU") {
-    const target = String(flowValue.target || "").trim();
+    const target = normalizeString(flowValue.target);
 
     pushError(errors, !target, `${flowPath}.target`);
     if (target) {
@@ -334,9 +365,9 @@ function validatePlan(plan, index, flowMap, errors, context) {
   pushError(errors, !isObject(plan), basePath);
   if (!isObject(plan)) return;
 
-  const planId = String(plan.id || "").trim();
-  const planKey = String(plan.key || "").trim();
-  const planFlow = String(plan.flow || "").trim();
+  const planId = normalizeString(plan.id);
+  const planKey = normalizeString(plan.key);
+  const planFlow = normalizeString(plan.flow);
 
   pushError(errors, !planId, `${basePath}.id`);
   pushError(errors, !planKey, `${basePath}.key`);
@@ -349,11 +380,7 @@ function validatePlan(plan, index, flowMap, errors, context) {
   }
 
   if (planKey) {
-    pushError(
-      errors,
-      context.planKeys.has(planKey),
-      `${basePath}.key_duplicate`
-    );
+    pushError(errors, context.planKeys.has(planKey), `${basePath}.key_duplicate`);
     context.planKeys.add(planKey);
   }
 
@@ -370,7 +397,7 @@ function validatePlan(plan, index, flowMap, errors, context) {
   }
 
   if ("messageKey" in plan) {
-    const messageKey = String(plan.messageKey || "").trim();
+    const messageKey = normalizeString(plan.messageKey);
 
     pushError(errors, !messageKey, `${basePath}.messageKey`);
     if (messageKey) {
@@ -385,6 +412,91 @@ function validatePlan(plan, index, flowMap, errors, context) {
   validatePlanRules(plan, basePath, errors);
   validatePlanBooking(plan, basePath, errors, context.practitionerIdSet);
   validatePlanMappings(plan, basePath, errors);
+}
+
+function validateDispatchHandlerName(handlerName, path, errors, context) {
+  const safeHandlerName = normalizeString(handlerName);
+
+  pushError(errors, !safeHandlerName, path);
+  if (!safeHandlerName) return;
+
+  pushError(
+    errors,
+    !context.allowedHandlerNames.has(safeHandlerName),
+    `${path}_invalid`
+  );
+}
+
+function validateDispatchMap(mapValue, path, errors, context) {
+  pushError(errors, !isObject(mapValue), path);
+  if (!isObject(mapValue)) return;
+
+  for (const [rawKey, rawHandlerName] of Object.entries(mapValue)) {
+    const safeKey = normalizeString(rawKey);
+    const entryPath = `${path}.${rawKey}`;
+
+    pushError(errors, !safeKey, `${entryPath}_key`);
+    validateDispatchHandlerName(rawHandlerName, entryPath, errors, context);
+  }
+}
+
+function validateDispatch(dispatch, errors, context) {
+  pushError(errors, !isObject(dispatch), "dispatch");
+  if (!isObject(dispatch)) return;
+
+  validateDispatchMap(
+    dispatch.stateHandlers,
+    "dispatch.stateHandlers",
+    errors,
+    context
+  );
+
+  validateDispatchMap(
+    dispatch.statePrefixes,
+    "dispatch.statePrefixes",
+    errors,
+    context
+  );
+
+  pushError(
+    errors,
+    !isObject(dispatch.flowTypeHandlers),
+    "dispatch.flowTypeHandlers"
+  );
+
+  if (isObject(dispatch.flowTypeHandlers)) {
+    const allowedFlowTypes = new Set([
+      "CONTINUE",
+      "END",
+      "INFO_ONLY",
+      "BOOKING",
+      "OPEN_SUBMENU",
+      "DIRECT_BOOKING",
+    ]);
+
+    for (const [rawFlowType, rawHandlerName] of Object.entries(
+      dispatch.flowTypeHandlers
+    )) {
+      const safeFlowType = normalizeString(rawFlowType).toUpperCase();
+      const entryPath = `dispatch.flowTypeHandlers.${rawFlowType}`;
+
+      pushError(errors, !safeFlowType, `${entryPath}_key`);
+      pushError(
+        errors,
+        !!safeFlowType && !allowedFlowTypes.has(safeFlowType),
+        `${entryPath}_key_invalid`
+      );
+
+      validateDispatchHandlerName(rawHandlerName, entryPath, errors, context);
+    }
+  }
+
+  validateDispatchHandlerName(
+    dispatch.defaultHandler,
+    "dispatch.defaultHandler",
+    errors,
+    context
+  );
 }
 
 export function validateTenantContent(content = {}, context = {}) {
@@ -403,12 +515,26 @@ export function validateTenantContent(content = {}, context = {}) {
     isObject(content.submenus) ? Object.keys(content.submenus) : []
   );
   const planIdSet = buildPlanIdSet(content.plans);
+  const flowKeySet = buildFlowKeySet(content.flows);
+
+  const allowedHandlerNames = new Set([
+    "mainMenu",
+    "planSelection",
+    "portalFlow",
+    "patientIdentification",
+    "patientRegistration",
+    "slotSelection",
+    "bookingConfirmation",
+    "support",
+  ]);
 
   const validationContext = {
     practitionerIdSet,
     messageKeys,
     submenuKeys,
     planIdSet,
+    flowKeySet,
+    allowedHandlerNames,
     planIds: new Set(),
     planKeys: new Set(),
   };
@@ -427,6 +553,8 @@ export function validateTenantContent(content = {}, context = {}) {
       validateFlow(`flows.${flowKey}`, flowValue, errors, validationContext);
     }
   }
+
+  validateDispatch(content.dispatch, errors, validationContext);
 
   pushError(errors, !isObject(content.messages), "messages");
 
