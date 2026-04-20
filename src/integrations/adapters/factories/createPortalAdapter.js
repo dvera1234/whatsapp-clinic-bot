@@ -2,39 +2,85 @@ import { assertPortalAdapter } from "../contracts/portalAdapter.contract.js";
 import { createVersatilisPortalAdapter } from "../providers/versatilis/portal/versatilisPortalAdapter.js";
 import { wrapAdapterWithResilience } from "../../resilience/wrapAdapterWithResilience.js";
 
+const CAPABILITY = "access";
+
+const PORTAL_ADAPTER_BUILDERS = Object.freeze({
+  versatilis: createVersatilisPortalAdapter,
+});
+
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function ensureTenantId(tenantId) {
+  const normalizedTenantId = readString(tenantId);
+
+  if (!normalizedTenantId) {
+    throw new Error(`FACTORY_MISSING_TENANT_ID:${CAPABILITY}`);
+  }
+
+  return normalizedTenantId;
+}
+
+function ensureRuntime(runtime) {
+  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) {
+    throw new Error(`FACTORY_INVALID_RUNTIME:${CAPABILITY}`);
+  }
+
+  return runtime;
+}
+
+function ensureProvider(runtime) {
+  const provider = readString(runtime?.providers?.[CAPABILITY]);
+
+  if (!provider) {
+    throw new Error(`FACTORY_MISSING_PROVIDER:${CAPABILITY}`);
+  }
+
+  return provider;
+}
+
+function ensureIntegration(runtime) {
+  const integration = runtime?.integrations?.[CAPABILITY];
+
+  if (!integration || typeof integration !== "object" || Array.isArray(integration)) {
+    throw new Error(`FACTORY_MISSING_INTEGRATION:${CAPABILITY}`);
+  }
+
+  return integration;
+}
+
+function resolveBuilder(provider) {
+  const builder = PORTAL_ADAPTER_BUILDERS[provider];
+
+  if (typeof builder !== "function") {
+    throw new Error(`FACTORY_UNSUPPORTED_PROVIDER:${CAPABILITY}:${provider}`);
+  }
+
+  return builder;
+}
+
 function createPortalAdapter({ tenantId, runtime } = {}) {
-  if (!tenantId) {
-    throw new Error("Missing tenantId for portal adapter");
-  }
+  const safeTenantId = ensureTenantId(tenantId);
+  const safeRuntime = ensureRuntime(runtime);
+  const provider = ensureProvider(safeRuntime);
 
-  if (!runtime || typeof runtime !== "object") {
-    throw new Error("Missing runtime for portal adapter");
-  }
+  ensureIntegration(safeRuntime);
 
-  const providerKey = String(runtime?.providers?.access || "").trim();
+  const builder = resolveBuilder(provider);
 
-  if (!providerKey) {
-    throw new Error("Missing provider: providers.access");
-  }
+  const adapter = builder({
+    tenantId: safeTenantId,
+    runtime: safeRuntime,
+  });
 
-  let adapter;
-
-  switch (providerKey) {
-    case "versatilis":
-      adapter = createVersatilisPortalAdapter({ tenantId, runtime });
-      break;
-
-    default:
-      throw new Error(`Unsupported access provider: ${providerKey}`);
-  }
-
-  assertPortalAdapter(adapter);
+  const validatedAdapter = assertPortalAdapter(adapter);
 
   return wrapAdapterWithResilience({
-    adapter,
-    tenantId,
-    runtime,
-    capability: "access",
+    adapter: validatedAdapter,
+    tenantId: safeTenantId,
+    runtime: safeRuntime,
+    capability: CAPABILITY,
   });
 }
 
