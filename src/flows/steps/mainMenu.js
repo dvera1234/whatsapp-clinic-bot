@@ -5,12 +5,21 @@ function readString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function isObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 function getRootMenu(runtime) {
-  return runtime?.content?.menu || null;
+  return isObject(runtime?.content?.menu) ? runtime.content.menu : null;
 }
 
 function getSubmenu(runtime, submenuKey) {
-  return runtime?.content?.submenus?.[submenuKey] || null;
+  const key = readString(submenuKey);
+  if (!key) return null;
+
+  return isObject(runtime?.content?.submenus?.[key])
+    ? runtime.content.submenus[key]
+    : null;
 }
 
 function parseSubmenuState(state) {
@@ -39,10 +48,10 @@ function buildSections(menuLike, fieldName) {
   return [
     {
       title: sectionTitle,
-      rows: options.map((opt) => ({
-        id: String(opt.id),
-        title: readString(opt.label) || String(opt.id),
-        description: readString(opt.description),
+      rows: options.map((option) => ({
+        id: String(option.id),
+        title: readString(option.label) || String(option.id),
+        description: readString(option.description),
       })),
     },
   ];
@@ -73,7 +82,7 @@ async function showMenu({
 
 function findSelectedOption(options, raw) {
   const selectedId = String(raw ?? "");
-  return options.find((opt) => String(opt.id) === selectedId) || null;
+  return options.find((option) => String(option.id) === selectedId) || null;
 }
 
 export async function handleMainMenuStep(flowCtx) {
@@ -81,17 +90,18 @@ export async function handleMainMenuStep(flowCtx) {
 
   if (state === "MAIN") {
     const menu = getRootMenu(runtime);
+
     if (!menu) {
       throw new Error("TENANT_CONTENT_INVALID:menu_missing");
     }
 
     const options = ensureOptions(menu, "menu");
-    const selected = findSelectedOption(options, raw);
+    const selectedOption = findSelectedOption(options, raw);
 
-    if (selected) {
-      return await dispatchAction(selected.action, {
+    if (selectedOption) {
+      return await dispatchAction(selectedOption.action, {
         ...flowCtx,
-        menuOption: selected,
+        menuOption: selectedOption,
       });
     }
 
@@ -117,12 +127,12 @@ export async function handleMainMenuStep(flowCtx) {
   }
 
   const options = ensureOptions(submenu, `submenus.${submenuKey}`);
-  const selected = findSelectedOption(options, raw);
+  const selectedOption = findSelectedOption(options, raw);
 
-  if (selected) {
-    return await dispatchAction(selected.action, {
+  if (selectedOption) {
+    return await dispatchAction(selectedOption.action, {
       ...flowCtx,
-      menuOption: selected,
+      menuOption: selectedOption,
       currentSubmenuKey: submenuKey,
     });
   }
