@@ -10,7 +10,6 @@ import {
 } from "../session/redisSession.js";
 
 import { sendText, sendButtons, sendList } from "../whatsapp/sender.js";
-
 import { FLOW_RESET_CODE } from "../config/constants.js";
 
 import { createPatientAdapter } from "../integrations/adapters/factories/createPatientAdapter.js";
@@ -39,10 +38,44 @@ import { renderState } from "./helpers/stateRenderHelpers.js";
 import { getFlowText } from "./helpers/contentHelpers.js";
 
 import { validateTenantContent } from "../tenants/validateTenantContent.js";
-
 import { registerDefaultActions } from "./actions/registerActions.js";
 
 registerDefaultActions();
+
+const STEP_REGISTRY = {
+  mainMenu: {
+    handler: handleMainMenuStep,
+    capability: null,
+  },
+  planSelection: {
+    handler: handlePlanSelectionStep,
+    capability: null,
+  },
+  portalFlow: {
+    handler: handlePortalFlowStep,
+    capability: "access",
+  },
+  patientIdentification: {
+    handler: handlePatientIdentificationStep,
+    capability: "identity",
+  },
+  patientRegistration: {
+    handler: handlePatientRegistrationStep,
+    capability: "identity",
+  },
+  slotSelection: {
+    handler: handleSlotSelectionStep,
+    capability: "booking",
+  },
+  bookingConfirmation: {
+    handler: handleBookingConfirmationStep,
+    capability: "booking",
+  },
+  support: {
+    handler: handleSupportFlowStep,
+    capability: null,
+  },
+};
 
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -54,8 +87,11 @@ function isObject(value) {
 
 function readStringArray(value) {
   if (!Array.isArray(value)) return [];
-
   return value.map((item) => readString(item)).filter(Boolean);
+}
+
+function normalizeFlowType(value) {
+  return readString(value).toUpperCase();
 }
 
 function resolveEffectivePhoneNumberId(context = {}, phoneNumberId) {
@@ -90,32 +126,31 @@ function normalizePlans(runtime) {
   return runtime.content.plans.filter((item) => isObject(item));
 }
 
-function resolveSelectedPlan({ runtime, sessionObj }) {
+function resolveSelectedPlan({ runtime, session }) {
   const plans = normalizePlans(runtime);
-  const booking = isObject(sessionObj?.booking) ? sessionObj.booking : {};
+  const booking = isObject(session?.booking) ? session.booking : {};
 
-  const sessionPlanId = readString(booking.planId);
-  const sessionPlanKey = readString(booking.planKey);
+  const planId = readString(booking.planId);
+  const planKey = readString(booking.planKey);
 
-  if (sessionPlanId) {
-    const byId = plans.find((plan) => readString(plan.id) === sessionPlanId);
+  if (planId) {
+    const byId = plans.find((plan) => readString(plan.id) === planId);
     if (byId) return byId;
   }
 
-  if (sessionPlanKey) {
-    const byKey = plans.find((plan) => readString(plan.key) === sessionPlanKey);
+  if (planKey) {
+    const byKey = plans.find((plan) => readString(plan.key) === planKey);
     if (byKey) return byKey;
   }
 
   return null;
 }
 
-function resolveSelectedPlanMeta(selectedPlan) {
-  if (!isObject(selectedPlan)) {
+function resolvePlanMeta(plan) {
+  if (!isObject(plan)) {
     return {
       plan: null,
       rules: {},
-      booking: {},
       mappings: {},
       planId: null,
       planKey: null,
@@ -127,25 +162,23 @@ function resolveSelectedPlanMeta(selectedPlan) {
   }
 
   return {
-    plan: selectedPlan,
-    rules: isObject(selectedPlan.rules) ? selectedPlan.rules : {},
-    booking: isObject(selectedPlan.booking) ? selectedPlan.booking : {},
-    mappings: isObject(selectedPlan.mappings) ? selectedPlan.mappings : {},
-    planId: readString(selectedPlan.id) || null,
-    planKey: readString(selectedPlan.key) || null,
-    planFlow: readString(selectedPlan.flow) || null,
-    planLabel: readString(selectedPlan.label) || null,
-    planMessageKey: readString(selectedPlan.messageKey) || null,
-    planNextState: readString(selectedPlan.nextState) || null,
+    plan,
+    rules: isObject(plan.rules) ? plan.rules : {},
+    mappings: isObject(plan.mappings) ? plan.mappings : {},
+    planId: readString(plan.id) || null,
+    planKey: readString(plan.key) || null,
+    planFlow: readString(plan.flow) || null,
+    planLabel: readString(plan.label) || null,
+    planMessageKey: readString(plan.messageKey) || null,
+    planNextState: readString(plan.nextState) || null,
   };
 }
 
-function resolveAllowedPractitioners({ runtime, selectedPlan }) {
+function resolveAllowedPractitioners({ runtime, plan }) {
   const practitioners = normalizePractitioners(runtime);
   if (!practitioners.length) return [];
 
-  const booking = isObject(selectedPlan?.booking) ? selectedPlan.booking : {};
-  const practitionerIds = readStringArray(booking.practitionerIds);
+  const practitionerIds = readStringArray(plan?.booking?.practitionerIds);
 
   if (!practitionerIds.length) {
     return practitioners;
@@ -156,11 +189,11 @@ function resolveAllowedPractitioners({ runtime, selectedPlan }) {
 }
 
 function resolveSelectedPractitioner({
-  sessionObj,
-  planBooking,
+  session,
+  plan,
   allowedPractitioners,
 }) {
-  const booking = isObject(sessionObj?.booking) ? sessionObj.booking : {};
+  const booking = isObject(session?.booking) ? session.booking : {};
   const sessionPractitionerId = readString(booking.practitionerId);
 
   if (sessionPractitionerId) {
@@ -170,7 +203,11 @@ function resolveSelectedPractitioner({
     if (bySession) return bySession;
   }
 
-  const practitionerMode = readString(planBooking?.practitionerMode);
+  const practitionerMode = readString(plan?.booking?.practitionerMode);
+
+  if (practitionerMode === "USER_SELECT") {
+    return null;
+  }
 
   if (practitionerMode === "FIXED" && allowedPractitioners.length === 1) {
     return allowedPractitioners[0];
@@ -207,164 +244,117 @@ function buildAdapters({ tenantId, runtime }) {
   };
 }
 
-function normalizeFlowType(flowType) {
-  return readString(flowType).toUpperCase();
-}
-
-function resolveSelectedPlanFlowConfig(runtime, selectedPlanMeta) {
-  const flowKey = readString(selectedPlanMeta.planFlow);
+function resolveFlowConfig(runtime, planFlow) {
   const flowMap = isObject(runtime?.content?.flows) ? runtime.content.flows : {};
 
-  if (!flowKey) {
+  if (!planFlow) {
     return {
-      key: null,
-      type: "",
-      config: null,
+      flowType: "",
+      flowConfig: null,
     };
   }
 
-  const flowConfig = isObject(flowMap[flowKey]) ? flowMap[flowKey] : null;
+  const flowConfig = isObject(flowMap[planFlow]) ? flowMap[planFlow] : null;
 
   return {
-    key: flowKey || null,
-    type: normalizeFlowType(flowConfig?.type),
-    config: flowConfig,
+    flowType: normalizeFlowType(flowConfig?.type),
+    flowConfig,
   };
 }
 
-function isMainLikeState(state) {
-  return (
-    state === "MAIN" ||
-    state === "MENU" ||
-    state.startsWith("MENU:") ||
-    state.startsWith("POS_")
+function normalizeDispatch(runtime) {
+  const source = isObject(runtime?.content?.dispatch) ? runtime.content.dispatch : {};
+
+  return {
+    stateHandlers: isObject(source.stateHandlers) ? source.stateHandlers : {},
+    statePrefixes: isObject(source.statePrefixes) ? source.statePrefixes : {},
+    flowTypeHandlers: isObject(source.flowTypeHandlers) ? source.flowTypeHandlers : {},
+    defaultHandler: readString(source.defaultHandler),
+  };
+}
+
+function resolveHandlerNameFromState(dispatch, state) {
+  const normalizedState = readString(state);
+  if (!normalizedState) return "";
+
+  const exact = readString(dispatch.stateHandlers?.[normalizedState]);
+  if (exact) return exact;
+
+  const prefixEntries = Object.entries(dispatch.statePrefixes || {}).sort(
+    (a, b) => String(b[0]).length - String(a[0]).length
   );
-}
 
-function isPlanSelectionLikeState(state) {
-  return state === "PLAN_PICK" || state === "LGPD_CONSENT";
-}
+  for (const [prefix, handlerName] of prefixEntries) {
+    const safePrefix = readString(prefix);
+    const safeHandlerName = readString(handlerName);
 
-function isPortalLikeState(state) {
-  return state.startsWith("PORTAL_") || state.startsWith("PWD_");
-}
-
-function isPatientIdentificationLikeState(state) {
-  return state === "ASK_CPF" || state === "WZ_CPF";
-}
-
-function isPatientRegistrationLikeState(state) {
-  return state.startsWith("WZ_") && state !== "WZ_CPF";
-}
-
-function isSlotSelectionLikeState(state) {
-  return (
-    state === "DATES" ||
-    state === "SLOTS" ||
-    state.includes("DATE") ||
-    state.includes("SLOT")
-  );
-}
-
-function isBookingConfirmationLikeState(state) {
-  return state.includes("CONFIRM");
-}
-
-function isSupportLikeState(state) {
-  return state === "ATENDENTE" || state.startsWith("SUPPORT_");
-}
-
-function buildStepDefinitions(flowCtx) {
-  const selectedPlanFlowType = flowCtx.selectedPlanFlowType;
-  const capabilities = flowCtx.capabilities;
-
-  return [
-    {
-      name: "mainMenu",
-      handler: handleMainMenuStep,
-      enabled: true,
-      priority: isMainLikeState(flowCtx.state) ? 10 : 100,
-    },
-    {
-      name: "planSelection",
-      handler: handlePlanSelectionStep,
-      enabled: true,
-      priority:
-        isPlanSelectionLikeState(flowCtx.state) ||
-        !flowCtx.selectedPlanId ||
-        selectedPlanFlowType === "OPEN_SUBMENU" ||
-        selectedPlanFlowType === "DIRECT_BOOKING" ||
-        selectedPlanFlowType === "BOOKING" ||
-        selectedPlanFlowType === "CONTINUE" ||
-        selectedPlanFlowType === "INFO_ONLY" ||
-        selectedPlanFlowType === "END"
-          ? 20
-          : 120,
-    },
-    {
-      name: "portalFlow",
-      handler: handlePortalFlowStep,
-      enabled: capabilities.access,
-      priority: isPortalLikeState(flowCtx.state) ? 30 : 130,
-    },
-    {
-      name: "patientIdentification",
-      handler: handlePatientIdentificationStep,
-      enabled: capabilities.identity,
-      priority:
-        isPatientIdentificationLikeState(flowCtx.state) ||
-        (selectedPlanFlowType === "BOOKING" && flowCtx.state === "ASK_CPF") ||
-        (selectedPlanFlowType === "CONTINUE" && flowCtx.state === "ASK_CPF")
-          ? 40
-          : 140,
-    },
-    {
-      name: "patientRegistration",
-      handler: handlePatientRegistrationStep,
-      enabled: capabilities.identity,
-      priority: isPatientRegistrationLikeState(flowCtx.state) ? 50 : 150,
-    },
-    {
-      name: "slotSelection",
-      handler: handleSlotSelectionStep,
-      enabled: capabilities.booking,
-      priority:
-        isSlotSelectionLikeState(flowCtx.state) ||
-        selectedPlanFlowType === "BOOKING" ||
-        selectedPlanFlowType === "DIRECT_BOOKING"
-          ? 60
-          : 160,
-    },
-    {
-      name: "bookingConfirmation",
-      handler: handleBookingConfirmationStep,
-      enabled: capabilities.booking,
-      priority:
-        isBookingConfirmationLikeState(flowCtx.state) ||
-        selectedPlanFlowType === "BOOKING"
-          ? 70
-          : 170,
-    },
-    {
-      name: "support",
-      handler: handleSupportFlowStep,
-      enabled: true,
-      priority: isSupportLikeState(flowCtx.state) ? 80 : 180,
-    },
-  ]
-    .filter((item) => item.enabled)
-    .sort((a, b) => a.priority - b.priority);
-}
-
-async function runStepPipeline(flowCtx) {
-  const stepDefinitions = buildStepDefinitions(flowCtx);
-
-  for (const stepDefinition of stepDefinitions) {
-    if (typeof stepDefinition?.handler !== "function") continue;
-    if (await stepDefinition.handler(flowCtx)) return true;
+    if (!safePrefix || !safeHandlerName) continue;
+    if (normalizedState.startsWith(safePrefix)) return safeHandlerName;
   }
 
-  return false;
+  return "";
+}
+
+function resolveHandlerNameFromFlow(dispatch, flowType, flowConfig) {
+  const configHandler = readString(flowConfig?.handler);
+  if (configHandler) return configHandler;
+
+  const byFlowType = readString(dispatch.flowTypeHandlers?.[normalizeFlowType(flowType)]);
+  if (byFlowType) return byFlowType;
+
+  return "";
+}
+
+function resolveStepDefinition(flowCtx) {
+  const dispatch = normalizeDispatch(flowCtx.runtime);
+
+  const handlerName =
+    resolveHandlerNameFromState(dispatch, flowCtx.state) ||
+    resolveHandlerNameFromFlow(dispatch, flowCtx.flowType, flowCtx.flowConfig) ||
+    dispatch.defaultHandler;
+
+  if (!handlerName) {
+    return null;
+  }
+
+  const stepDefinition = STEP_REGISTRY[handlerName];
+  if (!stepDefinition) {
+    errLog("FLOW_HANDLER_NOT_REGISTERED", {
+      tenantId: flowCtx.tenantId,
+      traceId: flowCtx.traceId,
+      handlerName,
+      state: flowCtx.state,
+      flowType: flowCtx.flowType,
+    });
+    return null;
+  }
+
+  if (
+    stepDefinition.capability &&
+    !flowCtx.capabilities?.[stepDefinition.capability]
+  ) {
+    audit("FLOW_HANDLER_CAPABILITY_UNAVAILABLE", {
+      tenantId: flowCtx.tenantId,
+      traceId: flowCtx.traceId,
+      handlerName,
+      capability: stepDefinition.capability,
+      state: flowCtx.state,
+      flowType: flowCtx.flowType,
+    });
+    return null;
+  }
+
+  return stepDefinition;
+}
+
+async function runFlow(flowCtx) {
+  const stepDefinition = resolveStepDefinition(flowCtx);
+
+  if (!stepDefinition || typeof stepDefinition.handler !== "function") {
+    return false;
+  }
+
+  return stepDefinition.handler(flowCtx);
 }
 
 async function handleInbound({
@@ -489,24 +479,24 @@ async function handleInbound({
   });
 
   const state = (await getState(tenantId, phone)) || "MAIN";
-  const sessionObj = await getSession(tenantId, phone);
+  const session = await getSession(tenantId, phone);
 
-  const selectedPlan = resolveSelectedPlan({
+  const plan = resolveSelectedPlan({
     runtime,
-    sessionObj,
+    session,
   });
 
-  const selectedPlanMeta = resolveSelectedPlanMeta(selectedPlan);
-  const selectedPlanFlow = resolveSelectedPlanFlowConfig(runtime, selectedPlanMeta);
+  const planMeta = resolvePlanMeta(plan);
+  const { flowType, flowConfig } = resolveFlowConfig(runtime, planMeta.planFlow);
 
   const practitioners = normalizePractitioners(runtime);
   const allowedPractitioners = resolveAllowedPractitioners({
     runtime,
-    selectedPlan,
+    plan,
   });
   const selectedPractitioner = resolveSelectedPractitioner({
-    sessionObj,
-    planBooking: selectedPlanMeta.booking,
+    session,
+    plan,
     allowedPractitioners,
   });
 
@@ -543,25 +533,24 @@ async function handleInbound({
     state,
     MSG,
 
-    session: sessionObj,
-    booking: isObject(sessionObj?.booking) ? sessionObj.booking : null,
-    portal: isObject(sessionObj?.portal) ? sessionObj.portal : null,
-    pending: isObject(sessionObj?.pending) ? sessionObj.pending : null,
+    session,
+    booking: isObject(session?.booking) ? session.booking : null,
+    portal: isObject(session?.portal) ? session.portal : null,
+    pending: isObject(session?.pending) ? session.pending : null,
 
-    plan: selectedPlanMeta.plan,
-    planRules: selectedPlanMeta.rules,
-    planBooking: selectedPlanMeta.booking,
-    planMappings: selectedPlanMeta.mappings,
+    plan: planMeta.plan,
+    rules: planMeta.rules,
+    mappings: planMeta.mappings,
 
-    selectedPlanId: selectedPlanMeta.planId,
-    selectedPlanKey: selectedPlanMeta.planKey,
-    selectedPlanFlow: selectedPlanMeta.planFlow,
-    selectedPlanLabel: selectedPlanMeta.planLabel,
-    selectedPlanMessageKey: selectedPlanMeta.planMessageKey,
-    selectedPlanNextState: selectedPlanMeta.planNextState,
+    planId: planMeta.planId,
+    planKey: planMeta.planKey,
+    planFlow: planMeta.planFlow,
+    planLabel: planMeta.planLabel,
+    planMessageKey: planMeta.planMessageKey,
+    planNextState: planMeta.planNextState,
 
-    selectedPlanFlowType: selectedPlanFlow.type,
-    selectedPlanFlowConfig: selectedPlanFlow.config,
+    flowType,
+    flowConfig,
 
     practitioners,
     allowedPractitioners,
@@ -589,17 +578,16 @@ async function handleInbound({
       portal: null,
       pending: null,
       plan: null,
-      planRules: {},
-      planBooking: {},
-      planMappings: {},
-      selectedPlanId: null,
-      selectedPlanKey: null,
-      selectedPlanFlow: null,
-      selectedPlanLabel: null,
-      selectedPlanMessageKey: null,
-      selectedPlanNextState: null,
-      selectedPlanFlowType: "",
-      selectedPlanFlowConfig: null,
+      rules: {},
+      mappings: {},
+      planId: null,
+      planKey: null,
+      planFlow: null,
+      planLabel: null,
+      planMessageKey: null,
+      planNextState: null,
+      flowType: "",
+      flowConfig: null,
       allowedPractitioners: practitioners,
       selectedPractitioner: null,
       selectedPractitionerId: null,
@@ -608,7 +596,7 @@ async function handleInbound({
     return;
   }
 
-  const consumed = await runStepPipeline(flowCtx);
+  const consumed = await runFlow(flowCtx);
   if (consumed) return;
 
   await setState(tenantId, phone, "MAIN");
