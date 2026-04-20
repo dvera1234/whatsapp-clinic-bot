@@ -349,7 +349,11 @@ function validatePlan(plan, index, flowMap, errors, context) {
   }
 
   if (planKey) {
-    pushError(errors, context.planKeys.has(planKey), `${basePath}.key_duplicate`);
+    pushError(
+      errors,
+      context.planKeys.has(planKey),
+      `${basePath}.key_duplicate`
+    );
     context.planKeys.add(planKey);
   }
 
@@ -409,7 +413,11 @@ export function validateTenantContent(content = {}, context = {}) {
     planKeys: new Set(),
   };
 
-  pushError(errors, !Array.isArray(content.plans) || content.plans.length === 0, "plans");
+  pushError(
+    errors,
+    !Array.isArray(content.plans) || content.plans.length === 0,
+    "plans"
+  );
 
   pushError(errors, !isObject(content.flows), "flows");
   const flowMap = isObject(content.flows) ? content.flows : {};
@@ -425,7 +433,11 @@ export function validateTenantContent(content = {}, context = {}) {
   if (isObject(content.messages)) {
     const messages = content.messages;
 
-    pushError(errors, !isNonEmptyString(messages.lgpdConsent), "messages.lgpdConsent");
+    pushError(
+      errors,
+      !isNonEmptyString(messages.lgpdConsent),
+      "messages.lgpdConsent"
+    );
     pushError(
       errors,
       !isNonEmptyString(messages.lgpdButtonText),
