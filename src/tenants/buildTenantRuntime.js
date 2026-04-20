@@ -189,7 +189,11 @@ export function buildTenantRuntime(config = {}) {
     );
 
     if (identityProvider.key === "versatilis") {
-      pushMissing(missing, !source?.providers?.identity?.baseUrl, "providers.identity.baseUrl");
+      pushMissing(
+        missing,
+        !source?.providers?.identity?.baseUrl,
+        "providers.identity.baseUrl"
+      );
       pushMissing(missing, !identityProvider.user, "providers.identity.user");
       pushMissing(missing, !identityProvider.pass, "providers.identity.pass");
 
@@ -209,7 +213,11 @@ export function buildTenantRuntime(config = {}) {
     );
 
     if (accessProvider.key === "versatilis") {
-      pushMissing(missing, !source?.providers?.access?.baseUrl, "providers.access.baseUrl");
+      pushMissing(
+        missing,
+        !source?.providers?.access?.baseUrl,
+        "providers.access.baseUrl"
+      );
       pushMissing(missing, !accessProvider.user, "providers.access.user");
       pushMissing(missing, !accessProvider.pass, "providers.access.pass");
 
@@ -231,7 +239,11 @@ export function buildTenantRuntime(config = {}) {
     );
 
     if (bookingProvider.key === "versatilis") {
-      pushMissing(missing, !source?.providers?.booking?.baseUrl, "providers.booking.baseUrl");
+      pushMissing(
+        missing,
+        !source?.providers?.booking?.baseUrl,
+        "providers.booking.baseUrl"
+      );
       pushMissing(missing, !bookingProvider.user, "providers.booking.user");
       pushMissing(missing, !bookingProvider.pass, "providers.booking.pass");
 
@@ -243,7 +255,11 @@ export function buildTenantRuntime(config = {}) {
     }
 
     if (bookingProvider.key === "google_calendar") {
-      pushMissing(missing, !bookingProvider.calendarId, "providers.booking.calendarId");
+      pushMissing(
+        missing,
+        !bookingProvider.calendarId,
+        "providers.booking.calendarId"
+      );
     }
   }
 
@@ -256,20 +272,34 @@ export function buildTenantRuntime(config = {}) {
     practitioners.forEach((practitioner, index) => {
       const basePath = `practitioners[${index}]`;
 
-      pushMissing(missing, !practitioner.practitionerId, `${basePath}.practitionerId`);
-      pushMissing(missing, !practitioner.practitionerKey, `${basePath}.practitionerKey`);
+      pushMissing(
+        missing,
+        !practitioner.practitionerId,
+        `${basePath}.practitionerId`
+      );
+      pushMissing(
+        missing,
+        !practitioner.practitionerKey,
+        `${basePath}.practitionerKey`
+      );
       pushMissing(missing, !practitioner.label, `${basePath}.label`);
-      pushMissing(missing, practitioner.externalId === null, `${basePath}.externalId`);
+      pushMissing(
+        missing,
+        practitioner.externalId === null,
+        `${basePath}.externalId`
+      );
 
       pushInvalid(
         invalid,
-        !!practitioner.practitionerId && practitionerIds.has(practitioner.practitionerId),
+        !!practitioner.practitionerId &&
+          practitionerIds.has(practitioner.practitionerId),
         `${basePath}.practitionerId_duplicate`
       );
 
       pushInvalid(
         invalid,
-        !!practitioner.practitionerKey && practitionerKeys.has(practitioner.practitionerKey),
+        !!practitioner.practitionerKey &&
+          practitionerKeys.has(practitioner.practitionerKey),
         `${basePath}.practitionerKey_duplicate`
       );
 
