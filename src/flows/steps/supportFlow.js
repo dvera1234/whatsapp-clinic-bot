@@ -10,11 +10,18 @@ import {
   sendSupportLink,
 } from "../helpers/supportHelpers.js";
 
-function resolveSupportWa(runtime) {
-  return runtime?.support?.waNumber || "";
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
-export async function handleSupportFlowStep(flowCtx) {
+function resolveSupportWa(runtime) {
+  return readString(runtime?.support?.waNumber);
+}
+
+export async function handleSupportFlowStep(
+  flowCtx,
+  { allowFreeTextAttendant = false } = {}
+) {
   const {
     tenantId,
     traceId,
@@ -31,11 +38,11 @@ export async function handleSupportFlowStep(flowCtx) {
   const supportWa = resolveSupportWa(runtime);
 
   if (upper === "FALAR_ATENDENTE") {
-    const s = await getSession(tenantId, phone);
+    const sessionObj = await getSession(tenantId, phone);
 
     const prefill = buildSupportPrefillFromSession(
       phone,
-      s,
+      sessionObj,
       traceId,
       tenantId
     );
@@ -67,12 +74,81 @@ export async function handleSupportFlowStep(flowCtx) {
   }
 
   if (state === "WAIT_AJUDA_MOTIVO") {
+    const details = readString(raw);
+
     const prefill = buildSafeSupportPrefill({
       tenantId,
       traceId,
       phone,
       reason: "Dificuldade no agendamento",
-      details: raw,
+      details: details || undefined,
+    });
+
+    await sendSupportLink({
+      tenantId,
+      phone,
+      phoneNumberId,
+      prefill,
+      supportWa,
+      nextState: "MAIN",
+      MSG,
+      services,
+    });
+
+    await clearTransientPortalData(tenantId, phone);
+    return true;
+  }
+
+  if (state === "ATENDENTE_DESCRICAO") {
+    const details = readString(raw);
+
+    if (!details) {
+      await services.sendText({
+        tenantId,
+        to: phone,
+        body: MSG.AJUDA_PERGUNTA,
+        phoneNumberId,
+      });
+      return true;
+    }
+
+    const prefill = buildSafeSupportPrefill({
+      tenantId,
+      traceId,
+      phone,
+      reason: "Solicitação de atendimento humano",
+      details,
+    });
+
+    await sendSupportLink({
+      tenantId,
+      phone,
+      phoneNumberId,
+      prefill,
+      supportWa,
+      nextState: "MAIN",
+      MSG,
+      services,
+    });
+
+    await clearTransientPortalData(tenantId, phone);
+    return true;
+  }
+
+  if (allowFreeTextAttendant && state === "ATENDENTE") {
+    const details = readString(raw);
+
+    if (!details) {
+      await resetToMain(flowCtx);
+      return true;
+    }
+
+    const prefill = buildSafeSupportPrefill({
+      tenantId,
+      traceId,
+      phone,
+      reason: "Solicitação de atendimento humano",
+      details,
     });
 
     await sendSupportLink({
