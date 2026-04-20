@@ -6,14 +6,20 @@ function readString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function isObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 function getPlans(runtime) {
   return Array.isArray(runtime?.content?.plans) ? runtime.content.plans : [];
 }
 
 function getFlows(runtime) {
-  return runtime?.content?.flows && typeof runtime.content.flows === "object"
-    ? runtime.content.flows
-    : {};
+  return isObject(runtime?.content?.flows) ? runtime.content.flows : {};
+}
+
+function getPractitioners(runtime) {
+  return Array.isArray(runtime?.practitioners) ? runtime.practitioners : [];
 }
 
 function findPlanByInput(runtime, raw) {
@@ -33,30 +39,39 @@ function resolvePlanFlow(runtime, plan) {
   const flows = getFlows(runtime);
 
   const flowConfig =
-    flowKey && flows?.[flowKey] && typeof flows[flowKey] === "object"
-      ? flows[flowKey]
-      : null;
+    flowKey && isObject(flows?.[flowKey]) ? flows[flowKey] : null;
 
   const flowType = readString(flowConfig?.type || flowKey || "CONTINUE").toUpperCase();
 
   return {
     key: flowKey,
     type: flowType,
-    config: flowConfig || null,
+    config: flowConfig,
   };
 }
 
 function normalizePractitionerIds(value) {
   if (!Array.isArray(value)) return [];
 
-  return value
-    .map((item) => readString(item))
-    .filter(Boolean);
+  return value.map((item) => readString(item)).filter(Boolean);
 }
 
-function resolvePractitionerBooking(plan) {
-  const practitionerMode = readString(plan?.booking?.practitionerMode).toUpperCase();
-  const practitionerIds = normalizePractitionerIds(plan?.booking?.practitionerIds);
+function buildPractitionerIdSet(runtime) {
+  const set = new Set();
+
+  for (const practitioner of getPractitioners(runtime)) {
+    const practitionerId = readString(practitioner?.practitionerId);
+    if (practitionerId) set.add(practitionerId);
+  }
+
+  return set;
+}
+
+function resolvePractitionerBooking(runtime, plan) {
+  const booking = isObject(plan?.booking) ? plan.booking : {};
+  const practitionerMode = readString(booking.practitionerMode).toUpperCase();
+  const practitionerIds = normalizePractitionerIds(booking.practitionerIds);
+  const practitionerIdSet = buildPractitionerIdSet(runtime);
 
   if (!practitionerMode) {
     return {
@@ -76,6 +91,16 @@ function resolvePractitionerBooking(plan) {
     throw new Error(
       `TENANT_CONTENT_INVALID:plan_booking_practitioners_missing:${readString(plan?.id)}`
     );
+  }
+
+  for (const practitionerId of practitionerIds) {
+    if (!practitionerIdSet.has(practitionerId)) {
+      throw new Error(
+        `TENANT_CONTENT_INVALID:plan_booking_practitioner_not_found:${readString(
+          plan?.id
+        )}:${practitionerId}`
+      );
+    }
   }
 
   if (practitionerMode === "FIXED") {
@@ -112,6 +137,11 @@ function buildMenuStateFromTarget(target) {
   return `MENU:${normalized}`;
 }
 
+function buildStateTarget(target) {
+  const normalized = readString(target);
+  return normalized || null;
+}
+
 function resolveNextStateForBooking(runtime, MSG) {
   const lgpdBody =
     runtime?.content?.messages?.lgpdConsent || MSG?.LGPD_CONSENT || "";
@@ -127,6 +157,119 @@ function resolveNextStateForBooking(runtime, MSG) {
     type: "CPF",
     value: runtime?.content?.messages?.askCpfPortal || MSG?.ASK_CPF_PORTAL,
   };
+}
+
+function applyPlanSession(sessionObj, plan, practitionerBooking) {
+  sessionObj.booking = sessionObj.booking || {};
+
+  sessionObj.booking.planId = readString(plan.id);
+  sessionObj.booking.planKey = readString(plan.key);
+  sessionObj.booking.planFlow = readString(plan.flow);
+  sessionObj.booking.planLabel = readString(plan.label);
+  sessionObj.booking.planMessageKey = readString(plan.messageKey);
+  sessionObj.booking.planNextState = readString(plan.nextState);
+
+  sessionObj.booking.practitionerMode = practitionerBooking.practitionerMode;
+  sessionObj.booking.practitionerIds = practitionerBooking.practitionerIds;
+  sessionObj.booking.practitionerId = practitionerBooking.practitionerId;
+
+  sessionObj.booking.patientId = null;
+  sessionObj.booking.appointmentDate = null;
+  sessionObj.booking.selectedDate = null;
+  sessionObj.booking.datePage = 0;
+  sessionObj.booking.slotPage = 0;
+  sessionObj.booking.slots = [];
+  sessionObj.booking.selectedSlotId = null;
+  sessionObj.booking.isReturn = false;
+
+  sessionObj.pending = null;
+
+  if (sessionObj.portal?.issue) {
+    delete sessionObj.portal.issue;
+  }
+}
+
+async function handleInfoOnlyOrEnd(flowCtx, plan) {
+  const { tenantId, phone, phoneNumberId, runtime, MSG, services } = flowCtx;
+
+  const message = resolveMessage(runtime, MSG, plan.messageKey);
+  const nextState = buildStateTarget(plan?.nextState);
+
+  if (message) {
+    const sent = await services.sendText({
+      tenantId,
+      to: phone,
+      body: message,
+      phoneNumberId,
+    });
+
+    if (!sent) return true;
+  }
+
+  if (nextState) {
+    await setStateAndRender(flowCtx, nextState);
+    return true;
+  }
+
+  return true;
+}
+
+async function handleOpenSubmenu(flowCtx, flow) {
+  const targetState = buildMenuStateFromTarget(flow?.config?.target);
+
+  if (!targetState) {
+    throw new Error(
+      `TENANT_CONTENT_INVALID:flow_target_missing:${readString(flow?.key)}`
+    );
+  }
+
+  await setStateAndRender(flowCtx, targetState);
+  return true;
+}
+
+async function handleDirectBooking(flowCtx, flow) {
+  const targetState = buildStateTarget(flow?.config?.target || flow?.config?.targetState);
+
+  if (targetState) {
+    await setStateAndRender(flowCtx, targetState);
+    return true;
+  }
+
+  const nextStep = resolveNextStateForBooking(flowCtx.runtime, flowCtx.MSG);
+
+  if (nextStep.type === "STATE") {
+    await setStateAndRender(flowCtx, nextStep.value);
+    return true;
+  }
+
+  await sendAndSetState({
+    tenantId: flowCtx.tenantId,
+    phone: flowCtx.phone,
+    body: nextStep.value,
+    state: "WZ_CPF",
+    phoneNumberId: flowCtx.phoneNumberId,
+  });
+
+  return true;
+}
+
+async function handleBookingOrContinue(flowCtx) {
+  const nextStep = resolveNextStateForBooking(flowCtx.runtime, flowCtx.MSG);
+
+  if (nextStep.type === "STATE") {
+    await setStateAndRender(flowCtx, nextStep.value);
+    return true;
+  }
+
+  await sendAndSetState({
+    tenantId: flowCtx.tenantId,
+    phone: flowCtx.phone,
+    body: nextStep.value,
+    state: "WZ_CPF",
+    phoneNumberId: flowCtx.phoneNumberId,
+  });
+
+  return true;
 }
 
 export async function handlePlanSelectionStep(flowCtx) {
@@ -157,90 +300,26 @@ export async function handlePlanSelectionStep(flowCtx) {
   }
 
   const flow = resolvePlanFlow(runtime, plan);
-  const practitionerBooking = resolvePractitionerBooking(plan);
+  const practitionerBooking = resolvePractitionerBooking(runtime, plan);
 
   await updateSession(tenantId, phone, (sessionObj) => {
-    sessionObj.booking = sessionObj.booking || {};
-
-    sessionObj.booking.planId = readString(plan.id);
-    sessionObj.booking.planKey = readString(plan.key);
-    sessionObj.booking.planFlow = readString(plan.flow);
-    sessionObj.booking.planLabel = readString(plan.label);
-    sessionObj.booking.planMessageKey = readString(plan.messageKey);
-    sessionObj.booking.planNextState = readString(plan.nextState);
-
-    sessionObj.booking.practitionerMode = practitionerBooking.practitionerMode;
-    sessionObj.booking.practitionerIds = practitionerBooking.practitionerIds;
-    sessionObj.booking.practitionerId = practitionerBooking.practitionerId;
-
-    sessionObj.booking.patientId = null;
-    sessionObj.booking.appointmentDate = null;
-    sessionObj.booking.selectedDate = null;
-    sessionObj.booking.datePage = 0;
-    sessionObj.booking.slotPage = 0;
-    sessionObj.booking.slots = [];
-    sessionObj.booking.selectedSlotId = null;
-    sessionObj.booking.isReturn = false;
-
-    sessionObj.pending = null;
-
-    if (sessionObj.portal?.issue) {
-      delete sessionObj.portal.issue;
-    }
+    applyPlanSession(sessionObj, plan, practitionerBooking);
   });
 
   if (flow.type === "INFO_ONLY" || flow.type === "END") {
-    const message = resolveMessage(runtime, MSG, plan.messageKey);
-    const nextState = readString(plan?.nextState) || null;
-
-    if (message) {
-      const sent = await services.sendText({
-        tenantId,
-        to: phone,
-        body: message,
-        phoneNumberId,
-      });
-
-      if (!sent) return true;
-    }
-
-    if (nextState) {
-      await setStateAndRender(flowCtx, nextState);
-      return true;
-    }
-
-    return true;
+    return await handleInfoOnlyOrEnd(flowCtx, plan);
   }
 
-  if (flow.type === "OPEN_SUBMENU" || flow.type === "DIRECT_BOOKING") {
-    const targetState = buildMenuStateFromTarget(flow.config?.target);
+  if (flow.type === "OPEN_SUBMENU") {
+    return await handleOpenSubmenu(flowCtx, flow);
+  }
 
-    if (!targetState) {
-      throw new Error(
-        `TENANT_CONTENT_INVALID:flow_target_missing:${readString(plan?.flow)}`
-      );
-    }
-
-    await setStateAndRender(flowCtx, targetState);
-    return true;
+  if (flow.type === "DIRECT_BOOKING") {
+    return await handleDirectBooking(flowCtx, flow);
   }
 
   if (flow.type === "BOOKING" || flow.type === "CONTINUE") {
-    const nextStep = resolveNextStateForBooking(runtime, MSG);
-
-    if (nextStep.type === "STATE") {
-      await setStateAndRender(flowCtx, nextStep.value);
-      return true;
-    }
-
-    await sendAndSetState({
-      tenantId,
-      phone,
-      body: nextStep.value,
-      state: "WZ_CPF",
-      phoneNumberId,
-    });
-    return true;
+    return await handleBookingOrContinue(flowCtx);
   }
 
   throw new Error(
