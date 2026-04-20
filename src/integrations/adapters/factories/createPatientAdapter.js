@@ -2,39 +2,85 @@ import { assertPatientAdapter } from "../contracts/patientAdapter.contract.js";
 import { createVersatilisPatientAdapter } from "../providers/versatilis/patient/versatilisPatientAdapter.js";
 import { wrapAdapterWithResilience } from "../../resilience/wrapAdapterWithResilience.js";
 
+const CAPABILITY = "identity";
+
+const PATIENT_ADAPTER_BUILDERS = Object.freeze({
+  versatilis: createVersatilisPatientAdapter,
+});
+
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function ensureTenantId(tenantId) {
+  const normalizedTenantId = readString(tenantId);
+
+  if (!normalizedTenantId) {
+    throw new Error(`FACTORY_MISSING_TENANT_ID:${CAPABILITY}`);
+  }
+
+  return normalizedTenantId;
+}
+
+function ensureRuntime(runtime) {
+  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) {
+    throw new Error(`FACTORY_INVALID_RUNTIME:${CAPABILITY}`);
+  }
+
+  return runtime;
+}
+
+function ensureProvider(runtime) {
+  const provider = readString(runtime?.providers?.[CAPABILITY]);
+
+  if (!provider) {
+    throw new Error(`FACTORY_MISSING_PROVIDER:${CAPABILITY}`);
+  }
+
+  return provider;
+}
+
+function ensureIntegration(runtime) {
+  const integration = runtime?.integrations?.[CAPABILITY];
+
+  if (!integration || typeof integration !== "object" || Array.isArray(integration)) {
+    throw new Error(`FACTORY_MISSING_INTEGRATION:${CAPABILITY}`);
+  }
+
+  return integration;
+}
+
+function resolveBuilder(provider) {
+  const builder = PATIENT_ADAPTER_BUILDERS[provider];
+
+  if (typeof builder !== "function") {
+    throw new Error(`FACTORY_UNSUPPORTED_PROVIDER:${CAPABILITY}:${provider}`);
+  }
+
+  return builder;
+}
+
 function createPatientAdapter({ tenantId, runtime } = {}) {
-  if (!tenantId) {
-    throw new Error("Missing tenantId for patient adapter");
-  }
+  const safeTenantId = ensureTenantId(tenantId);
+  const safeRuntime = ensureRuntime(runtime);
+  const provider = ensureProvider(safeRuntime);
 
-  if (!runtime || typeof runtime !== "object") {
-    throw new Error("Missing runtime for patient adapter");
-  }
+  ensureIntegration(safeRuntime);
 
-  const providerKey = String(runtime?.providers?.identity || "").trim();
+  const builder = resolveBuilder(provider);
 
-  if (!providerKey) {
-    throw new Error("Missing provider: providers.identity");
-  }
+  const adapter = builder({
+    tenantId: safeTenantId,
+    runtime: safeRuntime,
+  });
 
-  let adapter;
-
-  switch (providerKey) {
-    case "versatilis":
-      adapter = createVersatilisPatientAdapter({ tenantId, runtime });
-      break;
-
-    default:
-      throw new Error(`Unsupported identity provider: ${providerKey}`);
-  }
-
-  assertPatientAdapter(adapter);
+  const validatedAdapter = assertPatientAdapter(adapter);
 
   return wrapAdapterWithResilience({
-    adapter,
-    tenantId,
-    runtime,
-    capability: "identity",
+    adapter: validatedAdapter,
+    tenantId: safeTenantId,
+    runtime: safeRuntime,
+    capability: CAPABILITY,
   });
 }
 
