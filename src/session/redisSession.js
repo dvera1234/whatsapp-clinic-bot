@@ -61,9 +61,7 @@ function readBoolean(value) {
 function readStringArray(value) {
   if (!Array.isArray(value)) return [];
 
-  return value
-    .map((item) => readString(item))
-    .filter(Boolean);
+  return value.map((item) => readString(item)).filter(Boolean);
 }
 
 function inactivityTimerKey(tenantId, phone) {
