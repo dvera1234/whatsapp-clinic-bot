@@ -2,10 +2,51 @@ import { setState } from "../../session/redisSession.js";
 import { maskPhone } from "../../utils/mask.js";
 import { tpl } from "./contentHelpers.js";
 
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeWhatsAppNumber(value) {
+  return String(value || "").replace(/\D+/g, "");
+}
+
+function getSupportConfig(runtime) {
+  return runtime?.support || {};
+}
+
+function resolveSupportWa(runtime) {
+  const waNumber = normalizeWhatsAppNumber(getSupportConfig(runtime)?.waNumber);
+
+  if (!waNumber) {
+    throw new Error("TENANT_RUNTIME_INVALID:support.waNumber_missing");
+  }
+
+  return waNumber;
+}
+
+function resolveSupportReason(session) {
+  const issueType = readString(session?.portal?.issue?.type);
+
+  if (issueType === "PLAN_NOT_ENABLED") {
+    return "Plano não habilitado no cadastro.";
+  }
+
+  return "Ajuda no agendamento.";
+}
+
+function sanitizeDetails(value, maxLength = 200) {
+  return readString(value).slice(0, maxLength);
+}
+
 export function makeWaLink(supportWa, prefillText) {
-  const wa = String(supportWa || "").replace(/\D+/g, "");
-  const encoded = encodeURIComponent(prefillText);
-  return `https://wa.me/${wa}?text=${encoded}`;
+  const normalizedWa = normalizeWhatsAppNumber(supportWa);
+  const encodedPrefill = encodeURIComponent(String(prefillText || ""));
+
+  if (!normalizedWa) {
+    throw new Error("TENANT_RUNTIME_INVALID:support.waNumber_missing");
+  }
+
+  return `https://wa.me/${normalizedWa}?text=${encodedPrefill}`;
 }
 
 export async function sendSupportLink({
@@ -13,50 +54,55 @@ export async function sendSupportLink({
   phone,
   phoneNumberId,
   prefill,
-  supportWa,
+  runtime,
   nextState = "MAIN",
   MSG,
   services,
 }) {
-  const link = makeWaLink(supportWa, prefill);
+  const link = makeWaLink(resolveSupportWa(runtime), prefill);
+  const messageTemplate = readString(MSG?.supportLinkMessage);
 
-  await services.sendText({
+  if (!messageTemplate) {
+    throw new Error("TENANT_CONTENT_MISSING:messages.supportLinkMessage");
+  }
+
+  const sent = await services.sendText({
     tenantId,
     to: phone,
-    body: tpl(MSG.SUPPORT_LINK_MESSAGE, { link }),
+    body: tpl(messageTemplate, { link }),
     phoneNumberId,
   });
 
-  if (nextState) {
-    await setState(tenantId, phone, nextState);
+  if (!sent) {
+    throw new Error("WHATSAPP_SEND_FAILED");
+  }
+
+  const normalizedNextState = readString(nextState);
+  if (normalizedNextState) {
+    await setState(tenantId, phone, normalizedNextState);
   }
 }
 
 export function buildSupportPrefillFromSession(
   phone,
-  s,
+  session,
   traceId = null,
   tenantId = null
 ) {
-  const missing = Array.isArray(s?.portal?.missing) ? s.portal.missing : [];
-  const issue = s?.portal?.issue || null;
-
-  const reason =
-    issue?.type === "PLAN_NOT_ENABLED"
-      ? "Plano desejado não habilitado no cadastro."
-      : "Ajuda no agendamento.";
+  const missing = Array.isArray(session?.portal?.missing)
+    ? session.portal.missing
+    : [];
 
   return buildSafeSupportPrefill({
-    tenantId,
     traceId,
     phone,
-    reason,
+    reason: resolveSupportReason(session),
+    details: sanitizeDetails(session?.portal?.issue?.detail || session?.portal?.issue?.message),
     missing,
   });
 }
 
 export function buildSafeSupportPrefill({
-  tenantId = null,
   traceId = null,
   phone = "",
   reason = "",
@@ -66,18 +112,22 @@ export function buildSafeSupportPrefill({
   const lines = [
     "Olá! Preciso de ajuda no agendamento.",
     "",
-    `Tenant: ${tenantId || "(não informado)"}`,
-    `TraceId: ${traceId || "(não informado)"}`,
+    `Protocolo: ${readString(traceId) || "(não informado)"}`,
     `Paciente: ${maskPhone(phone)}`,
-    `Motivo: ${reason || "Ajuda no agendamento."}`,
+    `Motivo: ${readString(reason) || "Ajuda no agendamento."}`,
   ];
 
-  if (details) {
-    lines.push(`Detalhes: ${String(details).slice(0, 200)}`);
+  const normalizedDetails = sanitizeDetails(details);
+  if (normalizedDetails) {
+    lines.push(`Detalhes: ${normalizedDetails}`);
   }
 
-  if (Array.isArray(missing) && missing.length) {
-    lines.push(`Pendências: ${missing.join(", ")}`);
+  const normalizedMissing = (Array.isArray(missing) ? missing : [])
+    .map((item) => readString(item))
+    .filter(Boolean);
+
+  if (normalizedMissing.length) {
+    lines.push(`Pendências: ${normalizedMissing.join(", ")}`);
   }
 
   return lines.join("\n").trim();
