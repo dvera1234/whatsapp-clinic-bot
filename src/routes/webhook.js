@@ -41,28 +41,29 @@ async function isDuplicateWebhookMessage(tenantId, messageId) {
   return !created;
 }
 
-function normalizeInboundText(msg) {
-  const textBody = safeString(msg?.text?.body);
-  const buttonReplyId = safeString(msg?.interactive?.button_reply?.id);
-  const listReplyId = safeString(msg?.interactive?.list_reply?.id);
+function normalizeInboundText(message) {
+  const textBody = safeString(message?.text?.body);
+  const buttonReplyId = safeString(message?.interactive?.button_reply?.id);
+  const listReplyId = safeString(message?.interactive?.list_reply?.id);
 
-  const value = buttonReplyId || listReplyId || textBody;
-  return value.length > MAX_INBOUND_TEXT_LENGTH
-    ? value.slice(0, MAX_INBOUND_TEXT_LENGTH)
-    : value;
+  const inboundText = buttonReplyId || listReplyId || textBody;
+
+  return inboundText.length > MAX_INBOUND_TEXT_LENGTH
+    ? inboundText.slice(0, MAX_INBOUND_TEXT_LENGTH)
+    : inboundText;
 }
 
-function getWebhookCore(req) {
+function extractWebhookPayload(req) {
   const body = req?.body;
   const entry = body?.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
-  const msg = value?.messages?.[0];
+  const message = value?.messages?.[0];
 
-  return { body, entry, change, value, msg };
+  return { body, entry, change, value, message };
 }
 
-function buildWebhookContext({ tenantId, runtime, traceId, phoneNumberId }) {
+function buildInboundContext({ tenantId, runtime, traceId, phoneNumberId }) {
   return {
     tenantId,
     runtime,
@@ -73,7 +74,7 @@ function buildWebhookContext({ tenantId, runtime, traceId, phoneNumberId }) {
   };
 }
 
-function logWebhookIgnored(event, payload = {}) {
+function auditIgnoredWebhook(event, payload = {}) {
   audit(event, {
     tenantId: null,
     traceId: null,
@@ -110,10 +111,10 @@ router.post("/webhook", async (req, res) => {
 
     res.sendStatus(200);
 
-    const { body, entry, change, value, msg } = getWebhookCore(req);
+    const { body, entry, change, value, message } = extractWebhookPayload(req);
 
     if (!body || body.object !== "whatsapp_business_account") {
-      logWebhookIgnored("WEBHOOK_IGNORED_NON_WABA", {
+      auditIgnoredWebhook("WEBHOOK_IGNORED_NON_WABA", {
         ipMasked: maskIp(req.ip),
         hasBody: !!body,
         objectType: body?.object || null,
@@ -122,7 +123,7 @@ router.post("/webhook", async (req, res) => {
     }
 
     if (!entry || !Array.isArray(entry.changes) || entry.changes.length === 0) {
-      logWebhookIgnored("WEBHOOK_INVALID_SHAPE", {
+      auditIgnoredWebhook("WEBHOOK_INVALID_SHAPE", {
         ipMasked: maskIp(req.ip),
         hasBody: !!body,
         hasEntry: !!entry,
@@ -136,7 +137,7 @@ router.post("/webhook", async (req, res) => {
       !value ||
       typeof value !== "object"
     ) {
-      logWebhookIgnored("WEBHOOK_INVALID_CHANGE_SHAPE", {
+      auditIgnoredWebhook("WEBHOOK_INVALID_CHANGE_SHAPE", {
         ipMasked: maskIp(req.ip),
         hasChange: !!change,
         field: change?.field || null,
@@ -144,8 +145,8 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    if (!msg) {
-      logWebhookIgnored("WEBHOOK_IGNORED_WITHOUT_MESSAGE", {
+    if (!message) {
+      auditIgnoredWebhook("WEBHOOK_IGNORED_WITHOUT_MESSAGE", {
         ipMasked: maskIp(req.ip),
         hasStatuses: Array.isArray(value?.statuses) && value.statuses.length > 0,
       });
@@ -154,11 +155,11 @@ router.post("/webhook", async (req, res) => {
 
     traceId = buildTraceId();
 
-    const from = safeString(msg?.from);
-    const messageId = safeString(msg?.id);
+    const phone = safeString(message?.from);
+    const messageId = safeString(message?.id);
     const phoneNumberId = safeString(value?.metadata?.phone_number_id);
 
-    if (!from) {
+    if (!phone) {
       audit("WEBHOOK_IGNORED_MISSING_FROM", {
         tenantId: null,
         traceId,
@@ -174,7 +175,7 @@ router.post("/webhook", async (req, res) => {
       audit("WEBHOOK_TENANT_NOT_RESOLVED", {
         tenantId: tenantResolved?.tenantId || null,
         traceId,
-        phoneMasked: maskPhone(from),
+        phoneMasked: maskPhone(phone),
         phoneNumberIdPresent: !!phoneNumberId,
         phoneNumberId: phoneNumberId || null,
         reason: tenantResolved?.reason || "UNKNOWN",
@@ -191,29 +192,29 @@ router.post("/webhook", async (req, res) => {
       audit("WEBHOOK_DUPLICATE_IGNORED", {
         tenantId,
         traceId,
-        phoneMasked: maskPhone(from),
+        phoneMasked: maskPhone(phone),
         messageIdPresent: !!messageId,
       });
       return;
     }
 
-    const currentState = (await getState(tenantId, from)) || "(none)";
-    const text = normalizeInboundText(msg);
+    const currentState = (await getState(tenantId, phone)) || "(none)";
+    const text = normalizeInboundText(message);
 
     if (!text) {
       audit("WEBHOOK_IGNORED_EMPTY_MESSAGE", {
         tenantId,
         traceId,
-        phoneMasked: maskPhone(from),
+        phoneMasked: maskPhone(phone),
         state: currentState,
-        hasInteractiveButtonReply: !!msg?.interactive?.button_reply?.id,
-        hasInteractiveListReply: !!msg?.interactive?.list_reply?.id,
-        hasTextBody: !!msg?.text?.body,
+        hasInteractiveButtonReply: !!message?.interactive?.button_reply?.id,
+        hasInteractiveListReply: !!message?.interactive?.list_reply?.id,
+        hasTextBody: !!message?.text?.body,
       });
       return;
     }
 
-    const context = buildWebhookContext({
+    const context = buildInboundContext({
       tenantId,
       runtime,
       traceId,
@@ -223,22 +224,22 @@ router.post("/webhook", async (req, res) => {
     audit("WEBHOOK_INBOUND", {
       tenantId,
       traceId,
-      phoneMasked: maskPhone(from),
+      phoneMasked: maskPhone(phone),
       state: currentState,
       messageHidden: true,
       hasInteractiveReply:
-        !!msg?.interactive?.button_reply?.id ||
-        !!msg?.interactive?.list_reply?.id,
-      hasTextBody: !!msg?.text?.body,
+        !!message?.interactive?.button_reply?.id ||
+        !!message?.interactive?.list_reply?.id,
+      hasTextBody: !!message?.text?.body,
       phoneNumberIdPresent: !!phoneNumberId,
       messageIdPresent: !!messageId,
     });
 
     await handleInbound({
       context,
-      phone: from,
+      phone,
       text,
-      message: msg,
+      message,
       phoneNumberId,
     });
   } catch (err) {
