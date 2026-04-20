@@ -147,7 +147,11 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
   for (const row of rows) {
     const capability = readString(row?.capability);
 
-    if (capability === "identity" || capability === "access" || capability === "booking") {
+    if (
+      capability === "identity" ||
+      capability === "access" ||
+      capability === "booking"
+    ) {
       providers[capability] = normalizeProviderConfig(row);
     }
 
@@ -183,8 +187,13 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
     },
 
     practitioners: Array.from(practitionersMap.values()).sort((a, b) => {
-      const aOrder = Number.isFinite(a?.sortOrder) ? a.sortOrder : Number.MAX_SAFE_INTEGER;
-      const bOrder = Number.isFinite(b?.sortOrder) ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+      const aOrder = Number.isFinite(a?.sortOrder)
+        ? a.sortOrder
+        : Number.MAX_SAFE_INTEGER;
+      const bOrder = Number.isFinite(b?.sortOrder)
+        ? b.sortOrder
+        : Number.MAX_SAFE_INTEGER;
+
       return aOrder - bOrder;
     }),
 
