@@ -38,10 +38,22 @@ function resolvePlanFlow(runtime, plan) {
   const flowKey = readString(plan?.flow);
   const flows = getFlows(runtime);
 
-  const flowConfig =
-    flowKey && isObject(flows?.[flowKey]) ? flows[flowKey] : null;
+  if (!flowKey) {
+    throw new Error("TENANT_CONTENT_INVALID:plan_flow_missing");
+  }
 
-  const flowType = readString(flowConfig?.type || flowKey || "CONTINUE").toUpperCase();
+  const flowConfig =
+    isObject(flows?.[flowKey]) ? flows[flowKey] : null;
+
+  if (!flowConfig) {
+    throw new Error(`TENANT_CONTENT_INVALID:flow_missing:${flowKey}`);
+  }
+
+  const flowType = readString(flowConfig?.type).toUpperCase();
+
+  if (!flowType) {
+    throw new Error(`TENANT_CONTENT_INVALID:flow_type_missing:${flowKey}`);
+  }
 
   return {
     key: flowKey,
@@ -84,12 +96,6 @@ function resolvePractitionerBooking(runtime, plan) {
   if (!["FIXED", "USER_SELECT", "AUTO"].includes(practitionerMode)) {
     throw new Error(
       `TENANT_CONTENT_INVALID:unsupported_practitioner_mode:${practitionerMode}`
-    );
-  }
-
-  if (!practitionerIds.length) {
-    throw new Error(
-      `TENANT_CONTENT_INVALID:plan_booking_practitioners_missing:${readString(plan?.id)}`
     );
   }
 
@@ -228,7 +234,9 @@ async function handleOpenSubmenu(flowCtx, flow) {
 }
 
 async function handleDirectBooking(flowCtx, flow) {
-  const targetState = buildStateTarget(flow?.config?.target || flow?.config?.targetState);
+  const targetState = buildStateTarget(
+    flow?.config?.target || flow?.config?.targetState
+  );
 
   if (targetState) {
     await setStateAndRender(flowCtx, targetState);
