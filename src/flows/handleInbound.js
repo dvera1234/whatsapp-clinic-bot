@@ -244,31 +244,28 @@ function buildAdapters({ tenantId, runtime }) {
   };
 }
 
-function resolveFlowConfig(runtime, planFlow) {
+function resolveFlowType(runtime, planFlow) {
   const flowMap = isObject(runtime?.content?.flows) ? runtime.content.flows : {};
 
   if (!planFlow) {
-    return {
-      flowType: "",
-      flowConfig: null,
-    };
+    return "";
   }
 
   const flowConfig = isObject(flowMap[planFlow]) ? flowMap[planFlow] : null;
-
-  return {
-    flowType: normalizeFlowType(flowConfig?.type),
-    flowConfig,
-  };
+  return normalizeFlowType(flowConfig?.type);
 }
 
 function normalizeDispatch(runtime) {
-  const source = isObject(runtime?.content?.dispatch) ? runtime.content.dispatch : {};
+  const source = isObject(runtime?.content?.dispatch)
+    ? runtime.content.dispatch
+    : {};
 
   return {
     stateHandlers: isObject(source.stateHandlers) ? source.stateHandlers : {},
     statePrefixes: isObject(source.statePrefixes) ? source.statePrefixes : {},
-    flowTypeHandlers: isObject(source.flowTypeHandlers) ? source.flowTypeHandlers : {},
+    flowTypeHandlers: isObject(source.flowTypeHandlers)
+      ? source.flowTypeHandlers
+      : {},
     defaultHandler: readString(source.defaultHandler),
   };
 }
@@ -295,14 +292,8 @@ function resolveHandlerNameFromState(dispatch, state) {
   return "";
 }
 
-function resolveHandlerNameFromFlow(dispatch, flowType, flowConfig) {
-  const configHandler = readString(flowConfig?.handler);
-  if (configHandler) return configHandler;
-
-  const byFlowType = readString(dispatch.flowTypeHandlers?.[normalizeFlowType(flowType)]);
-  if (byFlowType) return byFlowType;
-
-  return "";
+function resolveHandlerNameFromFlowType(dispatch, flowType) {
+  return readString(dispatch.flowTypeHandlers?.[normalizeFlowType(flowType)]);
 }
 
 function resolveStepDefinition(flowCtx) {
@@ -310,7 +301,7 @@ function resolveStepDefinition(flowCtx) {
 
   const handlerName =
     resolveHandlerNameFromState(dispatch, flowCtx.state) ||
-    resolveHandlerNameFromFlow(dispatch, flowCtx.flowType, flowCtx.flowConfig) ||
+    resolveHandlerNameFromFlowType(dispatch, flowCtx.flowType) ||
     dispatch.defaultHandler;
 
   if (!handlerName) {
@@ -487,7 +478,7 @@ async function handleInbound({
   });
 
   const planMeta = resolvePlanMeta(plan);
-  const { flowType, flowConfig } = resolveFlowConfig(runtime, planMeta.planFlow);
+  const flowType = resolveFlowType(runtime, planMeta.planFlow);
 
   const practitioners = normalizePractitioners(runtime);
   const allowedPractitioners = resolveAllowedPractitioners({
@@ -550,7 +541,6 @@ async function handleInbound({
     planNextState: planMeta.planNextState,
 
     flowType,
-    flowConfig,
 
     practitioners,
     allowedPractitioners,
@@ -587,7 +577,6 @@ async function handleInbound({
       planMessageKey: null,
       planNextState: null,
       flowType: "",
-      flowConfig: null,
       allowedPractitioners: practitioners,
       selectedPractitioner: null,
       selectedPractitionerId: null,
