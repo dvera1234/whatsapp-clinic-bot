@@ -74,12 +74,14 @@ function validateMenuOption(option, optionPath, errors, context) {
   pushError(errors, !isNonEmptyString(option.label), `${optionPath}.label`);
   pushError(errors, !isNonEmptyString(option.action), `${optionPath}.action`);
 
-  const action = normalizeString(option.action);
   const allowedActions = new Set([
     "OPEN_SUBMENU",
     "SHOW_MESSAGE",
     "SELECT_PLAN",
+    "SELECT_CURRENT_PLAN",
     "GO_STATE",
+    "GO_MAIN",
+    "PLAN_MENU",
     "BACK_TO_MENU",
     "RESET_FLOW",
     "HANDOFF_HUMAN",
