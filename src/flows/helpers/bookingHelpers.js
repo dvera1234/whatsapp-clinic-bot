@@ -1,3 +1,8 @@
+import {
+  updateSession,
+  setState,
+} from "../../session/redisSession.js";
+import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { maskPhone } from "../../utils/mask.js";
 
 const PRACTITIONER_MODES = new Set(["FIXED", "USER_SELECT", "AUTO"]);
@@ -367,6 +372,307 @@ export function formatBRFromISO(isoDate) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
   if (!match) return isoDate;
   return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+function getPlanByKey(runtime, planKey) {
+  const normalizedPlanKey = readString(planKey);
+  if (!normalizedPlanKey) return null;
+
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  return (
+    plans.find((plan) => readString(plan?.key) === normalizedPlanKey) || null
+  );
+}
+
+function resolveBookingMessage(MSG, camelKey, upperKey, fallback = "") {
+  return (
+    MSG?.[camelKey] ||
+    MSG?.[upperKey] ||
+    fallback
+  );
+}
+
+function buildDateRows(dates = [], page = 0) {
+  const pageSize = 8;
+  const start = page * pageSize;
+  const pageDates = dates.slice(start, start + pageSize);
+
+  const rows = pageDates.map((appointmentDate) => ({
+    id: `DATE_${appointmentDate}`,
+    title: formatBRFromISO(appointmentDate),
+    description: "",
+  }));
+
+  if (start + pageSize < dates.length) {
+    rows.push({
+      id: `DATE_PAGE_${page + 1}`,
+      title: "Ver mais datas",
+      description: "",
+    });
+  }
+
+  return rows;
+}
+
+function buildSlotRows(slots = [], page = 0) {
+  const pageSize = 8;
+  const start = page * pageSize;
+  const pageSlots = slots.slice(start, start + pageSize);
+
+  const rows = pageSlots.map((slot) => ({
+    id: `SLOT_${slot.slotId}`,
+    title: readString(slot?.time) || "Horário",
+    description: readString(slot?.appointmentDate)
+      ? formatBRFromISO(slot.appointmentDate)
+      : "",
+  }));
+
+  if (start + pageSize < slots.length) {
+    rows.push({
+      id: `SLOT_PAGE_${page + 1}`,
+      title: "Ver mais horários",
+      description: "",
+    });
+  }
+
+  rows.push({
+    id: "CHANGE_DATE",
+    title: "Escolher outra data",
+    description: "",
+  });
+
+  return rows;
+}
+
+export async function showNextDates({
+  schedulingAdapter,
+  runtimeCtx,
+  phone,
+  phoneNumberId,
+  practitionerMode,
+  practitionerId,
+  practitionerIds,
+  patientId,
+  MSG,
+  services,
+  page = 0,
+}) {
+  const safePractitionerMode =
+    readString(practitionerMode) ||
+    (readString(practitionerId) ? "FIXED" : "AUTO");
+
+  const safePractitionerIds = normalizeIdList(
+    Array.isArray(practitionerIds) && practitionerIds.length
+      ? practitionerIds
+      : readString(practitionerId)
+        ? [practitionerId]
+        : []
+  );
+
+  const out = await fetchNextAvailableDates({
+    schedulingAdapter,
+    runtimeCtx,
+    practitionerMode: safePractitionerMode,
+    practitionerId,
+    practitionerIds: safePractitionerIds,
+    patientId,
+  });
+
+  if (!out?.ok) {
+    return false;
+  }
+
+  const dates = Array.isArray(out?.dates) ? out.dates : [];
+
+  if (!dates.length) {
+    await services.sendText({
+      tenantId: runtimeCtx?.tenantId,
+      to: phone,
+      body: resolveBookingMessage(
+        MSG,
+        "bookingNoDates",
+        "BOOKING_NO_DATES",
+        "Não encontramos datas disponíveis no momento."
+      ),
+      phoneNumberId,
+    });
+    return true;
+  }
+
+  await sendListMessage({
+    tenantId: runtimeCtx?.tenantId,
+    to: phone,
+    phoneNumberId,
+    body: resolveBookingMessage(
+      MSG,
+      "bookingPickDate",
+      "BOOKING_PICK_DATE",
+      "Selecione uma data:"
+    ),
+    buttonText: resolveBookingMessage(
+      MSG,
+      "bookingOptions",
+      "BOOKING_OPTIONS",
+      "Selecionar"
+    ),
+    sections: [
+      {
+        title: "Datas disponíveis",
+        rows: buildDateRows(dates, page),
+      },
+    ],
+  });
+
+  return true;
+}
+
+export async function showSlotsPage({
+  tenantId,
+  phone,
+  phoneNumberId,
+  slots,
+  page = 0,
+  MSG,
+  services,
+}) {
+  const safeSlots = Array.isArray(slots) ? slots : [];
+
+  if (!safeSlots.length) {
+    await services.sendText({
+      tenantId,
+      to: phone,
+      body: resolveBookingMessage(
+        MSG,
+        "bookingNoSlots",
+        "BOOKING_NO_SLOTS",
+        "Não encontramos horários disponíveis para esta data."
+      ),
+      phoneNumberId,
+    });
+    return true;
+  }
+
+  await sendListMessage({
+    tenantId,
+    to: phone,
+    phoneNumberId,
+    body: resolveBookingMessage(
+      MSG,
+      "bookingAvailableSlots",
+      "BOOKING_AVAILABLE_SLOTS",
+      "Selecione um horário disponível:"
+    ),
+    buttonText: resolveBookingMessage(
+      MSG,
+      "bookingOptions",
+      "BOOKING_OPTIONS",
+      "Selecionar"
+    ),
+    sections: [
+      {
+        title: "Horários disponíveis",
+        rows: buildSlotRows(safeSlots, page),
+      },
+    ],
+  });
+
+  return true;
+}
+
+export async function finishWizardAndGoToDates({
+  schedulingAdapter,
+  tenantId,
+  runtime,
+  phone,
+  phoneNumberId,
+  patientId,
+  planKeyFromWizard,
+  traceId,
+  practitionerId,
+  MSG,
+  services,
+}) {
+  const plan = getPlanByKey(runtime, planKeyFromWizard);
+
+  const planPractitionerMode = readString(plan?.booking?.practitionerMode);
+  const planPractitionerIds = normalizeIdList(plan?.booking?.practitionerIds);
+
+  await updateSession(tenantId, phone, (sess) => {
+    sess.booking = sess.booking || {};
+    sess.booking.patientId = patientId || null;
+    sess.booking.planKey = readString(planKeyFromWizard) || null;
+
+    if (plan) {
+      sess.booking.planId = readString(plan?.id) || null;
+      sess.booking.planFlow = readString(plan?.flow) || null;
+      sess.booking.planLabel = readString(plan?.label) || null;
+      sess.booking.planMessageKey = readString(plan?.messageKey) || null;
+      sess.booking.planNextState = readString(plan?.nextState) || null;
+    }
+
+    if (planPractitionerMode) {
+      sess.booking.practitionerMode = planPractitionerMode;
+    }
+
+    if (planPractitionerIds.length) {
+      sess.booking.practitionerIds = planPractitionerIds;
+    }
+
+    if (readString(practitionerId)) {
+      sess.booking.practitionerId = readString(practitionerId);
+    }
+
+    sess.booking.datePage = 0;
+    sess.booking.slotPage = 0;
+    sess.booking.slots = [];
+    sess.booking.selectedSlotId = null;
+    delete sess.booking.selectedDate;
+    delete sess.booking.appointmentDate;
+    delete sess.pending;
+  });
+
+  await setState(tenantId, phone, "ASK_DATE_PICK");
+
+  const shown = await showNextDates({
+    schedulingAdapter,
+    runtimeCtx: {
+      tenantId,
+      runtime,
+      traceId,
+      tracePhone: maskPhone(phone),
+    },
+    phone,
+    phoneNumberId,
+    practitionerMode: planPractitionerMode,
+    practitionerId,
+    practitionerIds: planPractitionerIds,
+    patientId,
+    MSG,
+    services,
+    page: 0,
+  });
+
+  if (!shown) {
+    await services.sendText({
+      tenantId,
+      to: phone,
+      body: resolveBookingMessage(
+        MSG,
+        "providerUnavailable",
+        "PROVIDER_UNAVAILABLE",
+        "Nosso sistema está temporariamente indisponível no momento."
+      ),
+      phoneNumberId,
+    });
+
+    await setState(tenantId, phone, "MAIN");
+    return false;
+  }
+
+  return true;
 }
 
 // =========================
