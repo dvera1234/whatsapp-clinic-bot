@@ -262,6 +262,7 @@ export async function actionOpenSubmenu(flowCtx) {
 
   await sendListMessage({
     tenantId,
+    runtime,
     to: phone,
     phoneNumberId,
     body,
@@ -314,6 +315,7 @@ export async function actionPlanMenu(flowCtx) {
 
   await sendListMessage({
     tenantId,
+    runtime,
     to: phone,
     phoneNumberId,
     body,
