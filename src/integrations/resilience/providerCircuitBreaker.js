@@ -1,40 +1,57 @@
-import { redis } from "../../session/redisSession.js";
+import { redis } from "../../redis.js";
 import { audit } from "../../observability/audit.js";
+import {
+  ProviderIntegrationError,
+  ProviderNetworkError,
+  ProviderTimeoutError,
+} from "../adapters/providers/versatilis/shared/versatilisErrors.js";
 
 const FAILURE_THRESHOLD = 3;
 const OPEN_TTL_SECONDS = 60;
 const HEALTH_TTL_SECONDS = 120;
 
+function readString(value) {
+  const v = String(value ?? "").trim();
+  return v || "";
+}
+
 function normalizeProviderName(value) {
-  return String(value || "").trim().toLowerCase();
+  return readString(value).toLowerCase();
 }
 
 function normalizeCapability(value) {
-  return String(value || "").trim().toLowerCase();
+  return readString(value).toLowerCase();
 }
 
 function buildBreakerKey({ tenantId, capability, provider }) {
-  const t = String(tenantId || "").trim();
+  const t = readString(tenantId);
   const c = normalizeCapability(capability);
   const p = normalizeProviderName(provider);
   return `cb:${t}:${c}:${p}`;
 }
 
 function buildHealthKey({ tenantId, capability, provider }) {
-  const t = String(tenantId || "").trim();
+  const t = readString(tenantId);
   const c = normalizeCapability(capability);
   const p = normalizeProviderName(provider);
   return `health:${t}:${c}:${p}`;
 }
 
 function buildFailureCounterKey({ tenantId, capability, provider }) {
-  const t = String(tenantId || "").trim();
+  const t = readString(tenantId);
   const c = normalizeCapability(capability);
   const p = normalizeProviderName(provider);
   return `cbfail:${t}:${c}:${p}`;
 }
 
 function isRetryableError(error) {
+  if (error instanceof ProviderTimeoutError) return true;
+  if (error instanceof ProviderNetworkError) return true;
+
+  if (error instanceof ProviderIntegrationError) {
+    return Boolean(error.isRetryable);
+  }
+
   const msg = String(error?.message || error || "").toLowerCase();
 
   return (
@@ -50,6 +67,23 @@ function isRetryableError(error) {
     msg.includes("502") ||
     msg.includes("504")
   );
+}
+
+function buildCircuitOpenError({ tenantId, capability, provider }) {
+  const error = new ProviderIntegrationError(
+    `Provider temporarily unavailable: ${capability}/${provider}`,
+    {
+      code: "PROVIDER_CIRCUIT_OPEN",
+      isRetryable: true,
+      meta: {
+        tenantId,
+        capability,
+        provider,
+      },
+    }
+  );
+
+  return error;
 }
 
 async function getBreakerState({ tenantId, capability, provider }) {
@@ -88,7 +122,12 @@ async function openCircuit({
   });
 }
 
-async function closeCircuit({ tenantId, capability, provider, traceMeta = {} }) {
+async function closeCircuit({
+  tenantId,
+  capability,
+  provider,
+  traceMeta = {},
+}) {
   const breakerKey = buildBreakerKey({ tenantId, capability, provider });
   const failureKey = buildFailureCounterKey({ tenantId, capability, provider });
 
@@ -125,9 +164,15 @@ async function registerSuccess({
     );
 
     await redis.del(failureKey).catch(() => {});
+    await closeCircuit({
+      tenantId,
+      capability,
+      provider,
+      traceMeta,
+    });
   } catch {}
 }
-  
+
 async function registerFailure({
   tenantId,
   capability,
@@ -195,11 +240,11 @@ async function assertCircuitClosed({
       breakerState: state,
     });
 
-    const error = new Error(
-      `Provider temporarily unavailable: ${capability}/${provider}`
-    );
-    error.code = "PROVIDER_CIRCUIT_OPEN";
-    throw error;
+    throw buildCircuitOpenError({
+      tenantId,
+      capability,
+      provider,
+    });
   }
 }
 
@@ -222,7 +267,7 @@ async function runWithCircuitBreaker({
   });
 
   try {
-    const result = await fn();
+    const result = await Promise.resolve(fn());
 
     await registerSuccess({
       tenantId,
@@ -279,4 +324,5 @@ export {
   getBreakerState,
   openCircuit,
   closeCircuit,
+  isRetryableError,
 };
