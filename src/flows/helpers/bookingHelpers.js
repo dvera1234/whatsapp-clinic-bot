@@ -460,17 +460,8 @@ export async function showNextDates({
   services,
   page = 0,
 }) {
-  const safePractitionerMode =
-    readString(practitionerMode) ||
-    (readString(practitionerId) ? "FIXED" : "AUTO");
-
-  const safePractitionerIds = normalizeIdList(
-    Array.isArray(practitionerIds) && practitionerIds.length
-      ? practitionerIds
-      : readString(practitionerId)
-        ? [practitionerId]
-        : []
-  );
+  const safePractitionerMode = assertValidPractitionerMode(practitionerMode);
+  const safePractitionerIds = normalizeIdList(practitionerIds);
 
   const out = await fetchNextAvailableDates({
     schedulingAdapter,
