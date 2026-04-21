@@ -47,6 +47,10 @@ const FLOW_RESET_CODE = String(process.env.FLOW_RESET_CODE || "").trim();
 const DEBUG_REDIS =
   String(process.env.DEBUG_REDIS || "0").trim() === "1";
 
+const LOG_LEVEL = String(process.env.LOG_LEVEL || "INFO")
+  .trim()
+  .toUpperCase();
+
 export {
   requireEnv,
   readPositiveIntEnv,
@@ -61,4 +65,5 @@ export {
   SESSION_TTL_SECONDS,
   FLOW_RESET_CODE,
   DEBUG_REDIS,
+  LOG_LEVEL,
 };
