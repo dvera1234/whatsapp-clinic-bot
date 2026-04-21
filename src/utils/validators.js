@@ -1,89 +1,96 @@
-function onlyDigits(s) {
-  const t = (s || "").trim();
-  return /^[0-9]+$/.test(t) ? t : null;
+function onlyDigits(value) {
+  return String(value || "").replace(/\D+/g, "");
 }
 
-function onlyCpfDigits(s) {
-  const d = String(s || "").replace(/\D+/g, "");
-  return d.length === 11 ? d : null;
+function onlyCpfDigits(value) {
+  const digits = onlyDigits(value);
+  return digits.length === 11 ? digits : null;
 }
 
-function normalizeDigits(s) {
-  return String(s || "").replace(/\D+/g, "");
+function normalizeDigits(value) {
+  return onlyDigits(value);
 }
 
-function normalizeCEP(s) {
-  return String(s || "").replace(/\D+/g, "");
+function normalizeCEP(value) {
+  return onlyDigits(value);
 }
 
-function normalizeSpaces(s) {
-  return (s || "").trim().replace(/\s+/g, " ");
+function normalizeSpaces(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
 }
 
-function stripControlChars(s) {
-  return String(s || "").replace(/[\u0000-\u001F\u007F]/g, "").trim();
+function stripControlChars(value) {
+  return String(value || "").replace(/[\u0000-\u001F\u007F]/g, "").trim();
 }
 
-function normalizeHumanText(s, maxLen = 120) {
-  return stripControlChars(s).replace(/\s+/g, " ").slice(0, maxLen);
+function normalizeHumanText(value, maxLen = 120) {
+  return stripControlChars(value).replace(/\s+/g, " ").slice(0, maxLen);
 }
 
-function isValidName(s) {
-  const v = normalizeHumanText(s, 120);
+function isValidName(value) {
+  const normalized = normalizeHumanText(value, 120);
+
   return (
-    v.length >= 5 &&
-    /^[A-Za-zÀ-ÿ'´`.-]+(?:\s+[A-Za-zÀ-ÿ'´`.-]+)+$/.test(v)
+    normalized.length >= 5 &&
+    /^[A-Za-zÀ-ÿ'´`.-]+(?:\s+[A-Za-zÀ-ÿ'´`.-]+)+$/.test(normalized)
   );
 }
 
-function isValidSimpleAddressField(s, min = 2, max = 120) {
-  const v = normalizeHumanText(s, max);
-  return v.length >= min;
+function isValidSimpleAddressField(value, min = 2, max = 120) {
+  const normalized = normalizeHumanText(value, max);
+  return normalized.length >= min;
 }
 
-function isValidEmail(s) {
-  const t = String(s || "").trim();
-  return t.length >= 6 && t.includes("@") && t.includes(".");
+function isValidEmail(value) {
+  const email = String(value || "").trim();
+
+  if (!email || email.length > 254) return false;
+
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 }
 
-function cleanStr(s) {
-  return String(s ?? "").trim();
+function cleanStr(value) {
+  return String(value ?? "").trim();
 }
 
-function parsePositiveInt(v) {
-  if (v == null) return null;
+function parsePositiveInt(value) {
+  if (value == null) return null;
 
-  if (typeof v === "number") {
-    return Number.isFinite(v) && v > 0 ? v : null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? value : null;
   }
 
-  if (typeof v === "string") {
-    const s = v.trim().replace(/^"+|"+$/g, "");
-    const n = Number(s);
-    return Number.isFinite(n) && n > 0 ? n : null;
+  if (typeof value === "string") {
+    const normalized = value.trim().replace(/^"+|"+$/g, "");
+    const numberValue = Number(normalized);
+    return Number.isFinite(numberValue) && numberValue > 0
+      ? numberValue
+      : null;
   }
 
   return null;
 }
 
 function formatCPFMask(cpf11) {
-  const c = String(cpf11 || "").replace(/\D+/g, "");
-  if (c.length !== 11) return null;
-  return `${c.slice(0, 3)}.${c.slice(3, 6)}.${c.slice(6, 9)}-${c.slice(9, 11)}`;
+  const digits = onlyDigits(cpf11);
+  if (digits.length !== 11) return null;
+
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
 }
 
 function formatCellFromWA(phone) {
-  return String(phone || "").replace(/\D+/g, "");
+  return onlyDigits(phone);
 }
 
 function formatMissing(list) {
-  return list.map((x) => `• ${x}`).join("\n");
+  return list.map((item) => `• ${item}`).join("\n");
 }
 
 function formatBRFromISO(isoDate) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
-  if (!m) return isoDate;
-  return `${m[3]}/${m[2]}/${m[1]}`;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
+  if (!match) return isoDate;
+
+  return `${match[3]}/${match[2]}/${match[1]}`;
 }
 
 export {
