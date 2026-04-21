@@ -59,6 +59,7 @@ function buildSections(menuLike, fieldName) {
 
 async function showMenu({
   tenantId,
+  runtime,
   phone,
   phoneNumberId,
   menuLike,
@@ -72,6 +73,7 @@ async function showMenu({
 
   await sendListMessage({
     tenantId,
+    runtime,
     to: phone,
     phoneNumberId,
     body,
@@ -107,6 +109,7 @@ export async function handleMainMenuStep(flowCtx) {
 
     await showMenu({
       tenantId,
+      runtime,
       phone,
       phoneNumberId,
       menuLike: menu,
@@ -139,6 +142,7 @@ export async function handleMainMenuStep(flowCtx) {
 
   await showMenu({
     tenantId,
+    runtime,
     phone,
     phoneNumberId,
     menuLike: submenu,
