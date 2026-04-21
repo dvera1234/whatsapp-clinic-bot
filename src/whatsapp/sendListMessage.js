@@ -18,6 +18,7 @@ function validateSections(sections) {
 
 export async function sendListMessage({
   tenantId,
+  runtime,
   to,
   phoneNumberId,
   header,
@@ -27,6 +28,7 @@ export async function sendListMessage({
   sections = [],
 }) {
   if (!tenantId) throw new Error("sendListMessage requires tenantId");
+  if (!runtime) throw new Error("sendListMessage requires runtime");
   if (!to) throw new Error("sendListMessage requires to");
   if (!body) throw new Error("sendListMessage requires body");
 
@@ -34,6 +36,7 @@ export async function sendListMessage({
 
   return sendList({
     tenantId,
+    runtime,
     to,
     body,
     buttonText,
