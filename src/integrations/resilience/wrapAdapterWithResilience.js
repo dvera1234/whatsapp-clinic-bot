@@ -1,7 +1,11 @@
 import { runWithCircuitBreaker } from "./providerCircuitBreaker.js";
 
-function isAsyncFunction(fn) {
-  return typeof fn === "function" && fn.constructor?.name === "AsyncFunction";
+function isFunction(value) {
+  return typeof value === "function";
+}
+
+function shouldWrapMethod(fn) {
+  return isFunction(fn);
 }
 
 function wrapAdapterWithResilience({
@@ -23,17 +27,12 @@ function wrapAdapterWithResilience({
   const wrapped = {};
 
   for (const [key, value] of Object.entries(adapter)) {
-    if (typeof value !== "function") {
+    if (!shouldWrapMethod(value)) {
       wrapped[key] = value;
       continue;
     }
 
-    if (!isAsyncFunction(value)) {
-      wrapped[key] = value.bind(adapter);
-      continue;
-    }
-
-    wrapped[key] = async function wrappedAdapterMethod(...args) {
+    wrapped[key] = function wrappedAdapterMethod(...args) {
       return runWithCircuitBreaker({
         tenantId,
         capability,
