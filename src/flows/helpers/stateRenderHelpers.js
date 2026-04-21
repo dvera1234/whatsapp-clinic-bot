@@ -108,6 +108,7 @@ async function renderLgpdConsent(flowCtx, state) {
 
   await sendListMessage({
     tenantId,
+    runtime,
     to: phone,
     phoneNumberId,
     body: menu.text,
