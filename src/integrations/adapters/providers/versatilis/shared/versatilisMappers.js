@@ -1,4 +1,3 @@
-import { PLAN_KEYS } from "../../../../../config/constants.js";
 import { cleanStr, parsePositiveInt } from "../../../../../utils/validators.js";
 
 function readString(value) {
@@ -115,30 +114,19 @@ function validatePatientRegistrationData(profile = {}) {
   };
 }
 
+function resolvePlanConfigByKey(planKey, runtime = {}) {
+  const plans = Array.isArray(runtime?.content?.plans) ? runtime.content.plans : [];
+
+  return (
+    plans.find((plan) => String(plan?.key || "") === String(planKey || "")) || null
+  );
+}
+
 function resolvePlanExternalIdFromRuntime(planKey, runtime = {}) {
-  const privatePlanId =
-    Number(
-      runtime?.planMappings?.PRIVATE?.externalId ||
-        runtime?.integrations?.booking?.planMappings?.PRIVATE?.externalId ||
-        0
-    ) || null;
+  const plan = resolvePlanConfigByKey(planKey, runtime);
+  const externalId = plan?.mappings?.externalId;
 
-  const insuredPlanId =
-    Number(
-      runtime?.planMappings?.INSURED?.externalId ||
-        runtime?.integrations?.booking?.planMappings?.INSURED?.externalId ||
-        0
-    ) || null;
-
-  if (planKey === PLAN_KEYS.PRIVATE) {
-    return privatePlanId;
-  }
-
-  if (planKey === PLAN_KEYS.INSURED) {
-    return insuredPlanId;
-  }
-
-  return privatePlanId;
+  return Number.isFinite(Number(externalId)) ? Number(externalId) : null;
 }
 
 function listPlanIdsFromProfile(profile = {}) {
@@ -192,31 +180,36 @@ function findExternalPatientIdDeep(
   if (depth > maxDepth) return null;
 
   if (Array.isArray(obj)) {
-    for (const it of obj) {
-      const found = findExternalPatientIdDeep(it, depth + 1, maxDepth, seen);
+    for (const item of obj) {
+      const found = findExternalPatientIdDeep(item, depth + 1, maxDepth, seen);
       if (found) return found;
     }
     return null;
   }
 
-  for (const [k, v] of Object.entries(obj)) {
-    const key = String(k || "").toLowerCase();
+  for (const [key, value] of Object.entries(obj)) {
+    const normalizedKey = String(key || "").toLowerCase();
 
     if (
-      key === "codusuario" ||
-      key === "codigousuario" ||
-      key.includes("codusuario")
+      normalizedKey === "codusuario" ||
+      normalizedKey === "codigousuario" ||
+      normalizedKey.includes("codusuario")
     ) {
-      const n = parsePositiveInt(v);
+      const n = parsePositiveInt(value);
       if (n) return n;
 
-      const deep = findExternalPatientIdDeep(v, depth + 1, maxDepth, seen);
+      const deep = findExternalPatientIdDeep(
+        value,
+        depth + 1,
+        maxDepth,
+        seen
+      );
       if (deep) return deep;
     }
   }
 
-  for (const v of Object.values(obj)) {
-    const found = findExternalPatientIdDeep(v, depth + 1, maxDepth, seen);
+  for (const value of Object.values(obj)) {
+    const found = findExternalPatientIdDeep(value, depth + 1, maxDepth, seen);
     if (found) return found;
   }
 
@@ -237,6 +230,7 @@ function composeAddressComplement(addressComplement, stateCode) {
 }
 
 export {
+  resolvePlanConfigByKey,
   resolvePlanExternalIdFromRuntime,
   listPlanIdsFromProfile,
   hasPlanByDomainKey,
