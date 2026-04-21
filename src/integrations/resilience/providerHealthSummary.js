@@ -1,33 +1,37 @@
 import { getProviderHealth } from "./providerCircuitBreaker.js";
 
-async function getTenantProviderHealthSummary({ tenantId, runtime }) {
-  const identityProvider = String(runtime?.providers?.identity || "").trim();
-  const accessProvider = String(runtime?.providers?.access || "").trim();
-  const bookingProvider = String(runtime?.providers?.booking || "").trim();
+function readString(value) {
+  const v = String(value ?? "").trim();
+  return v || "";
+}
 
-  const [identity, access, booking] = await Promise.all([
-    getProviderHealth({
-      tenantId,
-      capability: "identity",
-      provider: identityProvider,
-    }),
-    getProviderHealth({
-      tenantId,
-      capability: "access",
-      provider: accessProvider,
-    }),
-    getProviderHealth({
-      tenantId,
-      capability: "booking",
-      provider: bookingProvider,
-    }),
-  ]);
+async function getTenantProviderHealthSummary({ tenantId, runtime }) {
+  const providers = runtime?.providers && typeof runtime.providers === "object"
+    ? runtime.providers
+    : {};
+
+  const entries = Object.entries(providers)
+    .map(([capability, provider]) => ({
+      capability: readString(capability),
+      provider: readString(provider),
+    }))
+    .filter((item) => item.capability && item.provider);
+
+  const results = await Promise.all(
+    entries.map(async ({ capability, provider }) => {
+      const health = await getProviderHealth({
+        tenantId,
+        capability,
+        provider,
+      });
+
+      return [capability, health];
+    })
+  );
 
   return {
     tenantId,
-    identity,
-    access,
-    booking,
+    ...Object.fromEntries(results),
   };
 }
 
