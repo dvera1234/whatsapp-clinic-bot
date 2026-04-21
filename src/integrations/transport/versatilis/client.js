@@ -7,42 +7,47 @@ import {
 } from "../../../observability/logger.js";
 import { fetchWithTimeout } from "../../../utils/time.js";
 import { sanitizeForLog } from "../../../utils/logSanitizer.js";
-import { getProviderAccessToken } from "./auth.js";
+import { getProviderAccessToken, resolveProviderConfig } from "./auth.js";
 import { sanitizeQueryForLog } from "./queryLog.js";
+import {
+  ProviderBadResponseError,
+  ProviderNetworkError,
+  ProviderTimeoutError,
+  normalizeProviderError,
+} from "../../adapters/providers/versatilis/shared/versatilisErrors.js";
 
 function readString(value) {
   const v = String(value ?? "").trim();
   return v || "";
 }
 
-function resolveProviderBaseUrl(runtime = {}, capability = null) {
-  const byCapability = {
-    identity: runtime?.integrations?.identity?.baseUrl,
-    access: runtime?.integrations?.access?.baseUrl,
-    booking: runtime?.integrations?.booking?.baseUrl,
-  };
-
-  if (capability) {
-    const direct = readString(byCapability[capability]);
-    if (direct) {
-      return direct.endsWith("/") ? direct.slice(0, -1) : direct;
-    }
+function resolveProviderBaseUrl(runtime = {}, capability) {
+  if (!capability) {
+    throw new ProviderBadResponseError(
+      "Capability obrigatória para resolver baseUrl do provider",
+      {
+        meta: {
+          capability,
+        },
+      }
+    );
   }
 
-  const candidates = [
-    runtime?.integrations?.identity?.baseUrl,
-    runtime?.integrations?.access?.baseUrl,
-    runtime?.integrations?.booking?.baseUrl,
-  ];
+  const cfg = resolveProviderConfig(runtime, capability);
+  const baseUrl = readString(cfg?.baseUrl);
 
-  for (const candidate of candidates) {
-    const base = readString(candidate);
-    if (base) {
-      return base.endsWith("/") ? base.slice(0, -1) : base;
-    }
+  if (!baseUrl) {
+    throw new ProviderBadResponseError(
+      "Base URL do provider ausente no runtime",
+      {
+        meta: {
+          capability,
+        },
+      }
+    );
   }
 
-  return "";
+  return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
 }
 
 function mergeTraceMeta(base, extra) {
@@ -90,6 +95,37 @@ function sanitizePathForLog(path) {
   }
 }
 
+function parseResponseData(text) {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return text;
+  }
+}
+
+function classifyExpected404({ status, data }) {
+  if (status !== 404) return false;
+
+  if (Array.isArray(data)) return false;
+
+  if (data && typeof data === "object") {
+    return true;
+  }
+
+  if (typeof data === "string") {
+    const normalizedText = data.toLowerCase();
+
+    return (
+      normalizedText.includes("não foram encontradas") ||
+      normalizedText.includes("não foram encontrados") ||
+      normalizedText.includes("usuário não encontrado") ||
+      normalizedText.includes("agendamento não encontrado")
+    );
+  }
+
+  return false;
+}
+
 async function providerFetch(
   path,
   {
@@ -99,43 +135,38 @@ async function providerFetch(
     traceMeta,
     tenantId,
     runtime,
-    capability = null,
+    capability,
   } = {}
 ) {
   const requestId = crypto.randomUUID();
 
   if (!tenantId) {
-    const err = new Error("tenantId ausente em providerFetch");
-    err.code = "TENANT_ID_MISSING";
-    throw err;
+    throw new ProviderBadResponseError("tenantId ausente em providerFetch", {
+      meta: { capability },
+    });
   }
 
   if (!runtime || typeof runtime !== "object") {
-    const err = new Error("runtime ausente em providerFetch");
-    err.code = "RUNTIME_MISSING";
-    throw err;
+    throw new ProviderBadResponseError("runtime ausente em providerFetch", {
+      meta: { tenantId, capability },
+    });
   }
 
   if (!capability) {
-    const err = new Error("capability obrigatória em providerFetch");
-    err.code = "CAPABILITY_REQUIRED";
-    throw err;
+    throw new ProviderBadResponseError(
+      "capability obrigatória em providerFetch",
+      {
+        meta: { tenantId },
+      }
+    );
   }
-  
-  const resolvedCapability = capability;
-  
-  const baseUrl = resolveProviderBaseUrl(runtime, resolvedCapability);
 
-  if (!baseUrl) {
-    const err = new Error("Base URL do provider ausente no runtime");
-    err.code = "PROVIDER_BASE_URL_MISSING";
-    throw err;
-  }
+  const baseUrl = resolveProviderBaseUrl(runtime, capability);
 
   const accessToken = await getProviderAccessToken({
     tenantId,
     runtime,
-    capability: resolvedCapability,
+    capability,
   });
 
   const url = `${baseUrl}${path}`;
@@ -149,20 +180,59 @@ async function providerFetch(
 
   const safeQuery = sanitizeQueryForLog(query);
 
-  const response = await fetchWithTimeout(
-    url,
-    {
-      method,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-        ...(jsonBody ? { "Content-Type": "application/json" } : {}),
-        ...(extraHeaders || {}),
+  let response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          ...(jsonBody ? { "Content-Type": "application/json" } : {}),
+          ...(extraHeaders || {}),
+        },
+        body: jsonBody ? JSON.stringify(jsonBody) : undefined,
       },
-      body: jsonBody ? JSON.stringify(jsonBody) : undefined,
-    },
-    15000
-  );
+      15000
+    );
+  } catch (err) {
+    const message = String(err?.message || "").toLowerCase();
+
+    const normalizedErr = message.includes("timeout")
+      ? new ProviderTimeoutError("Provider request timeout", {
+          endpoint: path,
+          rid: requestId,
+          meta: {
+            tenantId,
+            capability,
+          },
+        })
+      : new ProviderNetworkError("Provider network failure", {
+          endpoint: path,
+          rid: requestId,
+          meta: {
+            tenantId,
+            capability,
+          },
+        });
+
+    techLog(
+      "PROVIDER_CALL_TRANSPORT_ERROR",
+      sanitizeForLog({
+        rid: requestId,
+        method,
+        path: sanitizePathForLog(path),
+        tenantId,
+        capability,
+        ...(traceMeta || {}),
+        error: normalizedErr.message,
+        errorCode: normalizedErr.code,
+      })
+    );
+
+    throw normalizedErr;
+  }
 
   const durationMs = Date.now() - startedAt;
 
@@ -173,22 +243,12 @@ async function providerFetch(
 
   const text = await response.text().catch(() => "");
   const textLen = text ? text.length : 0;
+  const data = parseResponseData(text);
 
-  let data;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text;
-  }
-
-  const normalizedText = typeof data === "string" ? data.toLowerCase() : "";
-
-  const isExpected404 =
-    response.status === 404 &&
-    (normalizedText.includes("não foram encontradas") ||
-      normalizedText.includes("não foram encontrados") ||
-      normalizedText.includes("usuário não encontrado") ||
-      normalizedText.includes("agendamento não encontrado"));
+  const isExpected404 = classifyExpected404({
+    status: response.status,
+    data,
+  });
 
   const technicalResult = response.ok
     ? "API_ACCEPTED"
@@ -207,16 +267,14 @@ async function providerFetch(
     query: safeQuery,
     hasBody: !!jsonBody,
     technicalResult,
-    capability: resolvedCapability,
+    capability,
     ...(traceMeta || {}),
     tenantId,
   };
 
   const baseLog = sanitizeForLog(baseLogRaw);
 
-  if (response.ok) {
-   
-  } else if (isExpected404) {
+  if (isExpected404) {
     const rateLimitKey = `expected404:${tenantId}:${method}:${safePath.split("?")[0]}`;
 
     logRateLimited(
@@ -226,7 +284,7 @@ async function providerFetch(
       baseLog,
       60000
     );
-  } else {
+  } else if (!response.ok) {
     techLog(
       "PROVIDER_CALL_FAIL",
       sanitizeForLog({
@@ -311,8 +369,19 @@ async function providerFetch(
   };
 }
 
+async function safeProviderFetch(path, options = {}) {
+  try {
+    return await providerFetch(path, options);
+  } catch (err) {
+    throw normalizeProviderError(err, {
+      endpoint: path,
+    });
+  }
+}
+
 export {
   mergeTraceMeta,
   providerFetch,
-  providerFetch as versatilisFetch,
+  safeProviderFetch,
+  safeProviderFetch as versatilisFetch,
 };
