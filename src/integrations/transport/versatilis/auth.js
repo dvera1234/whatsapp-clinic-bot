@@ -2,6 +2,12 @@ import crypto from "crypto";
 import { fetchWithTimeout } from "../../../utils/time.js";
 import { techLog, debugLog } from "../../../observability/audit.js";
 import { sanitizeForLog } from "../../../utils/logSanitizer.js";
+import {
+  ProviderAuthError,
+  ProviderBadResponseError,
+  ProviderNetworkError,
+  ProviderTimeoutError,
+} from "../../adapters/providers/versatilis/shared/versatilisErrors.js";
 
 const accessTokenCache = new Map();
 
@@ -23,14 +29,18 @@ function sanitizeProviderBase(value) {
   return s;
 }
 
-// 🔥 AGORA CORRETO: POR CAPABILITY
 function resolveProviderConfig(runtime = {}, capability) {
   const cfg = runtime?.integrations?.[capability];
 
-  if (!cfg) {
-    const err = new Error(`Provider config ausente para capability: ${capability}`);
-    err.code = "PROVIDER_CONFIG_MISSING";
-    throw err;
+  if (!cfg || typeof cfg !== "object") {
+    throw new ProviderAuthError(
+      `Provider config ausente para capability: ${capability}`,
+      {
+        meta: {
+          capability,
+        },
+      }
+    );
   }
 
   const baseUrl = sanitizeProviderBase(cfg?.baseUrl);
@@ -44,16 +54,19 @@ function resolveProviderConfig(runtime = {}, capability) {
   if (!password) missing.push(`${capability}.pass`);
 
   if (missing.length) {
-    const err = new Error(
-      `Provider auth config incompleta (${capability}): ${missing.join(", ")}`
+    throw new ProviderAuthError(
+      `Provider auth config incompleta (${capability})`,
+      {
+        meta: {
+          capability,
+          missingFields: missing,
+        },
+      }
     );
-    err.code = "PROVIDER_AUTH_CONFIG_INVALID";
-    err.missingFields = missing;
-    throw err;
   }
 
   return {
-    providerKey: cfg?.key || capability,
+    providerKey: readString(cfg?.key) || capability,
     baseUrl,
     username,
     password,
@@ -84,23 +97,46 @@ function maskBaseUrlForLog(baseUrl) {
   }
 }
 
-async function getProviderAccessToken({ tenantId, runtime, capability }) {
-  if (!tenantId) {
-    const err = new Error("tenantId ausente em getProviderAccessToken");
-    err.code = "TENANT_ID_MISSING";
-    throw err;
+function parseTokenResponse(data) {
+  const token =
+    data?.access_token ||
+    data?.token ||
+    data?.Token ||
+    (typeof data === "string" ? data : null);
+
+  if (!token || typeof token !== "string") {
+    return null;
   }
 
-  if (!runtime) {
-    const err = new Error("runtime ausente em getProviderAccessToken");
-    err.code = "RUNTIME_MISSING";
-    throw err;
+  const expiresIn =
+    Number(data?.expires_in || data?.expires || 3600) || 3600;
+
+  return {
+    token,
+    expiresIn,
+  };
+}
+
+async function getProviderAccessToken({ tenantId, runtime, capability }) {
+  if (!tenantId) {
+    throw new ProviderAuthError("tenantId ausente em getProviderAccessToken", {
+      meta: { capability },
+    });
+  }
+
+  if (!runtime || typeof runtime !== "object") {
+    throw new ProviderAuthError("runtime ausente em getProviderAccessToken", {
+      meta: { tenantId, capability },
+    });
   }
 
   if (!capability) {
-    const err = new Error("capability ausente em getProviderAccessToken");
-    err.code = "CAPABILITY_MISSING";
-    throw err;
+    throw new ProviderAuthError(
+      "capability ausente em getProviderAccessToken",
+      {
+        meta: { tenantId },
+      }
+    );
   }
 
   const { providerKey, baseUrl, username, password } =
@@ -153,9 +189,33 @@ async function getProviderAccessToken({ tenantId, runtime, capability }) {
       })
     );
 
-    const e = new Error("Falha de transporte ao obter token do provider.");
-    e.code = "PROVIDER_ACCESS_TOKEN_FETCH_TRANSPORT_ERROR";
-    throw e;
+    const msg = String(err?.message || "").toLowerCase();
+
+    if (msg.includes("timeout")) {
+      throw new ProviderTimeoutError(
+        "Falha por timeout ao obter token do provider",
+        {
+          endpoint: "/Token",
+          meta: {
+            tenantId,
+            providerKey,
+            capability,
+          },
+        }
+      );
+    }
+
+    throw new ProviderNetworkError(
+      "Falha de transporte ao obter token do provider",
+      {
+        endpoint: "/Token",
+        meta: {
+          tenantId,
+          providerKey,
+          capability,
+        },
+      }
+    );
   }
 
   const text = await response.text().catch(() => "");
@@ -179,21 +239,23 @@ async function getProviderAccessToken({ tenantId, runtime, capability }) {
       })
     );
 
-    const err = new Error(
-      `Falha ao obter token do provider. HTTP ${response.status}`
+    throw new ProviderAuthError(
+      `Falha ao obter token do provider. HTTP ${response.status}`,
+      {
+        endpoint: "/Token",
+        httpStatus: response.status,
+        meta: {
+          tenantId,
+          providerKey,
+          capability,
+        },
+      }
     );
-    err.code = "PROVIDER_ACCESS_TOKEN_FETCH_FAILED";
-    err.httpStatus = response.status;
-    throw err;
   }
 
-  const token =
-    data?.access_token ||
-    data?.token ||
-    data?.Token ||
-    (typeof data === "string" ? data : null);
+  const parsed = parseTokenResponse(data);
 
-  if (!token || typeof token !== "string") {
+  if (!parsed) {
     techLog(
       "PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE",
       sanitizeForLog({
@@ -204,17 +266,22 @@ async function getProviderAccessToken({ tenantId, runtime, capability }) {
       })
     );
 
-    const err = new Error("Resposta de token do provider inválida.");
-    err.code = "PROVIDER_ACCESS_TOKEN_INVALID_RESPONSE";
-    throw err;
+    throw new ProviderBadResponseError(
+      "Resposta de token do provider inválida",
+      {
+        endpoint: "/Token",
+        meta: {
+          tenantId,
+          providerKey,
+          capability,
+        },
+      }
+    );
   }
 
-  const expiresIn =
-    Number(data?.expires_in || data?.expires || 3600) || 3600;
-
   accessTokenCache.set(cacheKey, {
-    token,
-    expiresAt: now + Math.max(60, expiresIn) * 1000,
+    token: parsed.token,
+    expiresAt: now + Math.max(60, parsed.expiresIn) * 1000,
   });
 
   debugLog(
@@ -223,17 +290,67 @@ async function getProviderAccessToken({ tenantId, runtime, capability }) {
       tenantId,
       providerKey,
       capability,
-      expiresIn,
-      tokenMasked: maskToken(token),
+      expiresIn: parsed.expiresIn,
+      tokenMasked: maskToken(parsed.token),
       baseUrl: maskBaseUrlForLog(baseUrl),
     })
   );
 
-  return token;
+  return parsed.token;
 }
 
-function clearProviderAccessTokenCache() {
-  accessTokenCache.clear();
+function clearProviderAccessTokenCache({
+  tenantId,
+  runtime,
+  capability,
+} = {}) {
+  if (!tenantId && !runtime && !capability) {
+    accessTokenCache.clear();
+    return;
+  }
+
+  const keysToDelete = [];
+
+  for (const key of accessTokenCache.keys()) {
+    let shouldDelete = true;
+
+    if (tenantId) {
+      shouldDelete = shouldDelete && typeof key === "string";
+    }
+
+    if (shouldDelete) {
+      keysToDelete.push(key);
+    }
+  }
+
+  if (tenantId && runtime && capability) {
+    try {
+      const { providerKey, baseUrl, username } = resolveProviderConfig(
+        runtime,
+        capability
+      );
+
+      const exactKey = accessTokenCacheKey(
+        tenantId,
+        providerKey,
+        baseUrl,
+        username
+      );
+
+      accessTokenCache.delete(exactKey);
+      return;
+    } catch {
+      return;
+    }
+  }
+
+  for (const key of keysToDelete) {
+    accessTokenCache.delete(key);
+  }
 }
 
-export { getProviderAccessToken, clearProviderAccessTokenCache };
+export {
+  getProviderAccessToken,
+  clearProviderAccessTokenCache,
+  resolveProviderConfig,
+};
