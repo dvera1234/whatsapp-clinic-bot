@@ -150,6 +150,7 @@ export function buildTenantRuntime(config = {}) {
 
   const channels = {
     phoneNumberId: readString(source?.channels?.phoneNumberId),
+    token: readString(source?.channels?.token),
   };
 
   const portal = {
@@ -172,6 +173,7 @@ export function buildTenantRuntime(config = {}) {
 
   pushMissing(missing, !tenantId, "tenantId");
   pushMissing(missing, !channels.phoneNumberId, "channels.phoneNumberId");
+  pushMissing(missing, !channels.token, "channels.token");
 
   if (source?.portal?.url) {
     pushInvalid(invalid, !portal.url, "portal.url");
