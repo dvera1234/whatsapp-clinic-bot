@@ -495,6 +495,7 @@ export async function showNextDates({
 
   await sendListMessage({
     tenantId: runtimeCtx?.tenantId,
+    runtime: runtimeCtx?.runtime,
     to: phone,
     phoneNumberId,
     body: resolveBookingMessage(
@@ -522,6 +523,7 @@ export async function showNextDates({
 
 export async function showSlotsPage({
   tenantId,
+  runtime,
   phone,
   phoneNumberId,
   slots,
@@ -548,6 +550,7 @@ export async function showSlotsPage({
 
   await sendListMessage({
     tenantId,
+    runtime,
     to: phone,
     phoneNumberId,
     body: resolveBookingMessage(
