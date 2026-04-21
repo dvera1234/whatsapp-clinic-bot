@@ -4,10 +4,6 @@ import {
   updateSession,
 } from "../../session/redisSession.js";
 import {
-  LGPD_TEXT_VERSION,
-  LGPD_TEXT_HASH,
-} from "../../config/constants.js";
-import {
   onlyCpfDigits,
   cleanStr,
   isValidEmail,
@@ -118,8 +114,6 @@ export async function handlePatientIdentificationStep(flowCtx) {
     traceId,
     tracePhone: maskPhone(phone),
     cpfMasked: maskCpf(document),
-    consentTextVersion: LGPD_TEXT_VERSION,
-    consentTextHash: LGPD_TEXT_HASH,
     timestamp: new Date().toISOString(),
   });
 
