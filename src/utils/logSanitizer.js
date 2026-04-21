@@ -26,9 +26,12 @@ function maskPhone(value) {
 function maskEmail(value) {
   const s = String(value ?? "").trim();
   if (!s || !s.includes("@")) return value;
+
   const [user, domain] = s.split("@");
-  const safeUser = user.length <= 2 ? "***" : `${user.slice(0, 2)}***`;
-  return `${safeUser}@${domain}`;
+  const safeUser =
+    user.length <= 2 ? "***" : `${user.slice(0, 2)}***`;
+
+  return `${safeUser}@${domain || "***"}`;
 }
 
 function maskDate(value) {
@@ -40,9 +43,11 @@ function maskDate(value) {
 function maskName(value) {
   const s = String(value ?? "").trim();
   if (!s) return s;
+
   const parts = s.split(/\s+/).filter(Boolean);
   if (!parts.length) return "***";
-  return parts.map((p) => `${p.charAt(0)}***`).join(" ");
+
+  return parts.map((part) => `${part.charAt(0)}***`).join(" ");
 }
 
 function shouldPreserveKey(key) {
@@ -62,8 +67,10 @@ function shouldPreserveKey(key) {
     k === "codhorario" ||
     k === "planid" ||
     k === "codplano" ||
-    k === "providerid" ||
+    k === "practitionerid" ||
     k === "codcolaborador" ||
+    k === "provider" ||
+    k === "capability" ||
     k === "endpoint" ||
     k === "method" ||
     k === "technicalaccepted" ||
@@ -72,7 +79,6 @@ function shouldPreserveKey(key) {
     k === "escalationrequired" ||
     k === "hasbody" ||
     k === "ms" ||
-    k === "status" ||
     k === "statustext" ||
     k === "datatype" ||
     k === "isarray" ||
@@ -183,11 +189,10 @@ function sanitizePrimitiveByKey(key, value) {
   return sanitizePrimitiveByValue(value);
 }
 
-export function sanitizeForLog(input, depth = 0) {
+function sanitizeForLog(input, depth = 0) {
   if (depth > 6) return "[MaxDepth]";
 
   if (input == null) return input;
-
   if (typeof input === "boolean") return input;
   if (typeof input === "number") return input;
 
@@ -211,3 +216,13 @@ export function sanitizeForLog(input, depth = 0) {
 
   return out;
 }
+
+export {
+  sanitizeForLog,
+  maskString,
+  maskCpf,
+  maskPhone,
+  maskEmail,
+  maskDate,
+  maskName,
+};
