@@ -4,7 +4,6 @@ import crypto from "crypto";
 import { redis } from "../redis.js";
 import { getState } from "../session/redisSession.js";
 import { VERIFY_TOKEN } from "../config/env.js";
-import { LGPD_TEXT_HASH, LGPD_TEXT_VERSION } from "../config/constants.js";
 import { audit, errLog } from "../observability/audit.js";
 import { maskIp, maskPhone } from "../utils/mask.js";
 import { isValidMetaSignature } from "../whatsapp/signature.js";
@@ -69,8 +68,6 @@ function buildInboundContext({ tenantId, runtime, traceId, phoneNumberId }) {
     runtime,
     traceId,
     phoneNumberId,
-    LGPD_TEXT_VERSION,
-    LGPD_TEXT_HASH,
   };
 }
 
