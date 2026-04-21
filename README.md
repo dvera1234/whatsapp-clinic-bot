@@ -24,23 +24,27 @@ Arquitetura projetada para:
 - apenas interpreta runtime
 
 ### Runtime
+
 Gerado por:
 - banco (Postgres)
 - JSON do tenant
 - integrações
 
 Estrutura:
+
+```js
 runtime = {
-tenantId,
-providers,
-integrations,
-content,
-practitioners,
-plans,
-support,
-portal,
-channels
+  tenantId,
+  providers,
+  integrations,
+  content,
+  practitioners,
+  plans,
+  support,
+  portal,
+  channels
 }
+```
 
 ---
 
@@ -64,12 +68,24 @@ Logs estruturados e auditoria
 ---
 
 ## Fluxo de Execução
-Webhook → resolveTenant → load config → build runtime
-→ handleInbound → dispatch → handler → adapter → provider
+
+```text
+Webhook
+  → resolveTenant
+  → load config
+  → build runtime
+  → handleInbound
+  → dispatch
+  → handler
+  → adapter
+  → provider
+```
 
 ---
 
 ## ENV obrigatórias
+
+```text
 VERIFY_TOKEN
 APP_SECRET
 DATABASE_URL
@@ -77,17 +93,23 @@ UPSTASH_REDIS_REST_URL
 UPSTASH_REDIS_REST_TOKEN
 SESSION_TTL_SECONDS
 FLOW_RESET_CODE
+```
 
 ---
 
 ## Execução
 
 ### Produção
+
+```bash
 npm start
+```
 
 ### Desenvolvimento
-(requer nodemon)
+
+```bash
 npm run dev
+```
 
 ---
 
