@@ -7,6 +7,7 @@ import {
   parseExternalPatientIdFromAny,
   listPlanIdsFromProfile,
   validatePatientRegistrationData,
+  hasPlanByDomainKey,
 } from "../shared/versatilisMappers.js";
 
 function buildResult({
@@ -27,35 +28,6 @@ function buildResult({
   };
 }
 
-function sanitizePathForLog(path) {
-  const raw = String(path || "");
-  if (!raw) return raw;
-
-  try {
-    const fakeUrl = new URL(raw, "https://sanitizer.local");
-
-    const sensitiveKeys = new Set([
-      "cpf",
-      "usercpf",
-      "dtnasc",
-      "datanascimento",
-      "login",
-      "email",
-      "codusuario",
-    ]);
-
-    for (const [key] of fakeUrl.searchParams.entries()) {
-      if (sensitiveKeys.has(String(key).toLowerCase())) {
-        fakeUrl.searchParams.set(key, "***");
-      }
-    }
-
-    return `${fakeUrl.pathname}${fakeUrl.search}`;
-  } catch {
-    return raw;
-  }
-}
-
 function createVersatilisPatientAdapter(factoryCtx = {}) {
   async function findPatientIdByCpf({ cpf, runtimeCtx }) {
     const cpfDigits = String(cpf || "").replace(/\D+/g, "");
@@ -69,17 +41,11 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
     const candidates = [
       `/api/Login/CodUsuario?CPF=${encodeURIComponent(cpfDigits)}`,
       `/api/Login/CodUsuario?cpf=${encodeURIComponent(cpfDigits)}`,
-      cpfMask
-        ? `/api/Login/CodUsuario?CPF=${encodeURIComponent(cpfMask)}`
-        : null,
-      cpfMask
-        ? `/api/Login/CodUsuario?cpf=${encodeURIComponent(cpfMask)}`
-        : null,
+      cpfMask ? `/api/Login/CodUsuario?CPF=${encodeURIComponent(cpfMask)}` : null,
+      cpfMask ? `/api/Login/CodUsuario?cpf=${encodeURIComponent(cpfMask)}` : null,
     ].filter(Boolean);
 
     for (const path of candidates) {
-      const safePath = sanitizePathForLog(path);
-
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
         runtime,
@@ -91,17 +57,15 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         },
       });
 
-      const parsed = out.ok
-        ? parseExternalPatientIdFromAny(out.data)
-        : null;
+      const parsed = out.ok ? parseExternalPatientIdFromAny(out.data) : null;
 
       debugLog(
         "VERSA_PATIENT_ID_LOOKUP",
         sanitizeForLog({
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
-          path: safePath,
           httpStatus: out.status,
+          rid: out.rid,
           parsed: parsed ? "FOUND" : "NOT_FOUND",
         })
       );
@@ -118,39 +82,6 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
     return null;
   }
 
-  function resolvePlanExternalId({ planKey, runtimeCtx }) {
-    const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
-    const runtime = ctx.runtime;
-
-    const externalId =
-      runtime?.planMappings?.[planKey]?.externalId != null
-        ? Number(runtime.planMappings[planKey].externalId)
-        : null;
-
-    return Number.isFinite(externalId) ? externalId : null;
-  }
-
-  function hasPlan({ profile, planKey, runtimeCtx }) {
-    const externalId = resolvePlanExternalId({ planKey, runtimeCtx });
-
-    if (!externalId) {
-      return buildResult({
-        ok: false,
-        data: false,
-        errorCode: "PLAN_MAPPING_MISSING",
-      });
-    }
-
-    const planIds = listPlanIdsFromProfile(profile) || [];
-
-    const normalized = planIds.map((x) => Number(x)).filter(Number.isFinite);
-
-    return buildResult({
-      ok: true,
-      data: normalized.includes(externalId),
-    });
-  }
-
   return {
     async findPatientByDocument({ document, runtimeCtx }) {
       const found = await findPatientIdByCpf({
@@ -163,6 +94,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
           ok: false,
           status: 404,
           errorCode: "PATIENT_NOT_FOUND",
+          errorMessage: "Patient not found",
         });
       }
 
@@ -175,10 +107,14 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         ok: profile.ok,
         status: profile.status,
         rid: profile.rid,
-        data: {
-          patientId: found.id,
-          profile: profile.data,
-        },
+        errorCode: profile.errorCode,
+        errorMessage: profile.errorMessage,
+        data: profile.ok
+          ? {
+              patientId: found.id,
+              profile: profile.data,
+            }
+          : null,
       });
     },
 
@@ -193,6 +129,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
           ok: false,
           status: 404,
           errorCode: "PATIENT_ID_NOT_FOUND",
+          errorMessage: "Patient id not found",
         });
       }
 
@@ -210,18 +147,19 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
       const runtime = ctx.runtime;
 
-      const externalId = Number(patientId);
+      const externalPatientId = Number(patientId);
 
-      if (!Number.isFinite(externalId)) {
+      if (!Number.isFinite(externalPatientId) || externalPatientId <= 0) {
         return buildResult({
           ok: false,
           status: 400,
           errorCode: "INVALID_PATIENT_ID",
+          errorMessage: "Invalid patientId",
         });
       }
 
       const path = `/api/Login/DadosUsuarioPorCodigo?CodUsuario=${encodeURIComponent(
-        externalId
+        externalPatientId
       )}`;
 
       const out = await versatilisFetch(path, {
@@ -241,6 +179,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
           status: out.status || 502,
           rid: out.rid,
           errorCode: "PATIENT_PROFILE_FAILED",
+          errorMessage: "Failed to load patient profile",
         });
       }
 
@@ -266,7 +205,15 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
       });
     },
 
-    hasPlan,
+    hasPlan({ profile, planKey, runtimeCtx }) {
+      const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
+      const planIds = listPlanIdsFromProfile(profile) || [];
+
+      return buildResult({
+        ok: true,
+        data: hasPlanByDomainKey(planIds, planKey, ctx.runtime),
+      });
+    },
   };
 }
 
