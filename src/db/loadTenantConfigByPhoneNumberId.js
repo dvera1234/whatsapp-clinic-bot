@@ -87,6 +87,7 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       t.status,
 
       tc.phone_number_id,
+      tc.access_token,
 
       cs.support_wa_number,
       cs.portal_url,
@@ -170,6 +171,7 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
 
     channels: {
       phoneNumberId: readString(first?.phone_number_id),
+      token: readString(first?.access_token),
     },
 
     portal: {
