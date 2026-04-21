@@ -11,24 +11,47 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
       ...options,
       signal: controller.signal,
     });
-  } catch (e) {
-    if (e?.name === "AbortError") {
+  } catch (error) {
+    if (error?.name === "AbortError") {
       throw new Error(`Fetch timeout after ${timeoutMs}ms`);
     }
-    throw e;
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 }
 
+function isRealDateParts(day, month, year) {
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) {
+    return false;
+  }
+
+  if (year < 1000 || year > 9999) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
 function parseBRDateToISO(br) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(br || "").trim());
-  if (!m) return null;
-  const dd = Number(m[1]);
-  const mm = Number(m[2]);
-  const yyyy = Number(m[3]);
-  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-  return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(br || "").trim());
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+
+  if (!isRealDateParts(day, month, year)) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 export {
