@@ -1,8 +1,4 @@
 import { clearSession, getSession } from "../../session/redisSession.js";
-import {
-  LGPD_TEXT_VERSION,
-  LGPD_TEXT_HASH,
-} from "../../config/constants.js";
 import { audit } from "../../observability/audit.js";
 import { maskPhone } from "../../utils/mask.js";
 import {
@@ -78,8 +74,6 @@ export async function handlePortalFlowStep(flowCtx) {
         traceId,
         tracePhone: maskPhone(phone),
         consent: true,
-        consentTextVersion: LGPD_TEXT_VERSION,
-        consentTextHash: LGPD_TEXT_HASH,
         timestamp: new Date().toISOString(),
       });
 
@@ -101,8 +95,6 @@ export async function handlePortalFlowStep(flowCtx) {
         traceId,
         tracePhone: maskPhone(phone),
         consent: false,
-        consentTextVersion: LGPD_TEXT_VERSION,
-        consentTextHash: LGPD_TEXT_HASH,
         timestamp: new Date().toISOString(),
       });
 
