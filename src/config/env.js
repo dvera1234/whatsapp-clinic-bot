@@ -26,16 +26,26 @@ function isDebugVersaShapeEnabled() {
 
 const PORT = process.env.PORT || 3000;
 
+// 🔒 core system env
 const VERIFY_TOKEN = requireEnv("VERIFY_TOKEN");
-const WHATSAPP_TOKEN = requireEnv("WHATSAPP_TOKEN");
 const UPSTASH_REDIS_REST_URL = requireEnv("UPSTASH_REDIS_REST_URL");
 const UPSTASH_REDIS_REST_TOKEN = requireEnv("UPSTASH_REDIS_REST_TOKEN");
 const APP_SECRET = requireEnv("APP_SECRET");
 
-const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 900);
+// ⚠️ IMPORTANTE
+// removido WHATSAPP_TOKEN global → deve vir por tenant/channel
+
+const DATABASE_URL = requireEnv("DATABASE_URL");
+
+const SESSION_TTL_SECONDS = readPositiveIntEnv(
+  "SESSION_TTL_SECONDS",
+  900
+);
+
 const FLOW_RESET_CODE = String(process.env.FLOW_RESET_CODE || "").trim();
 
-const DEBUG_REDIS = String(process.env.DEBUG_REDIS || "0").trim() === "1";
+const DEBUG_REDIS =
+  String(process.env.DEBUG_REDIS || "0").trim() === "1";
 
 export {
   requireEnv,
@@ -44,10 +54,10 @@ export {
   isDebugVersaShapeEnabled,
   PORT,
   VERIFY_TOKEN,
-  WHATSAPP_TOKEN,
   UPSTASH_REDIS_REST_URL,
   UPSTASH_REDIS_REST_TOKEN,
   APP_SECRET,
+  DATABASE_URL,
   SESSION_TTL_SECONDS,
   FLOW_RESET_CODE,
   DEBUG_REDIS,
