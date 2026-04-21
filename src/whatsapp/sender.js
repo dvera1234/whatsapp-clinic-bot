@@ -1,24 +1,26 @@
 import { errLog } from "../observability/audit.js";
 import { maskPhone } from "../utils/mask.js";
 import { fetchWithTimeout } from "../utils/time.js";
-import { WHATSAPP_TOKEN } from "../config/env.js";
 
-function getSendConfig({ tenantId, phoneNumberId }) {
-  const safeTenantId = String(tenantId || "").trim();
-  const token = String(WHATSAPP_TOKEN || "").trim();
-  const channelId = String(phoneNumberId || "").trim();
+function readString(value) {
+  const v = String(value ?? "").trim();
+  return v || "";
+}
+
+function getChannelConfig({ tenantId, runtime, phoneNumberId }) {
+  const safeTenantId = readString(tenantId);
+  const channelId = readString(phoneNumberId);
+
+  const token = readString(runtime?.channels?.token);
 
   if (!safeTenantId) {
-    errLog("WHATSAPP_SEND_CONFIG_MISSING_TENANT_ID", {
-      hasPhoneNumberId: !!phoneNumberId,
-    });
+    errLog("WHATSAPP_SEND_CONFIG_MISSING_TENANT_ID", {});
     return null;
   }
 
   if (!token) {
     errLog("WHATSAPP_SEND_CONFIG_MISSING_TOKEN", {
       tenantId: safeTenantId,
-      hasPhoneNumberId: !!phoneNumberId,
     });
     return null;
   }
@@ -26,7 +28,6 @@ function getSendConfig({ tenantId, phoneNumberId }) {
   if (!channelId) {
     errLog("WHATSAPP_SEND_CONFIG_MISSING_PHONE_NUMBER_ID", {
       tenantId: safeTenantId,
-      hasPhoneNumberId: !!phoneNumberId,
     });
     return null;
   }
@@ -43,15 +44,7 @@ function truncate(str, max) {
   return s.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
 }
 
-async function sendText({
-  tenantId,
-  to,
-  body,
-  phoneNumberId,
-}) {
-  const config = getSendConfig({ tenantId, phoneNumberId });
-  if (!config) return false;
-
+async function sendRequest(config, payload, meta) {
   const resp = await fetchWithTimeout(
     config.url,
     {
@@ -60,129 +53,140 @@ async function sendText({
         Authorization: `Bearer ${config.token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        text: { body },
-      }),
+      body: JSON.stringify(payload),
     },
     15000
   );
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
-    errLog("WHATSAPP_SEND_TEXT_FAIL", {
-      tenantId,
-      phoneMasked: maskPhone(to),
+
+    errLog(meta.errorEvent, {
+      ...meta.log,
       httpStatus: resp.status,
       responseBodyPresent: !!txt,
       responseBodyLen: txt ? String(txt).length : 0,
-      bodyLength: String(body || "").length,
     });
-    return false;
+
+    return {
+      ok: false,
+      status: resp.status,
+    };
   }
 
-  return true;
+  return {
+    ok: true,
+    status: resp.status,
+  };
+}
+
+async function sendText({
+  tenantId,
+  runtime,
+  to,
+  body,
+  phoneNumberId,
+}) {
+  const config = getChannelConfig({ tenantId, runtime, phoneNumberId });
+  if (!config) return { ok: false };
+
+  return sendRequest(
+    config,
+    {
+      messaging_product: "whatsapp",
+      to,
+      text: { body },
+    },
+    {
+      errorEvent: "WHATSAPP_SEND_TEXT_FAIL",
+      log: {
+        tenantId,
+        phoneMasked: maskPhone(to),
+        bodyLength: String(body || "").length,
+      },
+    }
+  );
 }
 
 async function sendButtons({
   tenantId,
+  runtime,
   to,
   body,
   buttons,
   phoneNumberId,
 }) {
-  const config = getSendConfig({ tenantId, phoneNumberId });
-  if (!config) return false;
+  const config = getChannelConfig({ tenantId, runtime, phoneNumberId });
+  if (!config) return { ok: false };
 
-  const resp = await fetchWithTimeout(
-    config.url,
+  return sendRequest(
+    config,
     {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "interactive",
-        interactive: {
-          type: "button",
-          body: { text: body },
-          action: {
-            buttons: buttons.map((b) => ({
-              type: "reply",
-              reply: {
-                id: String(b.id || ""),
-                title: truncate(b.title, 20),
-              },
-            })),
-          },
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: body },
+        action: {
+          buttons: buttons.map((b) => ({
+            type: "reply",
+            reply: {
+              id: String(b.id || ""),
+              title: truncate(b.title, 20),
+            },
+          })),
         },
-      }),
+      },
     },
-    15000
+    {
+      errorEvent: "WHATSAPP_SEND_BUTTONS_FAIL",
+      log: {
+        tenantId,
+        phoneMasked: maskPhone(to),
+        buttonCount: Array.isArray(buttons) ? buttons.length : 0,
+      },
+    }
   );
-
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => "");
-    errLog("WHATSAPP_SEND_BUTTONS_FAIL", {
-      tenantId,
-      phoneMasked: maskPhone(to),
-      httpStatus: resp.status,
-      responseBodyPresent: !!txt,
-      responseBodyLen: txt ? String(txt).length : 0,
-      buttonCount: Array.isArray(buttons) ? buttons.length : 0,
-      bodyLength: String(body || "").length,
-    });
-    return false;
-  }
-
-  return true;
 }
 
 async function sendList({
   tenantId,
+  runtime,
   to,
   body,
-  buttonText = "Ver opções",
+  buttonText,
   sections,
   footerText,
   headerText,
   phoneNumberId,
 }) {
-  const config = getSendConfig({ tenantId, phoneNumberId });
-  if (!config) return false;
+  const config = getChannelConfig({ tenantId, runtime, phoneNumberId });
+  if (!config) return { ok: false };
 
   const safeSections = Array.isArray(sections)
     ? sections
         .map((section) => ({
           title: truncate(section?.title || "", 24),
-          rows: Array.isArray(section?.rows)
-            ? section.rows
-                .filter((row) => row && row.id && row.title)
-                .map((row) => ({
-                  id: String(row.id),
-                  title: truncate(row.title, 24),
-                  description: row.description
-                    ? truncate(row.description, 72)
-                    : undefined,
-                }))
-            : [],
+          rows: (section?.rows || [])
+            .filter((r) => r?.id && r?.title)
+            .map((r) => ({
+              id: String(r.id),
+              title: truncate(r.title, 24),
+              description: r.description
+                ? truncate(r.description, 72)
+                : undefined,
+            })),
         }))
-        .filter((section) => section.rows.length > 0)
+        .filter((s) => s.rows.length > 0)
     : [];
 
   if (!safeSections.length) {
     errLog("WHATSAPP_SEND_LIST_INVALID", {
       tenantId,
       phoneMasked: maskPhone(to),
-      hasBody: !!body,
-      hasSections: Array.isArray(sections),
-      sectionCount: Array.isArray(sections) ? sections.length : 0,
     });
-    return false;
+    return { ok: false };
   }
 
   const interactive = {
@@ -207,44 +211,26 @@ async function sendList({
     };
   }
 
-  const resp = await fetchWithTimeout(
-    config.url,
+  return sendRequest(
+    config,
     {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "interactive",
-        interactive,
-      }),
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive,
     },
-    15000
+    {
+      errorEvent: "WHATSAPP_SEND_LIST_FAIL",
+      log: {
+        tenantId,
+        phoneMasked: maskPhone(to),
+        sectionCount: safeSections.length,
+      },
+    }
   );
-
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => "");
-    errLog("WHATSAPP_SEND_LIST_FAIL", {
-      tenantId,
-      phoneMasked: maskPhone(to),
-      httpStatus: resp.status,
-      responseBodyPresent: !!txt,
-      responseBodyLen: txt ? String(txt).length : 0,
-      sectionCount: safeSections.length,
-      rowCount: safeSections.reduce((acc, s) => acc + s.rows.length, 0),
-      bodyLength: String(body || "").length,
-    });
-    return false;
-  }
-
-  return true;
 }
 
 export {
-  getSendConfig,
   sendText,
   sendButtons,
   sendList,
