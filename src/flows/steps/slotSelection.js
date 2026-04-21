@@ -111,10 +111,11 @@ async function renderSlots({
   slots,
   page,
 }) {
-  const { tenantId, phone, phoneNumberId, MSG, services } = flowCtx;
+  const { tenantId, runtime, phone, phoneNumberId, MSG, services } = flowCtx;
 
   await showSlotsPage({
     tenantId,
+    runtime,
     phone,
     phoneNumberId,
     slots: Array.isArray(slots) ? slots : [],
