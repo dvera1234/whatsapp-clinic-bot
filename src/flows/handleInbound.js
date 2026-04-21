@@ -403,6 +403,7 @@ async function handleInbound({
 
     await sendText({
       tenantId,
+      runtime,
       to: phone,
       body:
         "⚠️ Ocorreu um erro de configuração temporário. Por favor, fale com nossa equipe.",
@@ -431,7 +432,14 @@ async function handleInbound({
   }
 
   configureInactivityHandler({
-    sendText,
+    sendText: ({ tenantId, to, body, phoneNumberId }) =>
+      sendText({
+        tenantId,
+        runtime,
+        to,
+        body,
+        phoneNumberId,
+      }),
     getMessage: () =>
       runtime?.content?.messages?.inactivityClosedMessage ||
       "Sessão encerrada por inatividade.",
@@ -499,9 +507,46 @@ async function handleInbound({
   };
 
   const services = {
-    sendText,
-    sendButtons,
-    sendList,
+    sendText: ({ tenantId, to, body, phoneNumberId }) =>
+      sendText({
+        tenantId,
+        runtime,
+        to,
+        body,
+        phoneNumberId,
+      }),
+
+    sendButtons: ({ tenantId, to, body, buttons, phoneNumberId }) =>
+      sendButtons({
+        tenantId,
+        runtime,
+        to,
+        body,
+        buttons,
+        phoneNumberId,
+      }),
+
+    sendList: ({
+      tenantId,
+      to,
+      body,
+      buttonText,
+      sections,
+      footerText,
+      headerText,
+      phoneNumberId,
+    }) =>
+      sendList({
+        tenantId,
+        runtime,
+        to,
+        body,
+        buttonText,
+        sections,
+        footerText,
+        headerText,
+        phoneNumberId,
+      }),
   };
 
   const capabilities = {
