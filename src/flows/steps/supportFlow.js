@@ -14,10 +14,6 @@ function readString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function resolveSupportWa(runtime) {
-  return readString(runtime?.support?.waNumber);
-}
-
 export async function handleSupportFlowStep(
   flowCtx,
   { allowFreeTextAttendant = false } = {}
@@ -52,7 +48,7 @@ export async function handleSupportFlowStep(
       phone,
       phoneNumberId,
       prefill,
-      supportWa,
+      runtime,
       nextState: "MAIN",
       MSG,
       services,
@@ -89,7 +85,7 @@ export async function handleSupportFlowStep(
       phone,
       phoneNumberId,
       prefill,
-      supportWa,
+      runtime,
       nextState: "MAIN",
       MSG,
       services,
@@ -125,7 +121,7 @@ export async function handleSupportFlowStep(
       phone,
       phoneNumberId,
       prefill,
-      supportWa,
+      runtime,
       nextState: "MAIN",
       MSG,
       services,
@@ -156,7 +152,7 @@ export async function handleSupportFlowStep(
       phone,
       phoneNumberId,
       prefill,
-      supportWa,
+      runtime,
       nextState: "MAIN",
       MSG,
       services,
