@@ -30,9 +30,7 @@ export async function handleSupportFlowStep(
     services,
     runtime,
   } = flowCtx;
-
-  const supportWa = resolveSupportWa(runtime);
-
+  
   if (upper === "FALAR_ATENDENTE") {
     const sessionObj = await getSession(tenantId, phone);
 
