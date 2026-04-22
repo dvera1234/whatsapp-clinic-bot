@@ -35,6 +35,7 @@ export async function handleSupportFlowStep(
     const sessionObj = await getSession(tenantId, phone);
 
     const prefill = buildSupportPrefillFromSession(
+      runtime,
       phone,
       sessionObj,
       traceId,
@@ -71,6 +72,7 @@ export async function handleSupportFlowStep(
     const details = readString(raw);
 
     const prefill = buildSafeSupportPrefill({
+      runtime,
       tenantId,
       traceId,
       phone,
@@ -107,6 +109,7 @@ export async function handleSupportFlowStep(
     }
 
     const prefill = buildSafeSupportPrefill({
+      runtime,
       tenantId,
       traceId,
       phone,
@@ -138,6 +141,7 @@ export async function handleSupportFlowStep(
     }
 
     const prefill = buildSafeSupportPrefill({
+      runtime,
       tenantId,
       traceId,
       phone,
