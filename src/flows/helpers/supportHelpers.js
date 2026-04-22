@@ -84,6 +84,7 @@ export async function sendSupportLink({
 }
 
 export function buildSupportPrefillFromSession(
+  runtime,
   phone,
   session,
   traceId = null,
@@ -94,21 +95,40 @@ export function buildSupportPrefillFromSession(
     : [];
 
   return buildSafeSupportPrefill({
+    runtime,
     traceId,
     phone,
     reason: resolveSupportReason(session),
-    details: sanitizeDetails(session?.portal?.issue?.detail || session?.portal?.issue?.message),
+    details: sanitizeDetails(
+      session?.portal?.issue?.detail || session?.portal?.issue?.message
+    ),
     missing,
   });
 }
 
 export function buildSafeSupportPrefill({
+  runtime,
   traceId = null,
   phone = "",
   reason = "",
   details = "",
   missing = [],
 }) {
+  const normalizedPhone = normalizeWhatsAppNumber(phone);
+
+  const replyMessage = readString(
+    runtime?.content?.messages?.supportReplyMessage
+  );
+
+  const replyLink = normalizedPhone
+    ? `https://wa.me/${normalizedPhone}`
+    : "";
+
+  const replyLinkWithText =
+    normalizedPhone && replyMessage
+      ? `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(replyMessage)}`
+      : replyLink;
+
   const lines = [
     "Olá! Preciso de ajuda no agendamento.",
     "",
@@ -116,6 +136,10 @@ export function buildSafeSupportPrefill({
     `Paciente: ${maskPhone(phone)}`,
     `Motivo: ${readString(reason) || "Ajuda no agendamento."}`,
   ];
+
+  if (replyLinkWithText) {
+    lines.push(`Responder ao paciente: ${replyLinkWithText}`);
+  }
 
   const normalizedDetails = sanitizeDetails(details);
   if (normalizedDetails) {
