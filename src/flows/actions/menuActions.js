@@ -437,6 +437,7 @@ export async function actionShowMessage(flowCtx) {
 
   await sendAndSetState({
     tenantId,
+    runtime,
     phone,
     body,
     state: nextState,
