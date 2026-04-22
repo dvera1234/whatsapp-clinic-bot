@@ -54,6 +54,7 @@ export async function failSafeTenantConfigError({
   try {
     const sent = await sendText({
       tenantId,
+      runtime,
       to: phone,
       body,
       phoneNumberId,
@@ -113,6 +114,7 @@ export async function resetToMain(flowCtx) {
 
 export async function sendAndSetState({
   tenantId,
+  runtime,
   phone,
   body,
   state,
@@ -123,6 +125,7 @@ export async function sendAndSetState({
   if (text) {
     const sent = await sendText({
       tenantId,
+      runtime,
       to: phone,
       body: text,
       phoneNumberId,
