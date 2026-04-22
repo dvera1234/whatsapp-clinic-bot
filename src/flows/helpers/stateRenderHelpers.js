@@ -1,6 +1,7 @@
 import { setState } from "../../session/redisSession.js";
 import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { handleMainMenuStep } from "../steps/mainMenu.js";
+import { handleSupportFlowStep } from "../steps/supportFlow.js";
 import { audit } from "../../observability/audit.js";
 
 // =========================
@@ -134,9 +135,24 @@ async function renderLgpdConsent(flowCtx, state) {
   return true;
 }
 
+async function renderSupport(flowCtx, state) {
+  const handled = await handleSupportFlowStep(flowCtx);
+
+  if (handled) {
+    audit("STATE_RENDERED", {
+      tenantId: flowCtx?.tenantId,
+      state,
+      renderer: "support",
+    });
+  }
+
+  return handled;
+}
+
 const STATE_RENDERERS = Object.freeze({
   mainMenu: renderMainMenu,
   lgpdConsent: renderLgpdConsent,
+  support: renderSupport,
 });
 
 function resolveRenderer(flowCtx, state) {
