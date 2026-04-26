@@ -11,18 +11,9 @@ function isObject(value) {
 }
 
 function getPlans(runtime) {
-  const plans = Array.isArray(runtime?.content?.plans)
+  return Array.isArray(runtime?.content?.plans)
     ? runtime.content.plans
     : [];
-
-  return plans.filter((plan) => {
-    if (!plan || typeof plan !== "object") return false;
-
-    // flag declarativa de UI
-    if (plan?.ui?.hideInPlanMenu === true) return false;
-
-    return true;
-  });
 }
 
 function getFlows(runtime) {
