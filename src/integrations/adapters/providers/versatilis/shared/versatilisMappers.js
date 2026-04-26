@@ -102,11 +102,13 @@ function validatePatientRegistrationData(profile = {}) {
   if (!hasDateLike(birthDate)) missing.push("data de nascimento");
   if (!hasValidEmail(email)) missing.push("e-mail");
   if (onlyDigits(mobilePhone).length < 10) missing.push("celular");
-  if (!hasValidPostalCode(postalCode)) missing.push("cep");
-  if (!hasMinText(streetAddress, 3)) missing.push("endereço");
-  if (!hasMinText(addressNumber, 1)) missing.push("número");
-  if (!hasMinText(district, 2)) missing.push("bairro");
-  if (!hasMinText(city, 2)) missing.push("cidade");
+  
+  // opcionais (validar só se vier preenchido)
+  if (postalCode && !hasValidPostalCode(postalCode)) missing.push("cep");
+  if (streetAddress && !hasMinText(streetAddress, 3)) missing.push("endereço");
+  if (addressNumber && !hasMinText(addressNumber, 1)) missing.push("número");
+  if (district && !hasMinText(district, 2)) missing.push("bairro");
+  if (city && !hasMinText(city, 2)) missing.push("cidade");
 
   return {
     ok: missing.length === 0,
