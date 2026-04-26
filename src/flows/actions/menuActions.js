@@ -1,4 +1,4 @@
-import { setState } from "../../session/redisSession.js";
+import { setState, updateSession } from "../../session/redisSession.js";
 import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { resetToMain, sendAndSetState } from "../helpers/flowHelpers.js";
 import { renderState } from "../helpers/stateRenderHelpers.js";
@@ -362,7 +362,38 @@ export async function actionSelectPlan(flowCtx) {
 
   const plan = findPlanById(runtime, planId);
   assertPlanIsActionReady(plan, runtime);
-
+  
+  await updateSession(tenantId, phone, (sess) => {
+    sess.booking = sess.booking || {};
+  
+    sess.booking.planId = readString(plan.id);
+    sess.booking.planKey = readString(plan.key);
+    sess.booking.planFlow = readString(plan.flow);
+    sess.booking.planLabel = readString(plan.label);
+    sess.booking.planMessageKey = readString(plan.messageKey);
+    sess.booking.planNextState = readString(plan.nextState);
+  
+    sess.booking.practitionerMode = readString(plan?.booking?.practitionerMode);
+    sess.booking.practitionerIds = Array.isArray(plan?.booking?.practitionerIds)
+      ? plan.booking.practitionerIds.map((value) => readString(value)).filter(Boolean)
+      : [];
+  
+    if (sess.booking.practitionerMode === "FIXED" && sess.booking.practitionerIds.length === 1) {
+      sess.booking.practitionerId = sess.booking.practitionerIds[0];
+    }
+  
+    sess.booking.patientId = null;
+    sess.booking.appointmentDate = null;
+    sess.booking.selectedDate = null;
+    sess.booking.datePage = 0;
+    sess.booking.slotPage = 0;
+    sess.booking.slots = [];
+    sess.booking.selectedSlotId = null;
+    sess.booking.isReturn = false;
+  
+    delete sess.pending;
+  });
+  
   Object.assign(flowCtx, buildPlanSelectionFlowCtx(flowCtx, plan.id, targetState));
   
   audit("ACTION_SELECT_PLAN_PREPARED", {
