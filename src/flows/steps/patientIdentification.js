@@ -312,7 +312,7 @@ export async function handlePatientIdentificationStep(flowCtx) {
     }
   });
 
-  const validationResult = adapters.patientAdapter.validateRegistrationData({
+  const validationResult = await adapters.patientAdapter.validateRegistrationData({
     profile,
   });
 
