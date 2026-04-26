@@ -198,7 +198,7 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
         ok: validation?.ok === true,
         data: validation,
       });
-    }
+    },
 
     listActivePlans({ profile }) {
       return buildResult({
