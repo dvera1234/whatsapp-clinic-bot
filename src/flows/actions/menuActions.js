@@ -27,7 +27,17 @@ function getSubmenu(runtime, key) {
 }
 
 function getPlans(runtime) {
-  return Array.isArray(runtime?.content?.plans) ? runtime.content.plans : [];
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  return plans.filter((plan) => {
+    if (!plan || typeof plan !== "object") return false;
+
+    if (plan?.ui?.hideInPlanMenu === true) return false;
+
+    return true;
+  });
 }
 
 function getPractitioners(runtime) {
