@@ -27,15 +27,15 @@ function getSubmenu(runtime, key) {
 }
 
 function getPlans(runtime) {
-  const plans = Array.isArray(runtime?.content?.plans)
-    ? runtime.content.plans
+  return Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans.filter((plan) => plan && typeof plan === "object")
     : [];
+}
 
-  return plans.filter((plan) => {
-    if (!plan || typeof plan !== "object") return false;
-
+function getVisiblePlans(runtime) {
+  return getPlans(runtime).filter((plan) => {
+    if (plan?.active === false) return false;
     if (plan?.ui?.hideInPlanMenu === true) return false;
-
     return true;
   });
 }
@@ -300,8 +300,7 @@ export async function actionPlanMenu(flowCtx) {
 
   const targetState = assertKnownState(runtime, resolvePlanMenuState(menuOption));
 
-  const plans = getPlans(runtime)
-    .filter((plan) => plan?.active !== false)
+  const plans = getVisiblePlans(runtime)
     .map((plan) => assertPlanIsActionReady(plan, runtime));
 
   if (!plans.length) {
