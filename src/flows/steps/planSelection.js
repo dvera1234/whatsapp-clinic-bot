@@ -203,28 +203,27 @@ async function handleInfoOnlyOrEnd(flowCtx, plan) {
   const message = resolveMessage(runtime, MSG, plan.messageKey);
   const nextState = buildStateTarget(plan?.nextState);
 
+  if (nextState) {
+    await sendAndSetState({
+      tenantId,
+      phone,
+      body: message || "",
+      state: nextState,
+      phoneNumberId,
+    });
+  
+    return true;
+  }
+  
   if (message) {
-    const sent = await services.sendText({
+    await services.sendText({
       tenantId,
       to: phone,
       body: message,
       phoneNumberId,
     });
-
-    if (!sent) return true;
   }
-
-  if (nextState) {
-    await setStateAndRender({
-      ...flowCtx,
-      state: nextState,
-      raw: "",
-      upper: "",
-      digits: ""
-    });
-    return true;
-  }
-
+  
   return true;
 }
 
