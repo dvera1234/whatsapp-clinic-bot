@@ -215,7 +215,13 @@ async function handleInfoOnlyOrEnd(flowCtx, plan) {
   }
 
   if (nextState) {
-    await setStateAndRender(flowCtx, nextState);
+    await setStateAndRender({
+      ...flowCtx,
+      state: nextState,
+      raw: "",
+      upper: "",
+      digits: ""
+    });
     return true;
   }
 
