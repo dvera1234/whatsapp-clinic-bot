@@ -64,12 +64,16 @@ async function showMenu({
   phoneNumberId,
   menuLike,
   fieldName,
+  introText = "",
 }) {
-  const body = readString(menuLike?.text);
+  const menuText = readString(menuLike?.text);
+  const intro = readString(introText);
 
-  if (!body) {
+  if (!menuText) {
     throw new Error(`TENANT_CONTENT_INVALID:${fieldName}.text_missing`);
   }
+
+  const body = intro ? `${intro}\n\n${menuText}` : menuText;
 
   await sendListMessage({
     tenantId,
@@ -114,6 +118,7 @@ export async function handleMainMenuStep(flowCtx) {
       phoneNumberId,
       menuLike: menu,
       fieldName: "menu",
+      introText: flowCtx?.renderIntroText,
     });
 
     return true;
@@ -147,6 +152,7 @@ export async function handleMainMenuStep(flowCtx) {
     phoneNumberId,
     menuLike: submenu,
     fieldName: `submenus.${submenuKey}`,
+    introText: flowCtx?.renderIntroText,
   });
 
   return true;
