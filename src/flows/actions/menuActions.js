@@ -83,11 +83,18 @@ function buildPlanSections(plans, sectionTitle) {
   return [
     {
       title: readString(sectionTitle),
-      rows: plans.map((plan) => ({
-        id: String(plan.id),
-        title: String(plan.label || plan.id),
-        description: readString(plan.description),
-      })),
+      rows: [
+        ...plans.map((plan) => ({
+          id: String(plan.id),
+          title: String(plan.label || plan.id),
+          description: readString(plan.description),
+        })),
+        {
+          id: "BACK_TO_MENU",
+          title: "Voltar ao menu principal",
+          description: "",
+        },
+      ],
     },
   ];
 }
