@@ -363,18 +363,26 @@ export async function actionSelectPlan(flowCtx) {
   const plan = findPlanById(runtime, planId);
   assertPlanIsActionReady(plan, runtime);
 
-  await setState(tenantId, phone, targetState);
-
   Object.assign(flowCtx, buildPlanSelectionFlowCtx(flowCtx, plan.id, targetState));
-
+  
   audit("ACTION_SELECT_PLAN_PREPARED", {
     tenantId,
     state: targetState,
     planId: readString(plan.id),
     planKey: readString(plan.key),
   });
-
-  return false;
+  
+  await setState(tenantId, phone, targetState);
+  
+  await renderState({
+    ...flowCtx,
+    state: targetState,
+    raw: "",
+    upper: "",
+    digits: "",
+  });
+  
+  return true;
 }
 
 export async function actionSelectCurrentPlan(flowCtx) {
