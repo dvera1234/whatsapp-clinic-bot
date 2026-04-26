@@ -589,7 +589,11 @@ export async function finishWizardAndGoToDates({
   MSG,
   services,
 }) {
-  const plan = getPlanByKey(runtime, planKeyFromWizard);
+  const planKey =
+    readString(planKeyFromWizard) ||
+    readString((await getSession(tenantId, phone))?.booking?.planKey);
+  
+  const plan = getPlanByKey(runtime, planKey);
 
   const planPractitionerMode = readString(plan?.booking?.practitionerMode);
   const planPractitionerIds = normalizeIdList(plan?.booking?.practitionerIds);
@@ -597,7 +601,10 @@ export async function finishWizardAndGoToDates({
   await updateSession(tenantId, phone, (sess) => {
     sess.booking = sess.booking || {};
     sess.booking.patientId = patientId || null;
-    sess.booking.planKey = readString(planKeyFromWizard) || null;
+    sess.booking.planKey =
+      readString(planKeyFromWizard) ||
+      readString(sess.booking?.planKey) ||
+      null;
 
     if (plan) {
       sess.booking.planId = readString(plan?.id) || null;
