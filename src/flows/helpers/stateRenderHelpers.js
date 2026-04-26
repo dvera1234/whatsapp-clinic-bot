@@ -100,6 +100,7 @@ async function renderMainMenu(flowCtx, state) {
     raw: "",
     upper: "",
     digits: "",
+    renderIntroText: readString(flowCtx?.renderIntroText),
   });
 }
 
