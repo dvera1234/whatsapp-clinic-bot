@@ -192,11 +192,13 @@ function createVersatilisPatientAdapter(factoryCtx = {}) {
     },
 
     validateRegistrationData({ profile }) {
+      const validation = validatePatientRegistrationData(profile);
+    
       return buildResult({
-        ok: true,
-        data: validatePatientRegistrationData(profile),
+        ok: validation?.ok === true,
+        data: validation,
       });
-    },
+    }
 
     listActivePlans({ profile }) {
       return buildResult({
