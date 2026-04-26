@@ -45,7 +45,7 @@ function resolveHandlerName(runtime, state) {
   const matchedPrefix = Object.keys(statePrefixes).find(
     (prefix) =>
       normalizedState === prefix ||
-      normalizedState.startsWith(`${prefix}:`)
+      normalizedState.startsWith(prefix)
   );
 
   if (matchedPrefix) {
