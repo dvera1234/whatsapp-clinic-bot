@@ -115,6 +115,7 @@ export async function handlePortalFlowStep(flowCtx) {
 
       await sendAndSetState({
         tenantId,
+        runtime,
         phone,
         body:
           runtime?.content?.messages?.askCpfPortal ||
