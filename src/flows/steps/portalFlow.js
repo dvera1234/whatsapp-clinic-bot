@@ -9,7 +9,7 @@ import {
   buildSafeSupportPrefill,
   sendSupportLink,
 } from "../helpers/supportHelpers.js";
-import { setStateAndRender } from "../helpers/stateRenderHelpers.js";
+import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 
 function resolveSupportWa(flowCtx) {
   return (
@@ -49,6 +49,42 @@ function normalizeLgpdChoice({ raw, upper }) {
   }
 
   return null;
+}
+
+async function renderLgpdConsent(flowCtx) {
+  const { tenantId, phone, phoneNumberId, runtime } = flowCtx;
+  const messages = runtime?.content?.messages || {};
+
+  await sendListMessage({
+    tenantId,
+    runtime,
+    to: phone,
+    phoneNumberId,
+    body: messages.lgpdConsent,
+    buttonText: messages.lgpdButtonText || messages.listButtonText,
+    sections: [
+      {
+        title: messages.lgpdSectionTitle,
+        rows: [
+          {
+            id: "LGPD_ACCEPT",
+            title: messages.lgpdAcceptLabel,
+            description: messages.lgpdAcceptDescription || "",
+          },
+          {
+            id: "LGPD_REJECT",
+            title: messages.lgpdRejectLabel,
+            description: messages.lgpdRejectDescription || "",
+          },
+        ],
+      },
+    ],
+  });
+
+  audit("LGPD_CONSENT_RENDERED", {
+    tenantId,
+    state: "LGPD_CONSENT",
+  });
 }
 
 export async function handlePortalFlowStep(flowCtx) {
@@ -111,18 +147,20 @@ export async function handlePortalFlowStep(flowCtx) {
       return true;
     }
 
-    await services.sendText({
-      tenantId,
-      to: phone,
-      body:
-        runtime?.content?.messages?.lgpdButtonsOnly ||
-        runtime?.content?.messages?.buttonsOnlyWarning ||
-        MSG?.LGPD_BUTTONS_ONLY ||
-        MSG?.BUTTONS_ONLY_WARNING,
-      phoneNumberId,
-    });
-
-    await setStateAndRender(flowCtx, "LGPD_CONSENT");
+    if (raw || upper) {
+      await services.sendText({
+        tenantId,
+        to: phone,
+        body:
+          runtime?.content?.messages?.lgpdButtonsOnly ||
+          runtime?.content?.messages?.buttonsOnlyWarning ||
+          MSG?.LGPD_BUTTONS_ONLY ||
+          MSG?.BUTTONS_ONLY_WARNING,
+        phoneNumberId,
+      });
+    }
+    
+    await renderLgpdConsent(flowCtx);
     return true;
   }
 
