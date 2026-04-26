@@ -206,6 +206,7 @@ async function handleInfoOnlyOrEnd(flowCtx, plan) {
   if (nextState) {
     await sendAndSetState({
       tenantId,
+      runtime,
       phone,
       body: message || "",
       state: nextState,
