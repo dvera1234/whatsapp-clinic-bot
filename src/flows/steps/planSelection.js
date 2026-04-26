@@ -339,6 +339,23 @@ export async function handlePlanSelectionStep(flowCtx) {
   }
 
   if (flow.type === "BOOKING" || flow.type === "CONTINUE") {
+    const nextState = buildStateTarget(plan?.nextState);
+  
+    if (nextState) {
+      await setStateAndRender(
+        {
+          ...flowCtx,
+          state: nextState,
+          raw: "",
+          upper: "",
+          digits: "",
+        },
+        nextState
+      );
+  
+      return true;
+    }
+  
     return await handleBookingOrContinue(flowCtx);
   }
 
