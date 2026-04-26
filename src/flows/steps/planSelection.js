@@ -214,7 +214,17 @@ async function handleInfoOnlyOrEnd(flowCtx, plan) {
       });
     }
   
-    await setStateAndRender(flowCtx, nextState);
+    await setStateAndRender(
+      {
+        ...flowCtx,
+        state: nextState,
+        raw: "",
+        upper: "",
+        digits: "",
+      },
+      nextState
+    );
+  
     return true;
   }
   
