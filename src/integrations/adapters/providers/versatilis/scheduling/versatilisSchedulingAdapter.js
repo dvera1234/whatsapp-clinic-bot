@@ -29,6 +29,24 @@ function normalizePositiveInt(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function resolveExternalPractitionerId(runtime, practitionerId) {
+  const direct = normalizePositiveInt(practitionerId);
+  if (direct) return direct;
+
+  const normalizedPractitionerId = String(practitionerId || "").trim();
+  if (!normalizedPractitionerId) return null;
+
+  const practitioners = Array.isArray(runtime?.practitioners)
+    ? runtime.practitioners
+    : [];
+
+  const practitioner = practitioners.find(
+    (item) => String(item?.practitionerId || "").trim() === normalizedPractitionerId
+  );
+
+  return normalizePositiveInt(practitioner?.externalId);
+}
+
 function normalizePositiveIntList(values) {
   if (!Array.isArray(values)) return [];
   return values
@@ -360,50 +378,39 @@ function isReturnFromLastAppointment({
 
 function createVersatilisSchedulingAdapter(factoryCtx = {}) {
   return {
-    async findSlotsByDate({
-      practitionerId,
-      patientId,
-      planKey,
-      isoDate,
-      runtimeCtx,
-    }) {
-      const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
+   async findSlotsByDate({
+    practitionerId,
+    patientId,
+    planKey,
+    isoDate,
+    appointmentDate,
+    runtimeCtx,
+  }) {
+    const ctx = getProviderRuntimeContext(runtimeCtx, factoryCtx);
+  
+    const externalPatientId = normalizePositiveInt(patientId);
+    const selectedDate = String(isoDate || appointmentDate || "").trim();
+    const externalPractitionerId = resolveExternalPractitionerId(
+      ctx.runtime,
+      practitionerId
+    );
 
-      const externalPatientId = normalizePositiveInt(patientId);
-      const appointmentDate = String(isoDate || "").trim();
-      const practitionerValidation = validatePractitionerSelection({
-        runtime: ctx.runtime,
-        planKey,
-        practitionerId,
-      });
-
-      if (!externalPatientId || !appointmentDate) {
+      if (!externalPatientId || !selectedDate || !externalPractitionerId) {
         return buildResult({
           ok: false,
           status: 400,
           errorCode: "INVALID_FIND_SLOTS_INPUT",
-          errorMessage: "Invalid patientId or isoDate",
+          errorMessage: "Invalid patientId, appointmentDate or practitionerId",
         });
       }
-
-      if (!practitionerValidation.ok) {
-        return buildResult({
-          ok: false,
-          status: 400,
-          errorCode: practitionerValidation.errorCode,
-          errorMessage: practitionerValidation.errorMessage,
-        });
-      }
-
-      const externalPractitionerId = practitionerValidation.practitionerId;
 
       const path =
         `/api/Agenda/Datas?CodColaborador=${encodeURIComponent(
           externalPractitionerId
         )}` +
         `&CodUsuario=${encodeURIComponent(externalPatientId)}` +
-        `&DataInicial=${encodeURIComponent(appointmentDate)}` +
-        `&DataFinal=${encodeURIComponent(appointmentDate)}`;
+        `&DataInicial=${encodeURIComponent(selectedDate)}` +
+        `&DataFinal=${encodeURIComponent(selectedDate)}`;
 
       const out = await versatilisFetch(path, {
         tenantId: ctx.tenantId,
@@ -413,8 +420,7 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
           tenantId: ctx.tenantId,
           traceId: ctx.traceId,
           flow: "FIND_SLOTS_BY_DATE",
-          planKey: planKey || null,
-          practitionerMode: practitionerValidation.practitionerMode,
+          planKey: planKey || null,          
         }),
       });
 
@@ -429,18 +435,14 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
       }
 
       const normalizedSlots = normalizeSlotsFromAgendaData(out.data);
-      const filteredSlots = filterSlotsByAllowedPractitioners(
-        normalizedSlots,
-        practitionerValidation.allowedPractitionerIds
-      );
 
       return buildResult({
         ok: true,
         status: out.status,
         rid: out.rid,
         data: {
-          slots: filteredSlots,
-          practitionerMode: practitionerValidation.practitionerMode,
+          slots: normalizedSlots,
+          practitionerMode: null,
         },
       });
     },
