@@ -3,6 +3,7 @@ import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { handleMainMenuStep } from "../steps/mainMenu.js";
 import { handlePortalFlowStep } from "../steps/portalFlow.js";
 import { handleSupportFlowStep } from "../steps/supportFlow.js";
+import { handlePractitionerSelectionStep } from "../steps/practitionerSelection.js";
 import { audit } from "../../observability/audit.js";
 
 // =========================
@@ -137,6 +138,26 @@ async function renderLgpdConsent(flowCtx, state) {
   return true;
 }
 
+async function renderPractitionerSelection(flowCtx, state) {
+  const handled = await handlePractitionerSelectionStep({
+    ...flowCtx,
+    state,
+    raw: "",
+    upper: "",
+    digits: "",
+  });
+
+  if (handled) {
+    audit("STATE_RENDERED", {
+      tenantId: flowCtx?.tenantId,
+      state,
+      renderer: "practitionerSelection",
+    });
+  }
+
+  return handled;
+}
+
 async function renderPortalFlow(flowCtx, state) {
   const handled = await handlePortalFlowStep({
     ...flowCtx,
@@ -175,6 +196,7 @@ const STATE_RENDERERS = Object.freeze({
   mainMenu: renderMainMenu,
   portalFlow: renderPortalFlow,
   support: renderSupport,
+  practitionerSelection: renderPractitionerSelection,
 });
 
 function resolveRenderer(flowCtx, state) {
