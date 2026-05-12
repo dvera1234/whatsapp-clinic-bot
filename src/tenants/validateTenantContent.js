@@ -543,6 +543,7 @@ export function validateTenantContent(content = {}, context = {}) {
     "portalFlow",
     "patientIdentification",
     "patientRegistration",
+    "practitionerSelection",
     "slotSelection",
     "bookingConfirmation",
     "support",
