@@ -50,6 +50,16 @@ function resolvePractitionerId(flowCtx, sessionObj) {
   return "";
 }
 
+function resolvePractitionerMode(sessionObj) {
+  return readString(sessionObj?.booking?.practitionerMode);
+}
+
+function resolvePractitionerIds(sessionObj) {
+  return Array.isArray(sessionObj?.booking?.practitionerIds)
+    ? sessionObj.booking.practitionerIds.map((item) => readString(item)).filter(Boolean)
+    : [];
+}
+
 function parseDatePage(raw) {
   const match = /^DATE_PAGE_(\d+)$/.exec(readString(raw));
   return match ? Number(match[1]) : null;
@@ -74,6 +84,8 @@ async function renderDates({
   flowCtx,
   patientId,
   practitionerId,
+  practitionerMode,
+  practitionerIds,
   page,
 }) {
   const {
@@ -92,7 +104,9 @@ async function renderDates({
     runtimeCtx: buildRuntimeCtx({ tenantId, runtime, traceId, phone }),
     phone,
     phoneNumberId,
+    practitionerMode,
     practitionerId,
+    practitionerIds,
     patientId,
     MSG,
     services,
@@ -149,8 +163,10 @@ export async function handleSlotSelectionStep(flowCtx) {
   const sessionObj = await getSession(tenantId, phone);
   const patientId = resolvePatientId(sessionObj);
   const practitionerId = resolvePractitionerId(flowCtx, sessionObj);
+  const practitionerMode = resolvePractitionerMode(sessionObj);
+  const practitionerIds = resolvePractitionerIds(sessionObj);
 
-  if (!patientId || !practitionerId || !schedulingAdapter) {
+  if (!patientId || !practitionerMode || !schedulingAdapter) {
     await services.sendText({
       tenantId,
       to: phone,
@@ -186,6 +202,8 @@ export async function handleSlotSelectionStep(flowCtx) {
       flowCtx,
       patientId,
       practitionerId,
+      practitionerMode,
+      practitionerIds,
       page: 0,
     });
   }
@@ -201,6 +219,8 @@ export async function handleSlotSelectionStep(flowCtx) {
       flowCtx,
       patientId,
       practitionerId,
+      practitionerMode,
+      practitionerIds,
       page: requestedDatePage,
     });
   }
@@ -224,7 +244,9 @@ export async function handleSlotSelectionStep(flowCtx) {
       outSlots = await findSlotsByDate({
         schedulingAdapter,
         runtimeCtx: buildRuntimeCtx({ tenantId, runtime, traceId, phone }),
+        practitionerMode,
         practitionerId,
+        practitionerIds,
         patientId,
         appointmentDate,
         phone,
@@ -382,6 +404,8 @@ export async function handleSlotSelectionStep(flowCtx) {
       flowCtx,
       patientId,
       practitionerId,
+      practitionerMode,
+      practitionerIds,
       page: readNumber(sessionObj?.booking?.datePage) ?? 0,
     });
   }
