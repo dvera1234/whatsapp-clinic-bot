@@ -372,8 +372,8 @@ export async function handleSlotSelectionStep(flowCtx) {
       to: phone,
       body: `Confirma este agendamento?\n\n📅 ${sessionObj?.booking?.appointmentDate}\n⏰ ${chosen.time}`,
       buttons: [
-        { id: "CONFIRMAR", title: MSG.ACTION_CONFIRM },
-        { id: "ESCOLHER_OUTRO", title: MSG.ACTION_PICK_OTHER },
+        { id: "CONFIRMAR", title: MSG.actionConfirm },
+        { id: "ESCOLHER_OUTRO", title: MSG.actionPickOther },
       ],
       phoneNumberId,
     });
