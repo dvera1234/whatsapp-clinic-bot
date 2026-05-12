@@ -2,6 +2,7 @@ import {
   updateSession,
   setState,
 } from "../../session/redisSession.js";
+import { renderState } from "../helpers/stateRenderHelpers.js";
 import { sendListMessage } from "../../whatsapp/sendListMessage.js";
 import { maskPhone } from "../../utils/mask.js";
 
@@ -630,6 +631,29 @@ export async function finishWizardAndGoToDates({
 
   await setState(tenantId, phone, "ASK_DATE_PICK");
 
+  if (planPractitionerMode === "USER_SELECT" && !readString(practitionerId)) {
+    await setState(tenantId, phone, "PRACTITIONER_PICK");
+
+    await renderState({
+      tenantId,
+      runtime,
+      traceId,
+      phone,
+      phoneNumberId,
+      state: "PRACTITIONER_PICK",
+      raw: "",
+      upper: "",
+      digits: "",
+      MSG,
+      services,
+      adapters: {
+        schedulingAdapter,
+      },
+    });
+
+    return true;
+  }
+  
   const shown = await showNextDates({
     schedulingAdapter,
     runtimeCtx: {
