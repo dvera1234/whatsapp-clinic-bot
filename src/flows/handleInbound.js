@@ -24,6 +24,7 @@ import { handleMainMenuStep } from "./steps/mainMenu.js";
 import { handlePlanSelectionStep } from "./steps/planSelection.js";
 import { handlePatientIdentificationStep } from "./steps/patientIdentification.js";
 import { handlePatientRegistrationStep } from "./steps/patientRegistration.js";
+import { handlePractitionerSelectionStep } from "./steps/practitionerSelection.js";
 import { handleSlotSelectionStep } from "./steps/slotSelection.js";
 import { handleBookingConfirmationStep } from "./steps/bookingConfirmation.js";
 import { handlePortalFlowStep } from "./steps/portalFlow.js";
@@ -62,6 +63,10 @@ const STEP_REGISTRY = Object.freeze({
   patientRegistration: {
     handler: handlePatientRegistrationStep,
     capability: "identity",
+  },
+  practitionerSelection: {
+    handler: handlePractitionerSelectionStep,
+    capability: "booking",
   },
   slotSelection: {
     handler: handleSlotSelectionStep,
@@ -547,6 +552,9 @@ async function handleInbound({
         headerText,
         phoneNumberId,
       }),
+  
+    renderState: (nextFlowCtx, explicitState) =>
+      renderState(nextFlowCtx, explicitState),
   };
 
   const capabilities = {
