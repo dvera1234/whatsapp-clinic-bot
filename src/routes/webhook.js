@@ -177,6 +177,7 @@ router.post("/webhook", async (req, res) => {
         phoneNumberId: phoneNumberId || null,
         reason: tenantResolved?.reason || "UNKNOWN",
         missingFields: tenantResolved?.missing || [],
+        invalidFields: tenantResolved?.invalid || [],
         blockedBeforeFlow: true,
       });
       return;
