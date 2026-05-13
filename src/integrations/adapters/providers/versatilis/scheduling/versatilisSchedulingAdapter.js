@@ -29,6 +29,11 @@ function normalizePositiveInt(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function normalizePractitionerId(value) {
+  const v = String(value || "").trim();
+  return v || null;
+}
+
 function resolveExternalPractitionerId(runtime, practitionerId) {
   const direct = normalizePositiveInt(practitionerId);
   if (direct) return direct;
@@ -67,6 +72,18 @@ function normalizePractitionerMode(value) {
   return null;
 }
 
+function normalizePractitionerIdList(values) {
+  if (!Array.isArray(values)) return [];
+
+  return [
+    ...new Set(
+      values
+        .map((value) => normalizePractitionerId(value))
+        .filter(Boolean)
+    ),
+  ];
+}
+
 function getPlanBookingConfig(runtime, planKey) {
   const plan = resolvePlanConfigByKey(planKey, runtime);
 
@@ -75,7 +92,7 @@ function getPlanBookingConfig(runtime, planKey) {
     practitionerMode: normalizePractitionerMode(
       plan?.booking?.practitionerMode
     ),
-    practitionerIds: normalizePositiveIntList(plan?.booking?.practitionerIds),
+    practitionerIds:  normalizePractitionerIdList(plan?.booking?.practitionerIds),
   };
 }
 
@@ -105,7 +122,7 @@ function validatePractitionerSelection({
   planKey,
   practitionerId,
 }) {
-  const normalizedPractitionerId = normalizePositiveInt(practitionerId);
+  const normalizedPractitionerId = normalizePractitionerId(practitionerId);
   const practitionerMode = resolvePractitionerMode(runtime, planKey);
   const allowedPractitionerIds = resolveAllowedPractitionerIds(runtime, planKey);
 
@@ -242,6 +259,21 @@ function mapBookingToVersatilisPayload(bookingRequest, runtime) {
     };
   }
 
+  const externalPractitionerId = resolveExternalPractitionerId(
+    runtime,
+    practitionerValidation.practitionerId
+  );
+  
+  if (!externalPractitionerId) {
+    return {
+      ok: false,
+      payload: null,
+      missing: [],
+      errorCode: "INVALID_EXTERNAL_PRACTITIONER_ID",
+      errorMessage: "Unable to resolve external practitioner id",
+    };
+  }
+  
   return {
     ok: true,
     missing: [],
@@ -252,7 +284,7 @@ function mapBookingToVersatilisPayload(bookingRequest, runtime) {
       CodPlano: planExternalId,
       CodHorario: slotId,
       CodUsuario: patientId,
-      CodColaborador: practitionerValidation.practitionerId,
+      CodColaborador: externalPractitionerId,
       BitTelemedicina: !!bookingRequest?.isTelemedicine,
       Confirmada: true,
     },
