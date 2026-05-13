@@ -165,6 +165,7 @@ function normalizeSlot(slot, practitionerId, appointmentDate) {
     unitId: readNumber(slot.unitId),
     specialtyId: readNumber(slot.specialtyId),
   };
+}
 
 // =========================
 // LOCK
