@@ -349,7 +349,11 @@ export async function handleSlotSelectionStep(flowCtx) {
     await updateSession(tenantId, phone, (sess) => {
       sess.booking = sess.booking || {};
       sess.booking.selectedSlotId = slotId;
-      sess.pending = { slotId };
+      sess.pending = {
+        slotId,
+        unitId: readNumber(chosen?.unitId),
+        specialtyId: readNumber(chosen?.specialtyId),
+      };
     });
 
     await setState(tenantId, phone, "WAIT_CONFIRM");
