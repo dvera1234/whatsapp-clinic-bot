@@ -90,6 +90,15 @@ export async function handleBookingConfirmationStep(flowCtx) {
 
   const sessionObj = await getSession(tenantId, phone);
   const slotId = readNumber(sessionObj?.pending?.slotId);
+
+  const selectedSlot = Array.isArray(sessionObj?.booking?.slots)
+    ? sessionObj.booking.slots.find(
+        (slot) => readNumber(slot?.slotId) === slotId
+      )
+    : null;
+  
+  const unitId = readNumber(selectedSlot?.unitId);
+  const specialtyId = readNumber(selectedSlot?.specialtyId);
   const patientId = readNumber(sessionObj?.booking?.patientId);
   const practitionerId = readString(sessionObj?.booking?.practitionerId);
   const planKey = readString(sessionObj?.booking?.planKey);
@@ -139,6 +148,8 @@ export async function handleBookingConfirmationStep(flowCtx) {
       patientId,
       practitionerId,
       planKey,
+      unitId,
+      specialtyId,
     };
 
     audit(
