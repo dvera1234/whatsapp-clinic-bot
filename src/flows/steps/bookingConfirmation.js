@@ -12,28 +12,11 @@ import {
   buildBookingSuccessMessage,
   showSlotsPage,
 } from "../helpers/bookingHelpers.js";
+import { resolvePlanBookingConfig } from "../helpers/contentHelpers.js";
 import {
   handleProviderTemporaryUnavailable,
   isProviderTemporaryUnavailableError,
 } from "../helpers/auditHelpers.js";
-
-function resolvePlanBookingConfig(runtime, sessionObj) {
-  const planKey = readString(sessionObj?.booking?.planKey);
-  const planId = readString(sessionObj?.booking?.planId);
-
-  const plans = Array.isArray(runtime?.content?.plans)
-    ? runtime.content.plans
-    : [];
-
-  const plan =
-    plans.find((item) => readString(item?.key) === planKey) ||
-    plans.find((item) => readString(item?.id) === planId) ||
-    null;
-
-  return plan?.booking && typeof plan.booking === "object"
-    ? plan.booking
-    : {};
-}
 
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
