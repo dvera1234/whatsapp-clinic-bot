@@ -119,6 +119,23 @@ async function sendButtons({
   const config = getChannelConfig({ tenantId, runtime, phoneNumberId });
   if (!config) return { ok: false };
 
+  const safeButtons = Array.isArray(buttons)
+    ? buttons
+        .map((b) => ({
+          id: readString(b?.id),
+          title: truncate(readString(b?.title), 20),
+        }))
+        .filter((b) => b.id && b.title)
+    : [];
+  
+  if (!safeButtons.length) {
+    errLog("WHATSAPP_SEND_BUTTONS_INVALID", {
+      tenantId,
+      phoneMasked: maskPhone(to),
+    });
+    return { ok: false };
+  }
+  
   return sendRequest(
     config,
     {
@@ -129,7 +146,7 @@ async function sendButtons({
         type: "button",
         body: { text: body },
         action: {
-          buttons: buttons.map((b) => ({
+          buttons: safeButtons.map((b) => ({
             type: "reply",
             reply: {
               id: String(b.id || ""),
