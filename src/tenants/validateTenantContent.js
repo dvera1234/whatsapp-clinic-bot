@@ -270,6 +270,24 @@ function validatePlanBooking(plan, basePath, errors, practitionerIdSet) {
     }
   }
 
+  if ("unitId" in plan.booking) {
+    pushError(
+      errors,
+      !Number.isInteger(Number(plan.booking.unitId)) ||
+        Number(plan.booking.unitId) <= 0,
+      `${basePath}.booking.unitId`
+    );
+  }
+  
+  if ("specialtyId" in plan.booking) {
+    pushError(
+      errors,
+      !Number.isInteger(Number(plan.booking.specialtyId)) ||
+        Number(plan.booking.specialtyId) <= 0,
+      `${basePath}.booking.specialtyId`
+    );
+  }
+  
   if (practitionerMode === "FIXED") {
     pushError(
       errors,
