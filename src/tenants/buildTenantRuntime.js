@@ -157,6 +157,10 @@ export function buildTenantRuntime(config = {}) {
     url: readHttpsUrl(source?.portal?.url),
   };
 
+  const clinic = {
+    unitId: readNumber(source?.clinic?.unitId),
+  };
+  
   const support = {
     waNumber: readDigits(source?.support?.waNumber),
   };
@@ -337,6 +341,8 @@ export function buildTenantRuntime(config = {}) {
       channels,
 
       portal,
+
+      clinic,
 
       support,
 
