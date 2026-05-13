@@ -291,6 +291,22 @@ function mapBookingToVersatilisPayload(bookingRequest, runtime) {
   };
 }
 
+function resolveRuntimePractitioner(runtime, practitionerId) {
+  const normalizedPractitionerId = String(practitionerId || "").trim();
+  if (!normalizedPractitionerId) return null;
+
+  const practitioners = Array.isArray(runtime?.practitioners)
+    ? runtime.practitioners
+    : [];
+
+  return (
+    practitioners.find(
+      (item) =>
+        String(item?.practitionerId || "").trim() === normalizedPractitionerId
+    ) || null
+  );
+}
+
 function normalizeSlotsFromAgendaData(data) {
   if (!Array.isArray(data)) return [];
 
@@ -466,7 +482,20 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
         });
       }
 
-      const normalizedSlots = normalizeSlotsFromAgendaData(out.data);
+      const practitionerRuntime = resolveRuntimePractitioner(
+        ctx.runtime,
+        practitionerId
+      );
+      
+      const normalizedSlots = normalizeSlotsFromAgendaData(out.data).map((slot) => ({
+        ...slot,
+        unitId:
+          normalizePositiveInt(slot.unitId) ||
+          normalizePositiveInt(ctx.runtime?.clinic?.unitId),
+        specialtyId:
+          normalizePositiveInt(slot.specialtyId) ||
+          normalizePositiveInt(practitionerRuntime?.specialtyId),
+      }));
 
       return buildResult({
         ok: true,
