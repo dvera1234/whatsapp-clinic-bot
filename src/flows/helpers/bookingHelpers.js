@@ -674,6 +674,7 @@ export async function finishWizardAndGoToDates({
     practitionerId,
     practitionerIds: planPractitionerIds,
     patientId,
+    planKey: readString(planKeyFromWizard),
     MSG,
     services,
     page: 0,
