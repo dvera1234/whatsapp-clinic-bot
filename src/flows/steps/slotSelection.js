@@ -368,6 +368,8 @@ export async function handleSlotSelectionStep(flowCtx) {
         practitionerId,
         appointmentDate: sessionObj?.booking?.appointmentDate || null,
         slotId,
+        unitId: readNumber(chosen?.unitId),
+        specialtyId: readNumber(chosen?.specialtyId),
       })
     );
 
