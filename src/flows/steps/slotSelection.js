@@ -60,6 +60,24 @@ function resolvePractitionerIds(sessionObj) {
     : [];
 }
 
+function resolvePlanBookingConfig(runtime, sessionObj) {
+  const planKey = readString(sessionObj?.booking?.planKey);
+  const planId = readString(sessionObj?.booking?.planId);
+
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  const plan =
+    plans.find((item) => readString(item?.key) === planKey) ||
+    plans.find((item) => readString(item?.id) === planId) ||
+    null;
+
+  return plan?.booking && typeof plan.booking === "object"
+    ? plan.booking
+    : {};
+}
+
 function parseDatePage(raw) {
   const match = /^DATE_PAGE_(\d+)$/.exec(readString(raw));
   return match ? Number(match[1]) : null;
@@ -348,13 +366,23 @@ export async function handleSlotSelectionStep(flowCtx) {
       return true;
     }
 
+    const planBookingConfig = resolvePlanBookingConfig(runtime, sessionObj);
+    
+    const resolvedUnitId =
+      readNumber(chosen?.unitId) ??
+      readNumber(planBookingConfig?.unitId);
+    
+    const resolvedSpecialtyId =
+      readNumber(chosen?.specialtyId) ??
+      readNumber(planBookingConfig?.specialtyId);
+    
     await updateSession(tenantId, phone, (sess) => {
       sess.booking = sess.booking || {};
       sess.booking.selectedSlotId = slotId;
       sess.pending = {
         slotId,
-        unitId: readNumber(chosen?.unitId),
-        specialtyId: readNumber(chosen?.specialtyId),
+        unitId: resolvedUnitId,
+        specialtyId: resolvedSpecialtyId,
       };
     });
 
@@ -370,8 +398,8 @@ export async function handleSlotSelectionStep(flowCtx) {
         practitionerId,
         appointmentDate: sessionObj?.booking?.appointmentDate || null,
         slotId,
-        unitId: readNumber(chosen?.unitId),
-        specialtyId: readNumber(chosen?.specialtyId),
+        unitId: resolvedUnitId,
+        specialtyId: resolvedSpecialtyId,
       })
     );
 
