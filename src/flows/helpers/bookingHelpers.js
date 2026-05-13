@@ -319,6 +319,7 @@ export async function fetchNextAvailableDates({
   practitionerId,
   practitionerIds,
   patientId,
+  planKey,
   daysLookahead = 60,
   limit = 20,
 }) {
@@ -343,6 +344,7 @@ export async function fetchNextAvailableDates({
       practitionerId,
       practitionerIds,
       patientId,
+      planKey,
       appointmentDate,
     });
 
@@ -459,6 +461,7 @@ export async function showNextDates({
   practitionerId,
   practitionerIds,
   patientId,
+  planKey,
   MSG,
   services,
   page = 0,
@@ -473,6 +476,7 @@ export async function showNextDates({
     practitionerId,
     practitionerIds: safePractitionerIds,
     patientId,
+    planKey,
   });
 
   if (!out?.ok) {
