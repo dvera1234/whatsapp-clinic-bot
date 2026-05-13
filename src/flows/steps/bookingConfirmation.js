@@ -183,17 +183,35 @@ export async function handleBookingConfirmationStep(flowCtx) {
     }
 
     if (!out?.ok) {
+      audit(
+        "BOOKING_CONFIRM_PROVIDER_REJECTED",
+        sanitizeForLog({
+          tenantId,
+          traceId,
+          tracePhone: maskPhone(phone),
+          patientId,
+          practitionerId,
+          slotId,
+          planKey,
+          status: out?.status || null,
+          rid: out?.rid || null,
+          errorCode: out?.errorCode || null,
+          errorMessage: out?.errorMessage || null,
+          providerData: out?.data || null,
+        })
+      );
+    
       await updateSession(tenantId, phone, (sess) => {
         delete sess.pending;
       });
-
+    
       await services.sendText({
         tenantId,
         to: phone,
         body: MSG.bookingConfirmFailure,
         phoneNumberId,
       });
-
+    
       const refreshedSession = await getSession(tenantId, phone);
       return renderSlotsAgain(flowCtx, refreshedSession);
     }
