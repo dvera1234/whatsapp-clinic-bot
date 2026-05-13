@@ -17,6 +17,24 @@ import {
   isProviderTemporaryUnavailableError,
 } from "../helpers/auditHelpers.js";
 
+function resolvePlanBookingConfig(runtime, sessionObj) {
+  const planKey = readString(sessionObj?.booking?.planKey);
+  const planId = readString(sessionObj?.booking?.planId);
+
+  const plans = Array.isArray(runtime?.content?.plans)
+    ? runtime.content.plans
+    : [];
+
+  const plan =
+    plans.find((item) => readString(item?.key) === planKey) ||
+    plans.find((item) => readString(item?.id) === planId) ||
+    null;
+
+  return plan?.booking && typeof plan.booking === "object"
+    ? plan.booking
+    : {};
+}
+
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -91,8 +109,15 @@ export async function handleBookingConfirmationStep(flowCtx) {
   const sessionObj = await getSession(tenantId, phone);
   const slotId = readNumber(sessionObj?.pending?.slotId);
 
-  const unitId = readNumber(sessionObj?.pending?.unitId);
-  const specialtyId = readNumber(sessionObj?.pending?.specialtyId);
+  const planBookingConfig = resolvePlanBookingConfig(runtime, sessionObj);
+  
+  const unitId =
+    readNumber(sessionObj?.pending?.unitId) ??
+    readNumber(planBookingConfig?.unitId);
+  
+  const specialtyId =
+    readNumber(sessionObj?.pending?.specialtyId) ??
+    readNumber(planBookingConfig?.specialtyId);
   
   const patientId = readNumber(sessionObj?.booking?.patientId);
   const practitionerId = readString(sessionObj?.booking?.practitionerId);
@@ -155,6 +180,8 @@ export async function handleBookingConfirmationStep(flowCtx) {
         tracePhone: maskPhone(phone),
         patientId,
         practitionerId,
+        unitId,
+        specialtyId,
         slotId,
         planKey,
       })
