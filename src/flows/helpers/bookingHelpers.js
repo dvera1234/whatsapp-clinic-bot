@@ -219,6 +219,7 @@ export async function findSlotsByDate({
   practitionerId,
   practitionerIds,
   patientId,
+  planKey,
   appointmentDate,
   phone,
 }) {
@@ -249,6 +250,7 @@ export async function findSlotsByDate({
       out = await schedulingAdapter.findSlotsByDate({
         practitionerId: currentPractitionerId,
         patientId,
+        planKey,
         appointmentDate,
         runtimeCtx: {
           ...runtimeCtx,
