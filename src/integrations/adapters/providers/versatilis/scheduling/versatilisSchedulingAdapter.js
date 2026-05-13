@@ -487,13 +487,17 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
         practitionerId
       );
       
+      const planConfig = resolvePlanConfigByKey(planKey, ctx.runtime);
+      const bookingConfig = planConfig?.booking || {};
+      
       const normalizedSlots = normalizeSlotsFromAgendaData(out.data).map((slot) => ({
         ...slot,
         unitId:
           normalizePositiveInt(slot.unitId) ||
-          normalizePositiveInt(ctx.runtime?.clinic?.unitId),
+          normalizePositiveInt(bookingConfig.unitId),
         specialtyId:
           normalizePositiveInt(slot.specialtyId) ||
+          normalizePositiveInt(bookingConfig.specialtyId) ||
           normalizePositiveInt(practitionerRuntime?.specialtyId),
       }));
 
