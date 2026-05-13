@@ -519,7 +519,11 @@ function createVersatilisSchedulingAdapter(factoryCtx = {}) {
           status: out.status || 502,
           rid: out.rid,
           errorCode: "BOOKING_CONFIRM_FAILED",
-          errorMessage: "Failed to confirm booking",
+          errorMessage:
+            out?.data?.Message ||
+            out?.data?.message ||
+            "Failed to confirm booking",
+          data: sanitizeForLog(out.data),
         });
       }
 
