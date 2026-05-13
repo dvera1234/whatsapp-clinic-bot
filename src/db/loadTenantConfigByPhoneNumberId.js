@@ -89,6 +89,7 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       tc.phone_number_id,
       tc.access_token,
 
+      cs.default_unit_id,
       cs.support_wa_number,
       cs.portal_url,
 
@@ -178,6 +179,10 @@ export async function loadTenantConfigByPhoneNumberId(phoneNumberId) {
       url: readString(first?.portal_url),
     },
 
+    clinic: {
+      unitId: readNumber(first?.default_unit_id),
+    },
+    
     support: {
       waNumber: readString(first?.support_wa_number),
     },
