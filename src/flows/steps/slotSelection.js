@@ -108,6 +108,7 @@ async function renderDates({
     practitionerId,
     practitionerIds,
     patientId,
+    planKey: readString(flowCtx?.session?.booking?.planKey),
     MSG,
     services,
     page,
