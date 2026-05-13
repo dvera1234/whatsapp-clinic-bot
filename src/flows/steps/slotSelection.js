@@ -248,6 +248,7 @@ export async function handleSlotSelectionStep(flowCtx) {
         practitionerId,
         practitionerIds,
         patientId,
+        planKey: readString(sessionObj?.booking?.planKey),
         appointmentDate,
         phone,
       });
