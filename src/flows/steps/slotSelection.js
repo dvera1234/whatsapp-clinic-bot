@@ -373,6 +373,7 @@ export async function handleSlotSelectionStep(flowCtx) {
 
     await services.sendButtons({
       tenantId,
+      runtime,
       to: phone,
       body: `Confirma este agendamento?\n\n📅 ${sessionObj?.booking?.appointmentDate}\n⏰ ${chosen.time}`,
       buttons: [
