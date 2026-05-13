@@ -149,21 +149,22 @@ function normalizeSlot(slot, practitionerId, appointmentDate) {
   }
 
   return {
+    ...slot,
+  
     slotId,
     time,
-
+  
     practitionerId:
       readString(practitionerId) ||
       readString(slot.practitionerId),
-
+  
     appointmentDate:
       readString(slot.appointmentDate) ||
       readString(appointmentDate),
-
+  
     unitId: readNumber(slot.unitId),
     specialtyId: readNumber(slot.specialtyId),
   };
-}
 
 // =========================
 // LOCK
