@@ -59,6 +59,7 @@ async function renderSlotsAgain(flowCtx, sessionObj) {
 
   await showSlotsPage({
     tenantId: flowCtx.tenantId,
+    runtime: flowCtx.runtime,
     phone: flowCtx.phone,
     phoneNumberId: flowCtx.phoneNumberId,
     slots: sessionObj?.booking?.slots || [],
@@ -97,7 +98,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.BOOKING_SESSION_INVALID,
+      body: MSG.bookingSessionInvalid,
       phoneNumberId,
     });
     await setState(tenantId, phone, "MAIN");
@@ -126,7 +127,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
     await services.sendText({
       tenantId,
       to: phone,
-      body: MSG.BOOKING_ALREADY_PROCESSING,
+      body: MSG.bookingAlreadyProcessing,
       phoneNumberId,
     });
     return true;
@@ -189,7 +190,7 @@ export async function handleBookingConfirmationStep(flowCtx) {
       await services.sendText({
         tenantId,
         to: phone,
-        body: MSG.BOOKING_CONFIRM_FAILURE,
+        body: MSG.bookingConfirmFailure,
         phoneNumberId,
       });
 
@@ -229,8 +230,15 @@ export async function handleBookingConfirmationStep(flowCtx) {
       tenantId,
       to: phone,
       body: buildBookingSuccessMessage({
-        MSG,
-        paymentInfo: showPayment ? MSG.PAYMENT_INFO : "",
+        template: MSG.bookingSuccessMain,
+        data: {
+          msgOk:
+            out?.data?.message ||
+            MSG.bookingSuccessFallback,
+          paymentInfo: showPayment
+            ? MSG.paymentInfoPrivateFirstVisit
+            : "",
+        },
       }),
       phoneNumberId,
     });
